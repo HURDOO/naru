@@ -1,0 +1,24 @@
+{
+  "name": "@naru/session-cli",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "durable-session": "./dist/main.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@naru/contracts": "workspace:*",
+    "@naru/durable-session-client": "workspace:*"
+  },
+  "devDependencies": {
+    "node-pty": "^1.1.0"
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "validConfig": {
+    "version": 1,
+    "instanceId": "fixture-workstation",
+    "gatewayConfigPath": "/private/fixture/gateway.json",
+    "ownershipDirectory": "/private/fixture/ownership",
+    "tailscaleExecutable": "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    "trustedProxyPolicies": [
+      {
+        "id": "tailscale-loopback",
+        "kind": "tailscale-loopback"
+      }
+    ],
+    "sourcePolicies": [
+      {
+        "id": "wireguard-owner",
+        "kind": "private-cidr-allowlist",
+        "cidrs": ["10.44.0.0/24"]
+      }
+    ],
+    "targetProbes": [
+      {
+        "appId": "fixture-app",
+        "app": {
+          "kind": "uds-http",
+          "socketPath": "/private/fixture/app.sock",
+          "path": "/readyz"
+        },
+        "host": {
+          "kind": "uds-http",
+          "socketPath": "/private/fixture/host.sock",
+          "path": "/readyz"
+        }
+      }
+    ],
+    "profiles": [
+      {
+        "version": 0,
+        "profile": {
+          "id": "tailscale-main",
+          "kind": "tailscale-serve",
+          "targetAppId": "fixture-app",
+          "browserOrigin": "https://fixture.tailnet.ts.net",
+          "transport": "loopback-proxy",
+          "bindOrUpstream": "http://127.0.0.1:49100",
+          "tlsOwner": "tailscale",
+          "trustedProxyPolicy": "tailscale-loopback"
+        }
+      },
+      {
+        "version": 0,
+        "profile": {
+          "id": "wireguard-existing",
+          "kind": "wireguard-direct",
+          "targetAppId": "fixture-app",
+          "browserOrigin": "https://fixture.invalid:8443",
+          "transport": "direct-private-listener",
+          "bindOrUpstream": "10.44.0.2:8443",
+          "tlsOwner": "app",
+          "sourcePolicy": "wireguard-owner"
+        }
+      }
+    ]
+  },
+  "validCommands": [
+    ["plan", "--config", "fixture.json", "--profile", "tailscale-main", "--json"],
+    [
+      "plan",
+      "--config",
+      "fixture.json",
+      "--profile",
+      "tailscale-main",
+      "--operation",
+      "rollback",
+      "--json"
+    ],
+    ["status", "--config", "fixture.json", "--json"],
+    ["doctor", "--config", "fixture.json", "--json"],
+    [
+      "apply",
+      "--config",
+      "fixture.json",
+      "--profile",
+      "tailscale-main",
+      "--approve-digest",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--json"
+    ],
+    [
+      "rollback",
+      "--config",
+      "fixture.json",
+      "--profile",
+      "tailscale-main",
+      "--approve-digest",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--json"
+    ]
+  ],
+  "invalidCommands": [
+    ["status", "--config", "fixture.json"],
+    ["doctor", "--config", "fixture.json", "--profile", "tailscale-main", "--json"],
+    ["apply", "--config", "fixture.json", "--json"],
+    [
+      "plan",
+      "--config",
+      "fixture.json",
+      "--profile",
+      "tailscale-main",
+      "--approve-digest",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--json"
+    ]
+  ]
+}

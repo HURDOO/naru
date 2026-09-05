@@ -1,0 +1,18 @@
+export {
+  GATEWAY_ASSERTION_LIMITS,
+  GATEWAY_ASSERTION_PREFIX,
+  GatewayAssertionError,
+  InMemoryGatewayReplayStore,
+  createGatewayAssertion,
+  gatewayAssertionSigningInput,
+  parseGatewayAssertion,
+  verifyGatewayAssertion,
+  type GatewayAssertionErrorCode,
+  type GatewayAssertionParts,
+  type GatewayAssertionReplayStore,
+  type GatewayAssertionVerification,
+  type GatewayAssertionVerifierOptions,
+  type GatewayReplayClaimResult,
+  type GatewayVerificationKey,
+  type GatewayVerificationKeyResolver,
+} from "./verifier.js";

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workstation Setup and Recovery"
+  short_description: "Plan, recover, and verify a private Mac workstation"
+  default_prompt: "Use $workstation-setup to prepare a safe plan for this Mac workstation lifecycle request."

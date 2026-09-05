@@ -1,0 +1,198 @@
+import { createHash } from "node:crypto";
+import type {
+  CreatePushSubscriptionRequest,
+  NaruPushSubscription,
+  PushConfiguration,
+  PushNotificationPayload,
+} from "@naru/contracts";
+import { PushNotificationPayloadSchema } from "@naru/contracts";
+import webPush, {
+  type PushSubscription as WebPushSubscription,
+  type RequestOptions,
+} from "web-push";
+import type { PushConfig } from "./config.js";
+import type { NaruRepository } from "./database.js";
+import { AppError } from "./errors.js";
+import type { RuntimePaneActivityChange } from "./pty.js";
+
+export type PushNotificationEventSink = (
+  level: "info" | "warn",
+  event: string,
+  fields: Readonly<Record<string, string | number | boolean | null>>,
+) => void;
+
+export type WebPushSender = (
+  subscription: WebPushSubscription,
+  payload: string,
+  options: RequestOptions,
+) => Promise<unknown>;
+
+export interface PushNotificationService {
+  configuration(): PushConfiguration;
+  updateConfiguration(inactivityDelayMinutes: number): PushConfiguration;
+  list(): NaruPushSubscription[];
+  subscribe(input: CreatePushSubscriptionRequest): NaruPushSubscription;
+  rename(id: string, name: string): NaruPushSubscription;
+  delete(id: string): boolean;
+  handleActivity(change: RuntimePaneActivityChange): void;
+  close(): Promise<void>;
+}
+
+export class WebPushNotificationService implements PushNotificationService {
+  readonly #pending = new Set<Promise<void>>();
+
+  constructor(
+    private readonly repository: NaruRepository,
+    private readonly config?: PushConfig,
+    private readonly sender: WebPushSender = webPush.sendNotification,
+    private readonly eventSink?: PushNotificationEventSink,
+    private readonly hasRecentlyActiveClient: (inactivityDelayMinutes: number) => boolean = () =>
+      false,
+  ) {}
+
+  configuration(): PushConfiguration {
+    return {
+      configured: this.config !== undefined,
+      publicKey: this.config?.publicKey ?? null,
+      inactivityDelayMinutes: this.repository.getPushInactivityDelayMinutes(),
+    };
+  }
+
+  updateConfiguration(inactivityDelayMinutes: number): PushConfiguration {
+    this.repository.updatePushInactivityDelayMinutes(inactivityDelayMinutes);
+    return this.configuration();
+  }
+
+  list(): NaruPushSubscription[] {
+    return this.repository.listPushSubscriptions();
+  }
+
+  subscribe(input: CreatePushSubscriptionRequest): NaruPushSubscription {
+    if (this.config === undefined) {
+      throw new AppError(
+        "PUSH_NOT_CONFIGURED",
+        503,
+        "서버에 Web Push 알림이 아직 설정되지 않았습니다.",
+      );
+    }
+    return this.repository.upsertPushSubscription(input);
+  }
+
+  rename(id: string, name: string): NaruPushSubscription {
+    return this.repository.updatePushSubscriptionName(id, name);
+  }
+
+  delete(id: string): boolean {
+    return this.repository.deletePushSubscription(id);
+  }
+
+  handleActivity(change: RuntimePaneActivityChange): void {
+    if (
+      this.config === undefined ||
+      change.runtimeId === null ||
+      (change.activity.state !== "completed" &&
+        change.activity.state !== "interaction-required" &&
+        change.activity.state !== "failed")
+    ) {
+      return;
+    }
+    const eventKind =
+      change.projectActivity.state === "completed" ||
+      change.projectActivity.state === "interaction-required" ||
+      change.projectActivity.state === "failed"
+        ? change.projectActivity.state
+        : change.activity.state;
+    const inactivityDelayMinutes = this.repository.getPushInactivityDelayMinutes();
+    if (this.hasRecentlyActiveClient(inactivityDelayMinutes)) {
+      this.eventSink?.("info", "push.suppressed", {
+        eventId: change.eventId,
+        projectId: change.projectId,
+        paneId: change.paneId,
+        eventKind,
+        reason: "active_client",
+        inactivityDelayMinutes,
+      });
+      return;
+    }
+    const payload = PushNotificationPayloadSchema.parse({
+      version: 1,
+      eventId: change.eventId,
+      projectId: change.projectId,
+      paneId: change.paneId,
+      runtimeId: change.runtimeId,
+      eventKind,
+    });
+    const delivery = this.#deliver(payload);
+    this.#pending.add(delivery);
+    void delivery.then(
+      () => this.#pending.delete(delivery),
+      () => this.#pending.delete(delivery),
+    );
+  }
+
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.#pending]);
+  }
+
+  async #deliver(payload: PushNotificationPayload): Promise<void> {
+    const config = this.config;
+    if (config === undefined) return;
+    const subscriptions = this.repository.listActivePushSubscriptionRecords();
+    await Promise.all(
+      subscriptions.map(async (subscription) => {
+        if (!this.repository.reservePushDelivery(subscription.id, payload)) return;
+        try {
+          await this.sender(
+            {
+              endpoint: subscription.endpoint,
+              expirationTime: subscription.expirationTime,
+              keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+            },
+            JSON.stringify(payload),
+            {
+              TTL: 4 * 60 * 60,
+              urgency: payload.eventKind === "completed" ? "normal" : "high",
+              topic: pushTopic(payload.projectId),
+              timeout: 10_000,
+              vapidDetails: config,
+            },
+          );
+          this.repository.markPushDeliverySent(subscription.id, payload.eventId);
+          this.eventSink?.("info", "push.delivered", {
+            eventId: payload.eventId,
+            subscriptionId: subscription.id,
+            eventKind: payload.eventKind,
+          });
+        } catch (error) {
+          const statusCode = pushStatusCode(error);
+          if (statusCode === 404 || statusCode === 410) {
+            this.repository.deletePushSubscription(subscription.id);
+          }
+          this.eventSink?.("warn", "push.delivery.failed", {
+            eventId: payload.eventId,
+            subscriptionId: subscription.id,
+            eventKind: payload.eventKind,
+            statusCode,
+            endpointRemoved: statusCode === 404 || statusCode === 410,
+          });
+        }
+      }),
+    );
+  }
+}
+
+function pushTopic(projectId: string): string {
+  return createHash("sha256").update(projectId).digest("base64url").slice(0, 32);
+}
+
+function pushStatusCode(error: unknown): number {
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "statusCode" in error &&
+    typeof error.statusCode === "number"
+  ) {
+    return error.statusCode;
+  }
+  return 0;
+}

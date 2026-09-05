@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gateway App Integration"
+  short_description: "Integrate private apps with Workstation Gateway"
+  default_prompt: "Use $gateway-app to plan a secure Workstation Gateway integration for this app."

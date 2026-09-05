@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+NARU_HELPER_DIRECTORY=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+NARU_ACTIVE_RELEASE=$(CDPATH= cd "$NARU_HELPER_DIRECTORY/../.." && pwd -P)
+NARU_SOURCE_DIRECTORY=$(pwd -P)
+NARU_NODE_EXECUTABLE=/opt/homebrew/opt/node@24/bin/node
+NARU_OPERATIONS_CLI="$NARU_ACTIVE_RELEASE/apps/server/dist/operations-cli.js"
+
+case "${1:-}" in
+  status)
+    shift
+    exec "$NARU_NODE_EXECUTABLE" "$NARU_OPERATIONS_CLI" \
+      maintenance-status "$NARU_ACTIVE_RELEASE" "$@"
+    ;;
+  restart)
+    shift
+    exec "$NARU_NODE_EXECUTABLE" "$NARU_OPERATIONS_CLI" \
+      maintenance-restart "$NARU_ACTIVE_RELEASE" "$@"
+    ;;
+  deploy)
+    shift
+    exec "$NARU_NODE_EXECUTABLE" "$NARU_OPERATIONS_CLI" \
+      maintenance-deploy "$NARU_ACTIVE_RELEASE" "$NARU_SOURCE_DIRECTORY" "$@"
+    ;;
+  *)
+    echo "사용법: naru-ops <status|restart|deploy> [--confirm-pty-loss=<one-time-id>]" >&2
+    exit 2
+    ;;
+esac

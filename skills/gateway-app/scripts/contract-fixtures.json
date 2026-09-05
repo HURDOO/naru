@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "validConfig": {
+    "version": 1,
+    "instanceId": "gateway-fixture",
+    "ownerSubject": "fixture-owner",
+    "browserOrigin": "https://fixture.invalid",
+    "ingressProfileId": "fixture-profile",
+    "rpName": "Fixture Workstation",
+    "dataDirectory": "/private/fixture/gateway",
+    "adminSocketPath": "/private/fixture/gateway-admin.sock",
+    "listenHost": "127.0.0.1",
+    "listenPort": 49100,
+    "sessionCookieName": "__Host-fixture-session",
+    "appRegistrations": [
+      {
+        "appId": "fixture-app",
+        "mode": "gateway-managed",
+        "routePrefix": "/fixture",
+        "upstream": {
+          "kind": "uds",
+          "socketPath": "/private/fixture/app.sock"
+        },
+        "includeCredentialRef": false,
+        "enabled": true
+      },
+      {
+        "appId": "fixture-independent-app",
+        "mode": "app-managed",
+        "origin": "https://fixture-independent.invalid",
+        "enabled": true
+      }
+    ]
+  },
+  "principal": {
+    "version": 1,
+    "iss": "gateway-fixture",
+    "aud": "fixture-app",
+    "sub": "fixture-owner",
+    "authTime": 1780000000,
+    "methods": ["passkey"],
+    "userVerified": true,
+    "origin": "https://fixture.invalid",
+    "ingressProfile": "fixture-profile",
+    "credentialRef": "fixture-app-reference",
+    "issuedAt": 1780000010,
+    "expiresAt": 1780000040,
+    "assertionId": "fixture-assertion"
+  },
+  "authenticationRequired": {
+    "version": 1,
+    "ok": false,
+    "error": {
+      "code": "AUTHENTICATION_REQUIRED",
+      "message": "Gateway authentication is required."
+    },
+    "requestId": "fixture-request-id"
+  }
+}

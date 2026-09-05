@@ -1,0 +1,20 @@
+{
+  "name": "@naru/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./durable-session/v0": "./src/durable-session/v0/index.ts",
+    "./durable-session/v0/test-vectors": "./src/durable-session/v0/test-vectors.ts",
+    "./workstation-gateway/v1": "./src/workstation-gateway/v1/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}

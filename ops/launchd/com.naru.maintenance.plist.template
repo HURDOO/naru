@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_EXECUTABLE__</string>
+    <string>__MAINTENANCE_ENTRY__</string>
+    <string>__REQUEST_POINTER_FILE__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKING_DIRECTORY__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HELPER_DIRECTORY__:/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ExitTimeOut</key>
+  <integer>30</integer>
+  <key>Umask</key>
+  <integer>63</integer>
+
+  <key>StandardOutPath</key>
+  <string>__STANDARD_OUT_PATH__</string>
+  <key>StandardErrorPath</key>
+  <string>__STANDARD_ERROR_PATH__</string>
+</dict>
+</plist>
