@@ -1,5 +1,9 @@
 # Naru
 
+Naru는 언제 어디서든 Codex 작업을 할 수 있도록 만들어진, 웹 기반 원격 ADE입니다.
+집에 있는 컴퓨터에 Naru를 설치하면, 다양한 내 기기에서 언제 어디서든 같은 작업창에 접속하여 개발할 수 있습니다.
+컴퓨터로 하던 작업을 그대로 밖에서, 휴대폰으로 이어서 하는 경험을 누려보세요.
+
 Naru는 실행 중인 shell과 Codex CLI 작업을 데스크톱·모바일 브라우저에서 이어 쓰는 개인용 웹 Agent
 IDE입니다. DurableSession Host가 PTY와 runtime을 소유하고, Naru는 Project·Pane과 반응형 UI를,
 Workstation Gateway는 선택적인 Passkey·private ingress 경계를 담당합니다.
