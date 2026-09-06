@@ -24,6 +24,7 @@ import { WorkstationGatewayConfigSchema } from "../src/config.js";
 import { WorkstationGateway } from "../src/gateway.js";
 import { gatewayVerifierKey, loadOrCreateGatewayKeys } from "../src/keys.js";
 import type { GatewayLogRecord } from "../src/logging.js";
+import { normalizeWebSocketCloseCode } from "../src/proxy.js";
 import { createGatewayTestFixture } from "./support.js";
 
 interface UpstreamFixture {
@@ -42,6 +43,15 @@ afterEach(async () => {
 });
 
 describe("Workstation Gateway HTTP and WebSocket proxy", () => {
+  it("maps abnormal and reserved peer close codes to a valid proxy failure", () => {
+    for (const code of [0, 1_004, 1_005, 1_006, 1_015, 5_000]) {
+      expect(normalizeWebSocketCloseCode(code), String(code)).toBe(1_011);
+    }
+    for (const code of [1_000, 1_001, 1_009, 3_000, 4_999]) {
+      expect(normalizeWebSocketCloseCode(code), String(code)).toBe(code);
+    }
+  });
+
   it("strips browser identity material, injects a verifier-compatible assertion, and enforces Origin/CSRF", async () => {
     const upstream = await createUpstreamFixture();
     const fixture = createGatewayTestFixture();

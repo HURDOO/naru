@@ -2,10 +2,11 @@
 
 ## 1. 상태와 기준
 
-- 상태: PI-05 Workstation distribution·maintenance 통합 완료, PI-06 승인 전
-- 다음 작업: `private-ingress-v0/PI-06`
+- 상태: PI-06 자동·격리 acceptance와 public release candidate 진행 중
+- 다음 작업: `private-ingress-v0/PI-06` 완료 및 검증
 - 단일 작업 원장: [`TASKS.md`](TASKS.md)
 - 보안 분석·ownership: [`THREAT_MODEL.md`](THREAT_MODEL.md)
+- release acceptance matrix: [`ACCEPTANCE.md`](ACCEPTANCE.md)
 - 선행 기준: 동결된 DurableSession / Workstation v0와 현재 Naru 동작
 - 목표 운영 경로: operator가 관리하는 private DNS·trusted LAN·WireGuard와 canonical HTTPS Origin에서
   Naru를 gateway-managed DurableSession runtime으로 운영

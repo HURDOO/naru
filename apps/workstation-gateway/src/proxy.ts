@@ -153,12 +153,14 @@ export function proxyGatewayWebSocket(input: GatewayWebSocketProxyInput): void {
   });
   input.client.once("close", (code, reason) => {
     cleanupRegistry();
-    if (upstream.readyState < upstream.CLOSING) upstream.close(code, boundedReason(reason));
+    if (upstream.readyState < upstream.CLOSING) {
+      upstream.close(normalizeWebSocketCloseCode(code), boundedReason(reason));
+    }
   });
   upstream.once("close", (code, reason) => {
     cleanupRegistry();
     if (input.client.readyState < input.client.CLOSING) {
-      input.client.close(code === 1005 ? 1011 : code, boundedReason(reason));
+      input.client.close(normalizeWebSocketCloseCode(code), boundedReason(reason));
     }
     input.logger.write({
       level: "info",
@@ -275,4 +277,10 @@ function dataByteLength(data: RawData): number {
 
 function boundedReason(reason: Buffer): string {
   return reason.subarray(0, 120).toString("utf8");
+}
+
+export function normalizeWebSocketCloseCode(code: number): number {
+  const protocolCode = code >= 1_000 && code <= 1_014;
+  const reservedCode = code === 1_004 || code === 1_005 || code === 1_006;
+  return (protocolCode && !reservedCode) || (code >= 3_000 && code <= 4_999) ? code : 1_011;
 }

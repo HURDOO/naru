@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-05 Workstation distribution·maintenance 통합 완료, PI-06 승인 전
-- 다음 작업: `PI-06`
+- PrivateIngress: PI-06 자동·격리 acceptance와 public release candidate 진행 중
+- 다음 작업: `PI-06` 완료 및 검증
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -186,7 +186,7 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-06. 자동·격리 acceptance와 public release candidate
 
-- [>] **범위**: 전체 negative security matrix, HTTP/WSS, actual PTY continuity와 공개 artifact를 검증해
+- [-] **범위**: 전체 negative security matrix, HTTP/WSS, actual PTY continuity와 공개 artifact를 검증해
   production staging 후보 commit을 고정한다.
 - **선행 조건**: PI-05와 포함하기로 한 parallel Naru changes의 integration 완료
 - **산출물**: pinned commit/artifact digest, full verification evidence, known limitations, rollback plan

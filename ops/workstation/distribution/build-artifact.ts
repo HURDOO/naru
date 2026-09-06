@@ -155,6 +155,7 @@ export function buildDistributionArtifact(arguments_: readonly string[]): unknow
   });
   createDeterministicArchive(input.outputParent, rootName, artifactRoot, archivePath);
   chmodSync(archivePath, PRIVATE_FILE_MODE);
+  const archiveSha256 = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
   return {
     version: DISTRIBUTION_SCHEMA_VERSION,
     packageId: WORKSTATION_PACKAGE_ID,
@@ -167,6 +168,7 @@ export function buildDistributionArtifact(arguments_: readonly string[]): unknow
     lockfileSha256,
     manifestDigest: verified.summary.manifestDigest,
     payloadDigest: verified.summary.payloadDigest,
+    archiveSha256,
     nodeRuntime: PACKAGED_NODE_RUNTIME,
     targetBuildRequired: false,
   };
