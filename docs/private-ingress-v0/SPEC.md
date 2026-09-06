@@ -2,8 +2,8 @@
 
 ## 1. 상태와 기준
 
-- 상태: PI-06 자동·격리 acceptance와 public release candidate 진행 중
-- 다음 작업: `private-ingress-v0/PI-06` 완료 및 검증
+- 상태: PI-06 자동·격리 acceptance와 public release candidate 완료
+- 다음 작업: `private-ingress-v0/PI-07` production 외부 변경 승인과 실기기 인수
 - 단일 작업 원장: [`TASKS.md`](TASKS.md)
 - 보안 분석·ownership: [`THREAT_MODEL.md`](THREAT_MODEL.md)
 - release acceptance matrix: [`ACCEPTANCE.md`](ACCEPTANCE.md)

@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-06 자동·격리 acceptance와 public release candidate 진행 중
-- 다음 작업: `PI-06` 완료 및 검증
+- PrivateIngress: PI-06 자동·격리 acceptance와 public release candidate 완료
+- 다음 작업: `PI-07` production 외부 변경 승인과 실기기 인수
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -186,8 +186,8 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-06. 자동·격리 acceptance와 public release candidate
 
-- [-] **범위**: 전체 negative security matrix, HTTP/WSS, actual PTY continuity와 공개 artifact를 검증해
-  production staging 후보 commit을 고정한다.
+- [x] **범위**: 전체 negative security matrix, HTTP/WSS, actual PTY continuity와 공개 artifact를 검증해
+      production staging 후보 commit을 고정한다.
 - **선행 조건**: PI-05와 포함하기로 한 parallel Naru changes의 integration 완료
 - **산출물**: pinned commit/artifact digest, full verification evidence, known limitations, rollback plan
 - **완료 조건**:
@@ -195,11 +195,24 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - Gateway/Naru restart에서 Host PTY/runtime continuity를 실제로 확인한다.
   - Funnel/public DNS/public listener/port forwarding 부재를 확인한다.
   - production과 분리된 data/config/label/port를 사용한다.
+- **완료 증거 (2026-09-07)**: production과 분리된 임시 data/config와 동적 loopback port에서 실제
+  Node 24 `node-pty` session을 Gateway → Naru → Host로 연결했다. Gateway와 Naru를 각각 재시작한 뒤에도
+  같은 session/runtime identity, 증가하는 terminal sequence와 live WSS 출력을 확인했다. 재시작 중
+  reserved WebSocket close code를 전달하던 결함은 valid proxy failure code 정규화와 regression test로
+  수정했다. 배포 builder는 archive SHA-256을 반환하며 target prebuild를 보존한 채 네이티브 build
+  metadata의 local path를 제거한다. Node 24.19.0에서 format, lint, typecheck, 693 passed/5 skipped test,
+  build, E2E 14/14, operations 64, distribution 61, production smoke 1과 actual acceptance 1을 통과했다.
+  두 private output parent에 같은 build ID로 만든 Node 24.20.0 artifact의 source/lockfile/manifest/payload/
+  archive identity와 archive bytes가 일치했다. Security audit은 high 이상 0건이며 Windows 개발 서버에만
+  해당하는 dev-only low advisory 1건을 known limitation으로 남겼다. Public exposure는 source·artifact의
+  fail-closed contract와 loopback 실험으로 검증했고 router port forwarding 부재는 package가 관찰할 수
+  없는 PI-07 operator preflight로 명시했다. Production, network, remote와 release publication은 변경하지
+  않았다.
 
 ## PI-07. WireGuard/LAN 임시 Origin 실기기 인수
 
-- [ ] **범위**: 기존 production을 유지한 채 같은 private hostname의 승인된 임시 port에서 새 pinned
-      stack을 설치하고 실제 기기 인수를 수행한다.
+- [>] **범위**: 기존 production을 유지한 채 같은 private hostname의 승인된 임시 port에서 새 pinned
+  stack을 설치하고 실제 기기 인수를 수행한다.
 - **선행 조건**: PI-06, production 외부 변경의 fresh 사용자 승인
 - **산출물**: Mac/Windows/Android acceptance, Passkey/PWA/Push, restart/reboot/rollback evidence
 - **완료 조건**:
