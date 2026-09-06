@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  PrivateIngressV0Schema,
+  type PrivateIngressV0,
+} from "../../../packages/contracts/src/private-ingress/v0/index.js";
+import {
   DISTRIBUTION_SCHEMA_VERSION,
   DISTRIBUTION_TASK_ID,
   INSTANCE_DIGEST_LENGTH,
   MAX_UNIX_SOCKET_BYTES,
+  PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION,
+  PRIVATE_INGRESS_DISTRIBUTION_TASK_ID,
   SERVICE_NAMES,
   WORKSTATION_PACKAGE_ID,
   LOCAL_SESSION_CLI_APP_ID,
@@ -20,8 +26,7 @@ const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
 
 export type IngressKind = "none" | "tailscale-serve" | "wireguard-direct" | "trusted-lan";
 
-export interface WorkstationInstallationIntentV1 {
-  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
+interface WorkstationInstallationIntentCommon {
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly installationId: string;
   readonly slug: string;
@@ -34,11 +39,27 @@ export interface WorkstationInstallationIntentV1 {
   readonly shellExecutable: string;
   readonly codexExecutable: string;
   readonly vapidSubject?: string;
+}
+
+export interface WorkstationInstallationIntentV1 extends WorkstationInstallationIntentCommon {
+  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
   readonly ingress: {
     readonly kind: IngressKind;
     readonly profileId: string;
   };
 }
+
+export interface WorkstationInstallationIntentV2 extends WorkstationInstallationIntentCommon {
+  readonly version: typeof PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION;
+  readonly ingress: PrivateIngressV0;
+}
+
+export type WorkstationInstallationIntent =
+  WorkstationInstallationIntentV1 | WorkstationInstallationIntentV2;
+
+export type DistributionDocumentVersion = WorkstationInstallationIntent["version"];
+export type DistributionDocumentTaskId =
+  typeof DISTRIBUTION_TASK_ID | typeof PRIVATE_INGRESS_DISTRIBUTION_TASK_ID;
 
 export interface DistributionArtifactSummary {
   readonly schemaVersion: typeof DISTRIBUTION_SCHEMA_VERSION;
@@ -152,7 +173,7 @@ export interface OriginTransition {
   readonly browserCleanupIsUserOwned: true;
 }
 
-export function parseInstallationIntent(value: unknown): WorkstationInstallationIntentV1 {
+export function parseInstallationIntent(value: unknown): WorkstationInstallationIntent {
   if (!isRecord(value)) throw new Error("Installation intent must be a JSON object.");
   assertExactKeys(value, [
     "version",
@@ -170,7 +191,10 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     "vapidSubject",
     "ingress",
   ]);
-  if (value.version !== DISTRIBUTION_SCHEMA_VERSION) {
+  if (
+    value.version !== DISTRIBUTION_SCHEMA_VERSION &&
+    value.version !== PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION
+  ) {
     throw new Error("Unsupported installation intent version.");
   }
   if (value.packageId !== WORKSTATION_PACKAGE_ID) {
@@ -190,14 +214,11 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
   const codexExecutable = requireAbsolutePath(value.codexExecutable, "Codex executable");
   const canonicalBrowserOrigin = canonicalHttpsOrigin(value.canonicalBrowserOrigin);
   const allowedProjectRoots = parseProjectRoots(value.allowedProjectRoots);
-  const ingress = parseIngress(value.ingress);
   const vapidSubject =
     value.vapidSubject === undefined
       ? undefined
       : canonicalVapidSubject(value.vapidSubject, canonicalBrowserOrigin);
-
-  return {
-    version: DISTRIBUTION_SCHEMA_VERSION,
+  const common = {
     packageId: WORKSTATION_PACKAGE_ID,
     installationId: value.installationId.toLowerCase(),
     slug: value.slug,
@@ -210,11 +231,26 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     shellExecutable,
     codexExecutable,
     ...(vapidSubject === undefined ? {} : { vapidSubject }),
+  } as const;
+  if (value.version === DISTRIBUTION_SCHEMA_VERSION) {
+    return {
+      version: DISTRIBUTION_SCHEMA_VERSION,
+      ...common,
+      ingress: parseLegacyIngress(value.ingress),
+    };
+  }
+  const ingress = PrivateIngressV0Schema.parse(value.ingress);
+  if (ingress.browserOrigin !== canonicalBrowserOrigin) {
+    throw new Error("Private ingress Origin must match the installation browser Origin.");
+  }
+  return {
+    version: PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION,
+    ...common,
     ingress,
   };
 }
 
-export function createInstanceNamespace(intent: WorkstationInstallationIntentV1): string {
+export function createInstanceNamespace(intent: WorkstationInstallationIntent): string {
   const digest = createHash("sha256")
     .update(intent.installationId)
     .update("\0")
@@ -237,7 +273,7 @@ export function artifactNodeExecutable(
   return externalFallback;
 }
 
-export function createInstanceShortRuntimeRoot(intent: WorkstationInstallationIntentV1): string {
+export function createInstanceShortRuntimeRoot(intent: WorkstationInstallationIntent): string {
   return join(
     intent.homeDirectory,
     "Library",
@@ -248,8 +284,23 @@ export function createInstanceShortRuntimeRoot(intent: WorkstationInstallationIn
   );
 }
 
+export function createInstanceStateRoot(intent: WorkstationInstallationIntent): string {
+  return join(
+    intent.homeDirectory,
+    "Library",
+    "Application Support",
+    "Naru Workstation",
+    "instances",
+    createInstanceNamespace(intent),
+  );
+}
+
+export function createInstanceOwnershipReceiptPath(intent: WorkstationInstallationIntent): string {
+  return join(createInstanceStateRoot(intent), "ownership.json");
+}
+
 export function createInstanceLayout(
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   artifact: DistributionArtifactSummary,
 ): WorkstationInstanceLayout {
   if (artifact.packageId !== WORKSTATION_PACKAGE_ID) {
@@ -259,7 +310,7 @@ export function createInstanceLayout(
   const digest = namespace.slice(-INSTANCE_DIGEST_LENGTH);
   const applicationSupport = join(intent.homeDirectory, "Library", "Application Support");
   const instancesRoot = join(applicationSupport, "Naru Workstation", "instances");
-  const stateRoot = join(instancesRoot, namespace);
+  const stateRoot = createInstanceStateRoot(intent);
   const shortRuntimeRoot = createInstanceShortRuntimeRoot(intent);
   const launchAgents = join(intent.homeDirectory, "Library", "LaunchAgents");
   const releases = join(stateRoot, "releases");
@@ -487,7 +538,21 @@ function canonicalVapidSubject(value: unknown, defaultOrigin: string): string {
   return value;
 }
 
-function parseIngress(value: unknown): WorkstationInstallationIntentV1["ingress"] {
+export function isPrivateIngressInstallationIntent(
+  intent: WorkstationInstallationIntent,
+): intent is WorkstationInstallationIntentV2 {
+  return intent.version === PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION;
+}
+
+export function distributionDocumentTaskId(
+  intent: WorkstationInstallationIntent,
+): DistributionDocumentTaskId {
+  return isPrivateIngressInstallationIntent(intent)
+    ? PRIVATE_INGRESS_DISTRIBUTION_TASK_ID
+    : DISTRIBUTION_TASK_ID;
+}
+
+function parseLegacyIngress(value: unknown): WorkstationInstallationIntentV1["ingress"] {
   if (!isRecord(value)) throw new Error("Ingress intent must be a JSON object.");
   assertExactKeys(value, ["kind", "profileId"]);
   if (

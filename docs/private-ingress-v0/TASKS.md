@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-04 TLS material·last-known-good lifecycle 완료, PI-05 구현 승인 전
-- 다음 작업: `PI-05`
+- PrivateIngress: PI-05 Workstation distribution·maintenance 통합 완료, PI-06 승인 전
+- 다음 작업: `PI-06`
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -163,8 +163,8 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-05. Workstation distribution·maintenance 통합
 
-- [>] **범위**: private ingress intent, plan/apply/status/doctor/reconfigure/rollback을 immutable release와
-  receipt에 연결한다.
+- [x] **범위**: private ingress intent, plan/apply/status/doctor/reconfigure/rollback을 immutable release와
+      receipt에 연결한다.
 - **선행 조건**: PI-03, PI-04
 - **산출물**: config renderer, launchd lifecycle, ownership preflight, transaction/rollback test
 - **완료 조건**:
@@ -174,12 +174,20 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - existing Tailscale distribution regression이 통과한다.
   - pre-existing production source를 허용하는 operator admission을 자동 변경하지 않고 public source로
     넘길 exact target·검증·rollback 절차를 별도 transition plan으로 제시한다.
+- **완료 증거 (2026-09-07)**: 동결된 distribution v1 intent·receipt/Tailscale Gateway config v1을
+  보존하면서 strict `PrivateIngressV0` owner-only 입력, additive distribution v2와 Gateway config v2
+  renderer를 구현했다. Plan/apply는 interface·private DNS·TLS material·exact listener와 artifact/config
+  identity를 approval digest에 결합하고 maintenance worker가 mutation 직전에 재검증한다. Redacted
+  status/doctor, direct HTTPS chain, immutable v2 receipt, source transition plan과 v1 → v2 → v1 rollback을
+  검증했다. Node 24.19.0에서 format, lint, typecheck, 691 passed/4 skipped test, build, E2E 14/14,
+  operations 64, distribution 60과 production smoke 1을 통과했고 public scan은 483 files, findings 0이었다.
+  Production service/source admission, network/DNS/certificate와 remote는 변경하지 않았다.
 - **병렬 경계**: T53이 완료됐다면 T55를 별도 lane에서 시작할 수 있다.
 
 ## PI-06. 자동·격리 acceptance와 public release candidate
 
-- [ ] **범위**: 전체 negative security matrix, HTTP/WSS, actual PTY continuity와 공개 artifact를 검증해
-      production staging 후보 commit을 고정한다.
+- [>] **범위**: 전체 negative security matrix, HTTP/WSS, actual PTY continuity와 공개 artifact를 검증해
+  production staging 후보 commit을 고정한다.
 - **선행 조건**: PI-05와 포함하기로 한 parallel Naru changes의 integration 완료
 - **산출물**: pinned commit/artifact digest, full verification evidence, known limitations, rollback plan
 - **완료 조건**:

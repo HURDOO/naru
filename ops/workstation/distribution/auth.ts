@@ -1,7 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { DISTRIBUTION_SCHEMA_VERSION, WORKSTATION_PACKAGE_ID } from "./constants.js";
-import { createInstanceShortRuntimeRoot, type WorkstationInstallationIntentV1 } from "./model.js";
+import { createInstanceShortRuntimeRoot, type WorkstationInstallationIntent } from "./model.js";
 import { assertPrivateSocket } from "./security.js";
 
 const AUTH_RESPONSE_BYTES = 64 * 1024;
@@ -32,7 +32,7 @@ interface GatewayAuthIntent {
 }
 
 export async function createWorkstationAuthIntent(
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   operation: WorkstationAuthOperation,
 ): Promise<WorkstationAuthIntentResult> {
   const currentUid = process.getuid?.();
@@ -56,7 +56,7 @@ export async function createWorkstationAuthIntent(
   };
 }
 
-export function gatewayAdminSocketPath(intent: WorkstationInstallationIntentV1): string {
+export function gatewayAdminSocketPath(intent: WorkstationInstallationIntent): string {
   return join(createInstanceShortRuntimeRoot(intent), "gateway-admin.sock");
 }
 
@@ -117,7 +117,7 @@ async function requestAuthIntent(
 
 function parseGatewayAuthIntent(
   value: unknown,
-  expectedIntent: WorkstationInstallationIntentV1,
+  expectedIntent: WorkstationInstallationIntent,
   expectedOperation: WorkstationAuthOperation,
   createdAt: number,
   receivedAt: number,

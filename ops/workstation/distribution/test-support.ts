@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  createTestTlsState,
+  type TestTlsState,
+} from "../../../packages/tls-material/test/support.js";
 import { writeDistributionArtifactManifest } from "./artifact.js";
 import {
   ARTIFACT_FEATURE_LOCAL_SESSION_CLI,
   DISTRIBUTION_SCHEMA_VERSION,
+  PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_EXECUTABLE_MODE,
   PRIVATE_FILE_MODE,
@@ -14,8 +19,11 @@ import {
   parseInstallationIntent,
   stableJson,
   type WorkstationInstallationIntentV1,
+  type WorkstationInstallationIntentV2,
 } from "./model.js";
 import { PACKAGED_NODE_RUNTIME } from "./node-runtime.js";
+import type { PrivateIngressPreflightDependencies } from "./private-ingress-preflight.js";
+import type { ListenerProbe } from "./transaction.js";
 import type {
   GatewayVerifierKeySetV1,
   ServiceRuntimeState,
@@ -30,6 +38,13 @@ export interface DistributionFixture {
   readonly nodeExecutable: string;
   readonly codexExecutable: string;
   readonly intent: WorkstationInstallationIntentV1;
+}
+
+export interface PrivateIngressDistributionFixture extends Omit<DistributionFixture, "intent"> {
+  readonly intent: WorkstationInstallationIntentV2;
+  readonly tlsState: TestTlsState;
+  readonly privateIngressPreflight: Partial<PrivateIngressPreflightDependencies>;
+  readonly privateIngressListenerProbe: ListenerProbe;
 }
 
 export function createDistributionFixture(
@@ -89,6 +104,9 @@ export function createDistributionFixture(
     codexExecutable,
     ingress: { kind: "none", profileId: "local-only" },
   });
+  if (intent.version !== DISTRIBUTION_SCHEMA_VERSION) {
+    throw new Error("Legacy distribution fixture created an unexpected intent version.");
+  }
   return {
     root,
     home,
@@ -97,6 +115,60 @@ export function createDistributionFixture(
     nodeExecutable: selectedNodeExecutable,
     codexExecutable,
     intent,
+  };
+}
+
+export function createPrivateIngressDistributionFixture(
+  options: Parameters<typeof createDistributionFixture>[0] = {},
+): PrivateIngressDistributionFixture {
+  const fixture = createDistributionFixture({
+    ...options,
+    origin: "https://naru.fixture.test:8443",
+  });
+  const tlsState = createTestTlsState("naru.fixture.test");
+  const generation = tlsState.createGeneration("generation-a");
+  const intent = parseInstallationIntent({
+    ...fixture.intent,
+    version: PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION,
+    ingress: {
+      contractVersion: "private-ingress.v0",
+      profileId: "private-fixture",
+      kind: "direct-private-tls",
+      network: "wireguard-direct",
+      browserOrigin: fixture.intent.canonicalBrowserOrigin,
+      listener: { host: "10.42.0.2", port: 8443 },
+      tls: {
+        approvedRoot: tlsState.stateDirectory,
+        certificateFile: generation.certificateFile,
+        privateKeyFile: generation.privateKeyFile,
+        reload: "watch-last-known-good",
+        materialOwner: "user",
+        renewalOwner: "external",
+        terminationOwner: "gateway",
+      },
+      sourcePolicy: {
+        mode: "private-ipv4-allowlist",
+        allowedAddresses: ["10.42.0.3"],
+        allowedCidrs: [],
+      },
+    },
+  });
+  if (intent.version !== PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION) {
+    throw new Error("Private ingress fixture created an unexpected intent version.");
+  }
+  return {
+    ...fixture,
+    intent,
+    tlsState,
+    privateIngressPreflight: {
+      interfaces: () => [{ address: "10.42.0.2", family: "IPv4", internal: false }],
+      resolveHostname: () => Promise.resolve([{ address: "10.42.0.2", family: 4 }]),
+    },
+    privateIngressListenerProbe: (targets) =>
+      Promise.resolve({
+        available: true,
+        detail: `fixture available targets=${targets.length}`,
+      }),
   };
 }
 

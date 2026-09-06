@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE, SUPPORTED_NODE_MAJOR } from "./constants.js";
-import type { WorkstationInstallationIntentV1, WorkstationInstanceLayout } from "./model.js";
+import type { WorkstationInstallationIntent, WorkstationInstanceLayout } from "./model.js";
 import type { PackagedNodeRuntimeV1 } from "./node-runtime.js";
 
 const MAX_PRIVATE_JSON_BYTES = 1024 * 1024;
@@ -56,7 +56,7 @@ export interface ManagedPathIssue {
 }
 
 export function inspectTargetEnvironment(
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   packagedRuntime?: PackagedNodeRuntimeV1,
 ): {
   readonly node: NodeRuntimeInspection;

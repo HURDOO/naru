@@ -2,19 +2,28 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseEnv } from "node:util";
+import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { verifyDistributionArtifact } from "./artifact.js";
 import { createInstanceConfiguration } from "./configuration.js";
-import {
-  DISTRIBUTION_SCHEMA_VERSION,
-  DISTRIBUTION_TASK_ID,
-  WORKSTATION_PACKAGE_ID,
-} from "./constants.js";
+import { WORKSTATION_PACKAGE_ID } from "./constants.js";
 import {
   createInstanceLayout,
+  distributionDocumentTaskId,
+  isPrivateIngressInstallationIntent,
   parseInstallationIntent,
   stableJson,
-  type WorkstationInstallationIntentV1,
+  type DistributionDocumentTaskId,
+  type DistributionDocumentVersion,
+  type WorkstationInstallationIntent,
 } from "./model.js";
+import {
+  inspectPrivateIngressPreflight,
+  type PrivateIngressPreflightDependencies,
+} from "./private-ingress-preflight.js";
+import {
+  probePrivateIngressHttps,
+  type PrivateIngressHttpsProbeResult,
+} from "./private-ingress-doctor.js";
 import {
   assertPrivateCredential,
   evaluateCodexDoctor,
@@ -25,15 +34,15 @@ import {
 } from "./security.js";
 import { parseVerifierKeys, type WorkstationRuntimeController } from "./runtime.js";
 import {
-  readCurrentReceipt,
+  readCurrentReceiptForIntent,
   type DistributionCheck,
   type InstallationReceiptV1,
 } from "./transaction.js";
 import { verifyInstanceWebRelease } from "./web-release.js";
 
 export interface WorkstationDoctorReport {
-  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
-  readonly taskId: typeof DISTRIBUTION_TASK_ID;
+  readonly version: DistributionDocumentVersion;
+  readonly taskId: DistributionDocumentTaskId;
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly command: "doctor";
   readonly readOnly: true;
@@ -46,24 +55,32 @@ export interface WorkstationDoctorReport {
 }
 
 export async function doctorDistribution(
-  requestedIntent: WorkstationInstallationIntentV1,
+  requestedIntent: WorkstationInstallationIntent,
   runtime: WorkstationRuntimeController,
-  options: { readonly codexDoctorReport?: unknown } = {},
+  options: {
+    readonly codexDoctorReport?: unknown;
+    readonly privateIngressPreflight?: Partial<PrivateIngressPreflightDependencies>;
+    readonly probePrivateIngressHttps?: (
+      intent: Extract<WorkstationInstallationIntent, { readonly version: 2 }>,
+    ) => Promise<PrivateIngressHttpsProbeResult>;
+  } = {},
 ): Promise<WorkstationDoctorReport> {
   const intent = parseInstallationIntent(requestedIntent);
-  const sourceArtifact = verifyDistributionArtifact(intent.artifactRoot);
-  const sourceLayout = createInstanceLayout(intent, sourceArtifact.summary);
-  const current = readCurrentReceipt(sourceLayout);
+  const current = readCurrentReceiptForIntent(intent);
+  const sourceArtifact =
+    current === undefined ? verifyDistributionArtifact(intent.artifactRoot) : undefined;
+  const sourceLayout =
+    current === undefined ? createInstanceLayout(intent, sourceArtifact!.summary) : undefined;
   const checks: DistributionCheck[] = [];
   if (current === undefined) {
     return {
-      version: DISTRIBUTION_SCHEMA_VERSION,
-      taskId: DISTRIBUTION_TASK_ID,
+      version: intent.version,
+      taskId: distributionDocumentTaskId(intent),
       packageId: WORKSTATION_PACKAGE_ID,
       command: "doctor",
       readOnly: true,
       status: "blocked",
-      namespace: sourceLayout.namespace,
+      namespace: sourceLayout!.namespace,
       canonicalBrowserOrigin: intent.canonicalBrowserOrigin,
       checks: [
         {
@@ -81,6 +98,13 @@ export async function doctorDistribution(
   const installedArtifact = verifyDistributionArtifact(current.artifact.root);
   const layout = createInstanceLayout(current.intent, installedArtifact.summary);
   const expected = createInstanceConfiguration(current.intent, installedArtifact.summary, layout);
+  if (isPrivateIngressInstallationIntent(current.intent)) {
+    const preflight = await inspectPrivateIngressPreflight(
+      current.intent,
+      options.privateIngressPreflight,
+    );
+    checks.push(...preflight.checks);
+  }
   checks.push({
     id: "receipt.current",
     status: "ok",
@@ -88,6 +112,19 @@ export async function doctorDistribution(
     actual: `${current.receiptId}:${current.artifact.buildId}`,
     owner: "package",
   });
+  if (isPrivateIngressInstallationIntent(current.intent)) {
+    const actualDigest = await digestPrivateIngressIntentV0(current.intent.ingress);
+    checks.push({
+      id: "receipt.private-ingress-intent",
+      status: actualDigest === current.privateIngressIntentDigest ? "ok" : "blocked",
+      expected: "the immutable receipt digest matches its normalized private ingress intent",
+      actual: actualDigest === current.privateIngressIntentDigest ? "verified" : "digest mismatch",
+      owner: "package",
+      ...(actualDigest === current.privateIngressIntentDigest
+        ? {}
+        : { remediation: "Restore an earlier immutable receipt and rerun doctor." }),
+    });
+  }
 
   checks.push(
     fileContentCheck("config.instance", layout.files.instance, expected.instance, layout.uid),
@@ -169,6 +206,36 @@ export async function doctorDistribution(
     });
   }
   await appendReadinessChecks(checks, runtime, layout);
+  if (isPrivateIngressInstallationIntent(current.intent)) {
+    const directProbe = await (options.probePrivateIngressHttps ?? probePrivateIngressHttps)(
+      current.intent,
+    );
+    checks.push({
+      id: "private-ingress.https-chain",
+      status:
+        directProbe.status === "ready"
+          ? "ok"
+          : directProbe.status === "external-client-required"
+            ? "warning"
+            : "unavailable",
+      expected: "exact direct HTTPS reaches a ready Gateway while Host and Naru are ready",
+      actual:
+        directProbe.status === "ready"
+          ? "verified with the expected TLS material"
+          : directProbe.status === "external-client-required"
+            ? "the server address is not admitted as a source"
+            : "direct HTTPS probe failed",
+      owner: directProbe.status === "external-client-required" ? "browser" : "system",
+      ...(directProbe.status === "ready"
+        ? {}
+        : {
+            remediation:
+              directProbe.status === "external-client-required"
+                ? "Complete the HTTPS browser-chain check from an approved private source."
+                : "Restore the exact private listener and rerun doctor.",
+          }),
+    });
+  }
 
   const codexAssessment =
     options.codexDoctorReport === undefined
@@ -192,8 +259,8 @@ export async function doctorDistribution(
   });
 
   return {
-    version: DISTRIBUTION_SCHEMA_VERSION,
-    taskId: DISTRIBUTION_TASK_ID,
+    version: current.intent.version,
+    taskId: distributionDocumentTaskId(current.intent),
     packageId: WORKSTATION_PACKAGE_ID,
     command: "doctor",
     readOnly: true,

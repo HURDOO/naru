@@ -28,6 +28,32 @@ compatibility service와 package-managed instance service는 서로 다른 names
 - package는 loopback runtime과 launchd만 다룬다. Tailscale/DNS/TLS/listener apply, passkey owner
   bootstrap, notification permission, PWA 설치와 Codex hook trust는 별도 plan/사용자 판단이다.
 
+## Private Ingress v2 intent
+
+기존 distribution v1 intent와 Tailscale Gateway config v1은 그대로 지원한다. Direct private TLS는
+`@naru/contracts/private-ingress/v0`를 만족하는 owner-only JSON file(`0600` 권장)을 하나로 받아
+distribution intent v2와 Gateway config v2를 만든다. Private Origin, listener, source address/CIDR와
+TLS path를 command-line flag로 나누지 않는다.
+
+```text
+workstation intent --json \
+  --slug <instance-slug> \
+  --artifact <expanded-artifact> \
+  --private-ingress <owner-only-private-ingress-v0.json> \
+  --project-root <dedicated-allowed-parent> \
+  --shell <canonical-shell> \
+  --codex <canonical-codex>
+```
+
+`plan --operation apply`/`apply`, `status`, `doctor`, `reconfigure`과 `rollback`을 사용한다.
+`apply`는 fresh installation의 명시적 alias이며 기존 `install` command를 제거하지 않는다.
+Plan과 receipt는 exact private intent를 digest로 결합하지만 일반 JSON 출력은 profile, Origin,
+listener와 TLS path를 redaction한다. Mutation 완료는 owner-only result file을 직접 노출하지
+않고 `status`/`doctor`로 확인한다.
+
+Source transition은 [`docs/private-ingress-v0/SOURCE_TRANSITION.md`](../../../docs/private-ingress-v0/SOURCE_TRANSITION.md)를
+따른다. PI-05 command는 production repository admission이나 pre-existing deployment를 변경하지 않는다.
+
 ## owner passkey bootstrap과 recovery
 
 설치·network doctor가 canonical HTTPS Origin과 Gateway admin UDS를 확인한 뒤 target user가 직접

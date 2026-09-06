@@ -6,9 +6,10 @@ import {
 } from "./constants.js";
 import type {
   DistributionArtifactSummary,
-  WorkstationInstallationIntentV1,
+  WorkstationInstallationIntent,
   WorkstationInstanceLayout,
 } from "./model.js";
+import { isPrivateIngressInstallationIntent } from "./model.js";
 import { stableJson } from "./model.js";
 
 const NARU_APP_CAPABILITIES = [
@@ -52,7 +53,7 @@ export interface GeneratedInstanceConfiguration {
 }
 
 export function createInstanceConfiguration(
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   artifact: DistributionArtifactSummary,
   layout: WorkstationInstanceLayout,
 ): GeneratedInstanceConfiguration {
@@ -168,8 +169,7 @@ export function createInstanceConfiguration(
       },
     ],
   };
-  const gateway = {
-    version: 1,
+  const gatewayCommon = {
     instanceId: layout.namespace,
     ownerSubject: layout.ownerSubject,
     browserOrigin: layout.browser.origin,
@@ -177,8 +177,6 @@ export function createInstanceConfiguration(
     rpName: "Naru Workstation",
     dataDirectory: layout.directories.gatewayData,
     adminSocketPath: layout.sockets.gatewayAdmin,
-    listenHost: "127.0.0.1",
-    listenPort: layout.ports.gateway,
     sessionCookieName: layout.cookieName,
     appRegistrations: [
       {
@@ -191,6 +189,18 @@ export function createInstanceConfiguration(
       },
     ],
   };
+  const gateway = isPrivateIngressInstallationIntent(intent)
+    ? {
+        version: 2 as const,
+        ...gatewayCommon,
+        browserIngress: intent.ingress,
+      }
+    : {
+        version: 1 as const,
+        ...gatewayCommon,
+        listenHost: "127.0.0.1" as const,
+        listenPort: layout.ports.gateway,
+      };
   const durableRoots = Object.fromEntries(
     layout.rootMappings.map((root) => [root.rootId, root.path]),
   );
@@ -220,7 +230,7 @@ export function createInstanceConfiguration(
     NARU_CODEX_INTEGRATION_SOCKET_PATH: layout.sockets.naruIntegration,
   };
   const instance = {
-    version: 1,
+    version: intent.version,
     packageId: layout.packageId,
     installationId: layout.installationId,
     namespace: layout.namespace,
@@ -275,7 +285,7 @@ function quoteEnvironmentValue(value: string, name: string): string {
 
 function renderLaunchAgent(
   service: ServiceName,
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   layout: WorkstationInstanceLayout,
 ): string {
   const runtime = service !== "maintenance";

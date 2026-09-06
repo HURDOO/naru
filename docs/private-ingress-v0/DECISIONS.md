@@ -161,3 +161,28 @@
   credential이나 TLS byte를 기록하지 않는다.
 - 호환성: `PrivateIngressV0`, Gateway config v1/v2와 기존 Naru TLS environment/generation 형식은 바꾸지
   않는다. Distribution renderer와 production activation은 PI-05 이후에만 수행한다.
+
+## PI-D016. Direct distribution은 additive v2 intent·receipt로 격리한다
+
+- 상태: accepted
+- 결정: 동결된 Workstation distribution v1 intent·receipt와 Tailscale Gateway config v1 renderer를
+  계속 읽고 rollback한다. `direct-private-tls`는 완전한 `PrivateIngressV0`를 갖는 distribution
+  v2 intent와 PI-05 receipt로만 생성하고 Gateway config v2를 render한다.
+- 입력 경계: Origin, listener, source policy와 TLS reference는 command-line flag로 나누지 않고
+  canonical owner-only private ingress file 하나에서 읽는다. v1 field와 혼합하거나 invalid v2를
+  v1으로 fallback하지 않는다.
+- approval: normalized private intent digest, operation, source commit, artifact/config identity,
+  interface·DNS·TLS·listener와 package state fingerprint를 하나의 plan digest에 결합하고
+  maintenance worker가 mutation 직전에 다시 검증한다.
+- 진단: exact intent·receipt는 owner-only로 보존하고 일반 plan/status/doctor/result는 Origin,
+  address, profile과 path를 redaction한다.
+
+## PI-D017. Production source transition은 plan이 제시하고 operator가 별도 승인한다
+
+- 상태: accepted
+- 결정: PI-05 plan은 artifact의 exact source commit, manifest/payload digest와 Gateway config digest를
+  `sourceTransition` target으로 제시하지만 production repository admission을 변경하지 않는다.
+- 전환: operator-private repository identity와 exact target을 PI-07/PI-08에서 fresh approval로 결합한다.
+  admission이 거부하면 manual stop/deploy/bootstrap으로 우회하지 않는다.
+- rollback: pre-existing service, data와 source admission을 soak 종료 전까지 보존하고 실패 시
+  package-owned candidate만 이전 immutable receipt와 listener로 복원한다.

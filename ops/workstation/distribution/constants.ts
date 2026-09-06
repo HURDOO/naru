@@ -2,6 +2,8 @@ export const WORKSTATION_PACKAGE_ID = "kr.hurdoo.naru.workstation";
 
 export const DISTRIBUTION_SCHEMA_VERSION = 1 as const;
 export const DISTRIBUTION_TASK_ID = "workstation-v0/T14" as const;
+export const PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION = 2 as const;
+export const PRIVATE_INGRESS_DISTRIBUTION_TASK_ID = "private-ingress-v0/PI-05" as const;
 export const ARTIFACT_PLATFORM = "darwin" as const;
 export const ARTIFACT_ARCHITECTURE = "arm64" as const;
 export const SUPPORTED_NODE_MAJOR = 24;

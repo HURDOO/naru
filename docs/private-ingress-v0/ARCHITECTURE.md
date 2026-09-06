@@ -142,9 +142,24 @@ private intent
   -> immutable receipt
 ```
 
+Distribution v1 intent·receipt와 Tailscale Gateway config v1은 역호환 경계로 계속 읽고
+rollback한다. Direct mode는 owner-only `PrivateIngressV0` file에서 distribution v2 intent를 만들고
+Gateway config v2를 render한다. 두 version을 혼합하거나 invalid direct intent를 loopback으로
+fallback하지 않는다.
+
+Plan fingerprint는 operation, normalized private-ingress digest, artifact source commit/manifest/payload,
+rendered config, current receipt·service·managed file, active interface, normalized DNS answer, TLS material
+revision/expiry와 exact listener availability를 결합한다. Release-local maintenance worker가 같은
+preflight를 다시 실행해 하나라도 달라지면 stale approval을 거부한다.
+
 apply 실패는 package-owned candidate만 정리하거나 이전 receipt로 복귀한다. DNS, WireGuard,
 certificate generation과 legacy service를 자동 수정하거나 제거하지 않는다. canonical port cutover는
 기존 service backup·active PTY 확인·독립 rollback 경로가 준비된 별도 production 승인 작업이다.
+
+`status`는 current receipt, maintenance와 service state를 read-only로 보고한다. `doctor`는 Host UDS,
+Naru loopback, Gateway admin, private ingress preflight와 direct HTTPS readiness를 검사한다. Server listener
+address가 source policy에 없으면 그 경계를 우회하지 않고 approved external browser source의
+PI-07 검증이 필요하다고 보고한다.
 
 ## 7. Public source와 private instance state
 

@@ -5,14 +5,18 @@ import { userInfo } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DISTRIBUTION_SCHEMA_VERSION, WORKSTATION_PACKAGE_ID } from "./constants.js";
+import { PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION } from "./constants.js";
+import { PrivateIngressV0Schema } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { createWorkstationAuthIntent, type WorkstationAuthOperation } from "./auth.js";
 import { verifyDistributionArtifact } from "./artifact.js";
 import { doctorDistribution } from "./doctor.js";
+import { redactDistributionPlan, redactDoctorReport, redactPublicError } from "./redaction.js";
+import { statusDistribution } from "./status.js";
 import {
   artifactNodeExecutable,
   parseInstallationIntent,
   type IngressKind,
-  type WorkstationInstallationIntentV1,
+  type WorkstationInstallationIntent,
 } from "./model.js";
 import { MacOsLaunchctlRuntimeController } from "./runtime.js";
 import {
@@ -21,7 +25,7 @@ import {
   type DistributionOperation,
 } from "./transaction.js";
 
-type Command = "intent" | "plan" | "doctor" | "auth" | DistributionOperation;
+type Command = "intent" | "plan" | "status" | "doctor" | "auth" | "apply" | DistributionOperation;
 
 interface ParsedArguments {
   readonly command: Command;
@@ -38,12 +42,13 @@ interface IntentOptions {
   readonly installationId: string;
   readonly slug: string;
   readonly artifactRoot: string;
-  readonly canonicalBrowserOrigin: string;
+  readonly canonicalBrowserOrigin?: string;
   readonly projectRoots: readonly string[];
   readonly nodeExecutable?: string;
   readonly shellExecutable: string;
   readonly codexExecutable: string;
   readonly vapidSubject?: string;
+  readonly privateIngressFile?: string;
   readonly ingressKind: IngressKind;
   readonly ingressProfileId: string;
 }
@@ -65,16 +70,25 @@ export async function runDistributionCli(arguments_: readonly string[]): Promise
     }
     if (parsed.command === "doctor") {
       const report = await doctorDistribution(intent, runtime);
-      writeJson(report);
+      writeJson(redactDoctorReport(report));
       return report.status === "healthy" ? 0 : report.status === "degraded" ? 3 : 4;
     }
+    if (parsed.command === "status") {
+      const report = await statusDistribution(intent, runtime);
+      writeJson(report);
+      return report.status === "healthy" || report.status === "not-installed" ? 0 : 3;
+    }
     const operation =
-      parsed.command === "plan" ? (parsed.operation as DistributionOperation) : parsed.command;
+      parsed.command === "plan"
+        ? (parsed.operation as DistributionOperation)
+        : parsed.command === "apply"
+          ? "install"
+          : parsed.command;
     const plan = await planDistribution(intent, operation, runtime, {
       ...(parsed.targetReceiptId === undefined ? {} : { targetReceiptId: parsed.targetReceiptId }),
     });
     if (parsed.command === "plan") {
-      writeJson(plan);
+      writeJson(redactDistributionPlan(plan));
       return plan.status === "ready" ? 0 : plan.status === "needs-input" ? 3 : 4;
     }
     if (parsed.approvedDigest === undefined) {
@@ -82,13 +96,13 @@ export async function runDistributionCli(arguments_: readonly string[]): Promise
     }
     const request = stageMaintenanceHandoff(plan, parsed.approvedDigest, runtime);
     writeJson({
-      version: DISTRIBUTION_SCHEMA_VERSION,
+      version: plan.targetIntent.version,
       packageId: WORKSTATION_PACKAGE_ID,
       status: "handed-off",
-      operation: parsed.command,
+      operation,
       requestId: request.requestId,
       maintenanceLabel: plan.layout.labels.maintenance,
-      resultFile: plan.layout.files.maintenanceResult,
+      resultFile: "[owner-only-result-file]",
       callerPreserved: process.env.NARU_PTY_HOSTED === "1",
     });
     return 0;
@@ -99,7 +113,7 @@ export async function runDistributionCli(arguments_: readonly string[]): Promise
           version: DISTRIBUTION_SCHEMA_VERSION,
           packageId: WORKSTATION_PACKAGE_ID,
           status: "error",
-          message: error instanceof Error ? error.message : "Unknown Workstation CLI failure.",
+          message: redactPublicError(error),
         },
         null,
         2,
@@ -114,8 +128,10 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   if (
     command !== "intent" &&
     command !== "plan" &&
+    command !== "status" &&
     command !== "doctor" &&
     command !== "auth" &&
+    command !== "apply" &&
     command !== "install" &&
     command !== "upgrade" &&
     command !== "reconfigure" &&
@@ -141,6 +157,8 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   let shellExecutable: string | undefined;
   let codexExecutable: string | undefined;
   let vapidSubject: string | undefined;
+  let privateIngressFile: string | undefined;
+  let ingressOptionProvided = false;
   let ingressKind: IngressKind = "none";
   let ingressProfileId = "local-only";
 
@@ -161,14 +179,15 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         break;
       case "--operation":
         if (
+          value !== "apply" &&
           value !== "install" &&
           value !== "upgrade" &&
           value !== "reconfigure" &&
           value !== "rollback"
         ) {
-          throw new Error("--operation must be install, upgrade, reconfigure, or rollback.");
+          throw new Error("--operation must be apply, install, upgrade, reconfigure, or rollback.");
         }
-        operation = singleValue(operation, value, argument);
+        operation = singleValue(operation, value === "apply" ? "install" : value, argument);
         break;
       case "--approve-digest":
         approvedDigest = singleValue(approvedDigest, value, argument);
@@ -204,6 +223,7 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         vapidSubject = singleValue(vapidSubject, value, argument);
         break;
       case "--ingress-kind":
+        ingressOptionProvided = true;
         if (
           value !== "none" &&
           value !== "tailscale-serve" &&
@@ -215,7 +235,11 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         ingressKind = value;
         break;
       case "--ingress-profile":
+        ingressOptionProvided = true;
         ingressProfileId = value;
+        break;
+      case "--private-ingress":
+        privateIngressFile = singleValue(privateIngressFile, resolve(value), argument);
         break;
       default:
         throw new Error(`Unknown argument: ${argument ?? ""}.\n${usage()}`);
@@ -227,12 +251,20 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
     if (
       slug === undefined ||
       artifactRoot === undefined ||
-      canonicalBrowserOrigin === undefined ||
+      (canonicalBrowserOrigin === undefined && privateIngressFile === undefined) ||
       projectRoots.length === 0 ||
       shellExecutable === undefined ||
       codexExecutable === undefined
     ) {
       throw new Error(`intent is missing a required option.\n${usage()}`);
+    }
+    if (
+      privateIngressFile !== undefined &&
+      (canonicalBrowserOrigin !== undefined || ingressOptionProvided)
+    ) {
+      throw new Error(
+        "--private-ingress cannot be combined with --origin or legacy ingress options.",
+      );
     }
     return {
       command,
@@ -241,12 +273,13 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         installationId,
         slug,
         artifactRoot,
-        canonicalBrowserOrigin,
+        ...(canonicalBrowserOrigin === undefined ? {} : { canonicalBrowserOrigin }),
         projectRoots,
         ...(nodeExecutable === undefined ? {} : { nodeExecutable }),
         shellExecutable,
         codexExecutable,
         ...(vapidSubject === undefined ? {} : { vapidSubject }),
+        ...(privateIngressFile === undefined ? {} : { privateIngressFile }),
         ingressKind,
         ingressProfileId,
       },
@@ -273,8 +306,11 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   if (command === "rollback" && targetReceiptId === undefined) {
     throw new Error("rollback requires --target-receipt.");
   }
-  if (command === "doctor" && (approvedDigest !== undefined || operation !== undefined)) {
-    throw new Error("doctor is read-only and does not accept operation approval arguments.");
+  if (
+    (command === "doctor" || command === "status") &&
+    (approvedDigest !== undefined || operation !== undefined || targetReceiptId !== undefined)
+  ) {
+    throw new Error(`${command} is read-only and does not accept operation approval arguments.`);
   }
   return {
     command,
@@ -286,7 +322,7 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   };
 }
 
-function createIntent(options: IntentOptions): WorkstationInstallationIntentV1 {
+function createIntent(options: IntentOptions): WorkstationInstallationIntent {
   const identity = userInfo();
   const artifact = verifyDistributionArtifact(options.artifactRoot);
   if (artifact.summary.nodeRuntime !== undefined && options.nodeExecutable !== undefined) {
@@ -296,25 +332,38 @@ function createIntent(options: IntentOptions): WorkstationInstallationIntentV1 {
     throw new Error("Legacy artifacts require an explicit --node executable.");
   }
   const nodeExecutable = artifactNodeExecutable(artifact.summary, options.nodeExecutable);
+  const privateIngress =
+    options.privateIngressFile === undefined
+      ? undefined
+      : PrivateIngressV0Schema.parse(
+          readOwnerOnlyJson(options.privateIngressFile, "Private ingress"),
+        );
   return parseInstallationIntent({
-    version: DISTRIBUTION_SCHEMA_VERSION,
+    version:
+      privateIngress === undefined
+        ? DISTRIBUTION_SCHEMA_VERSION
+        : PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION,
     packageId: WORKSTATION_PACKAGE_ID,
     installationId: options.installationId,
     slug: options.slug,
     targetUid: identity.uid,
     homeDirectory: identity.homedir,
     artifactRoot: options.artifactRoot,
-    canonicalBrowserOrigin: options.canonicalBrowserOrigin,
+    canonicalBrowserOrigin: privateIngress?.browserOrigin ?? options.canonicalBrowserOrigin,
     allowedProjectRoots: options.projectRoots,
     nodeExecutable,
     shellExecutable: options.shellExecutable,
     codexExecutable: options.codexExecutable,
     ...(options.vapidSubject === undefined ? {} : { vapidSubject: options.vapidSubject }),
-    ingress: { kind: options.ingressKind, profileId: options.ingressProfileId },
+    ingress: privateIngress ?? { kind: options.ingressKind, profileId: options.ingressProfileId },
   });
 }
 
-function readPrivateIntent(path: string): WorkstationInstallationIntentV1 {
+function readPrivateIntent(path: string): WorkstationInstallationIntent {
+  return parseInstallationIntent(readOwnerOnlyJson(path, "Intent"));
+}
+
+function readOwnerOnlyJson(path: string, label: string): unknown {
   const metadata = lstatSync(path);
   if (
     !metadata.isFile() ||
@@ -324,13 +373,13 @@ function readPrivateIntent(path: string): WorkstationInstallationIntentV1 {
     realpathSync(path) !== path ||
     metadata.size > 256 * 1024
   ) {
-    throw new Error("Intent must be a canonical owner-only regular file.");
+    throw new Error(`${label} must be a canonical owner-only regular file.`);
   }
   try {
-    return parseInstallationIntent(JSON.parse(readFileSync(path, "utf8")) as unknown);
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error("Intent file is invalid JSON.", { cause: error });
+      throw new Error(`${label} file is invalid JSON.`, { cause: error });
     }
     throw error;
   }
@@ -347,15 +396,16 @@ function writeJson(value: unknown): void {
 
 function usage(): string {
   return [
-    "Usage: workstation <intent|plan|doctor|install|upgrade|reconfigure|rollback> --json",
+    "Usage: workstation <intent|plan|status|doctor|apply|install|upgrade|reconfigure|rollback> --json",
     "  intent: --slug <label> --artifact <expanded-artifact> --origin <https-origin>",
     "          --project-root <allowed-parent> [--project-root ...]",
     "          --shell <shell> --codex <codex> [--node <legacy-external-node24>]",
     "          [--installation-id <uuid>] [--vapid-subject <https-or-mailto>]",
     "          [--ingress-kind <none|tailscale-serve|wireguard-direct|trusted-lan>]",
     "          [--ingress-profile <id>]",
-    "  plan: --intent <private-intent.json> --operation <operation> [--target-receipt <uuid>]",
-    "  doctor: --intent <private-intent.json>",
+    "          or --private-ingress <owner-only-private-ingress-v0.json> instead of --origin/legacy ingress",
+    "  plan: --intent <private-intent.json> --operation <apply|install|upgrade|reconfigure|rollback>",
+    "  status|doctor: --intent <private-intent.json>",
     "  auth bootstrap|recover: --intent <private-intent.json>",
     "  mutation: --intent <private-intent.json> --approve-digest <sha256>",
     "            rollback also requires --target-receipt <uuid>",

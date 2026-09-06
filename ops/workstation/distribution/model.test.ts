@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseEnv } from "node:util";
 import { DurableSessionHostConfigSchema } from "../../../apps/durable-session-host/src/config.js";
+import { WorkstationGatewayConfigSchema } from "../../../apps/workstation-gateway/src/config.js";
 import { verifyDistributionArtifact } from "./artifact.js";
 import { createInstanceConfiguration, renderEnvironmentFile } from "./configuration.js";
 import {
@@ -9,7 +10,10 @@ import {
   describeOriginTransition,
   parseInstallationIntent,
 } from "./model.js";
-import { createDistributionFixture } from "./test-support.js";
+import {
+  createDistributionFixture,
+  createPrivateIngressDistributionFixture,
+} from "./test-support.js";
 
 describe("T14 distribution identity and configuration", () => {
   it("derives a private namespace and four package-owned labels without user data", () => {
@@ -136,6 +140,55 @@ describe("T14 distribution identity and configuration", () => {
     });
     expect(generated.instance.localSessionCli).toEqual(generated.localSessionCli);
     expect(JSON.stringify(generated)).not.toContain("/Users/example/projects/my-app");
+  });
+
+  it("renders direct private ingress only through versioned Gateway config v2", () => {
+    const fixture = createPrivateIngressDistributionFixture();
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(fixture.intent, artifact.summary);
+    const generated = createInstanceConfiguration(fixture.intent, artifact.summary, layout);
+
+    expect(fixture.intent.version).toBe(2);
+    expect(generated.gateway).toMatchObject({
+      version: 2,
+      browserOrigin: fixture.intent.ingress.browserOrigin,
+      ingressProfileId: fixture.intent.ingress.profileId,
+      browserIngress: fixture.intent.ingress,
+    });
+    expect(generated.gateway).not.toHaveProperty("listenHost");
+    expect(generated.gateway).not.toHaveProperty("listenPort");
+    expect(() => WorkstationGatewayConfigSchema.parse(generated.gateway)).not.toThrow();
+  });
+
+  it("preserves the frozen Tailscale distribution as Gateway config v1", () => {
+    const fixture = createDistributionFixture();
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      ingress: { kind: "tailscale-serve", profileId: "tailscale-primary" },
+    });
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(intent, artifact.summary);
+    const generated = createInstanceConfiguration(intent, artifact.summary, layout);
+
+    expect(intent.version).toBe(1);
+    expect(generated.gateway).toMatchObject({
+      version: 1,
+      listenHost: "127.0.0.1",
+      listenPort: layout.ports.gateway,
+      ingressProfileId: "tailscale-primary",
+    });
+    expect(generated.gateway).not.toHaveProperty("browserIngress");
+    expect(() => WorkstationGatewayConfigSchema.parse(generated.gateway)).not.toThrow();
+  });
+
+  it("rejects private ingress Origin drift instead of falling back to legacy config", () => {
+    const fixture = createPrivateIngressDistributionFixture();
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        canonicalBrowserOrigin: "https://other.fixture.test:8443",
+      }),
+    ).toThrow(/must match/);
   });
 
   it("models port and hostname replacement without accumulating an allowlist", () => {

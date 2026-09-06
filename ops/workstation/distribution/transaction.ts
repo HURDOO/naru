@@ -12,11 +12,14 @@ import {
 } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
+import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import {
   ARTIFACT_FEATURE_LOCAL_SESSION_CLI,
   DISTRIBUTION_SCHEMA_VERSION,
   DISTRIBUTION_TASK_ID,
   PRIVATE_FILE_MODE,
+  PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION,
+  PRIVATE_INGRESS_DISTRIBUTION_TASK_ID,
   RUNTIME_SERVICE_NAMES,
   WORKSTATION_PACKAGE_ID,
   type RuntimeServiceName,
@@ -34,14 +37,20 @@ import {
 import { installOrUpdateInstanceCredentials } from "./credentials.js";
 import {
   createInstanceLayout,
+  createInstanceNamespace,
+  createInstanceOwnershipReceiptPath,
   artifactNodeExecutable,
   describeOriginTransition,
   digestJson,
+  distributionDocumentTaskId,
+  isPrivateIngressInstallationIntent,
   parseInstallationIntent,
   stableJson,
+  type DistributionDocumentTaskId,
+  type DistributionDocumentVersion,
   type DistributionArtifactSummary,
   type OriginTransition,
-  type WorkstationInstallationIntentV1,
+  type WorkstationInstallationIntent,
   type WorkstationInstanceLayout,
 } from "./model.js";
 import {
@@ -64,6 +73,10 @@ import {
 } from "./runtime.js";
 import { renderInstanceWebRelease, type InstanceWebReleaseReceiptV1 } from "./web-release.js";
 import { parsePackagedNodeRuntime } from "./node-runtime.js";
+import {
+  inspectPrivateIngressPreflight,
+  type PrivateIngressPreflightDependencies,
+} from "./private-ingress-preflight.js";
 
 export type DistributionOperation = "install" | "upgrade" | "reconfigure" | "rollback";
 export type DistributionPlanStatus = "ready" | "blocked" | "needs-input";
@@ -96,8 +109,8 @@ export interface DistributionConfigurationDigests {
 }
 
 export interface InstallationReceiptV1 {
-  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
-  readonly taskId: typeof DISTRIBUTION_TASK_ID;
+  readonly version: DistributionDocumentVersion;
+  readonly taskId: DistributionDocumentTaskId;
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly receiptId: string;
   readonly sequence: number;
@@ -110,7 +123,9 @@ export interface InstallationReceiptV1 {
   readonly supersedesReceiptId?: string;
   readonly appliedAt: string;
   readonly artifact: DistributionArtifactSummary;
-  readonly intent: WorkstationInstallationIntentV1;
+  readonly intent: WorkstationInstallationIntent;
+  readonly privateIngressIntentDigest?: string;
+  readonly sourceCommit?: string;
   readonly configurationDigests: DistributionConfigurationDigests;
   readonly webRelease: InstanceWebReleaseReceiptV1;
   readonly vapidPublicKeyFingerprint: string;
@@ -118,8 +133,8 @@ export interface InstallationReceiptV1 {
 }
 
 export interface DistributionPlan {
-  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
-  readonly taskId: typeof DISTRIBUTION_TASK_ID;
+  readonly version: DistributionDocumentVersion;
+  readonly taskId: DistributionDocumentTaskId;
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly command: "plan";
   readonly readOnly: true;
@@ -127,9 +142,12 @@ export interface DistributionPlan {
   readonly status: DistributionPlanStatus;
   readonly planDigest: string;
   readonly stateFingerprint: string;
+  readonly listenerPreflight: "verified" | "skipped-test";
   readonly targetReceiptId?: string;
-  readonly requestedIntent: WorkstationInstallationIntentV1;
-  readonly targetIntent: WorkstationInstallationIntentV1;
+  readonly requestedIntent: WorkstationInstallationIntent;
+  readonly targetIntent: WorkstationInstallationIntent;
+  readonly privateIngressIntentDigest?: string;
+  readonly sourceTransition?: OperatorSourceTransitionPlan;
   readonly artifact: DistributionArtifactSummary;
   readonly layout: WorkstationInstanceLayout;
   readonly currentReceipt?: InstallationReceiptV1;
@@ -141,19 +159,33 @@ export interface DistributionPlan {
   readonly approvalBoundaries: readonly string[];
 }
 
+export interface OperatorSourceTransitionPlan {
+  readonly mutation: "none";
+  readonly requiresSeparateOperatorApproval: true;
+  readonly exactTarget: {
+    readonly sourceCommit: string;
+    readonly artifactManifestDigest: string;
+    readonly artifactPayloadDigest: string;
+    readonly gatewayConfigurationDigest: string;
+  };
+  readonly verification: readonly string[];
+  readonly rollback: readonly string[];
+}
+
 export interface MaintenanceRequestV1 {
-  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
+  readonly version: DistributionDocumentVersion;
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly requestId: string;
   readonly issuedAt: string;
   readonly approvedPlanDigest: string;
   readonly operation: DistributionOperation;
+  readonly listenerPreflight: "verified" | "skipped-test";
   readonly targetReceiptId?: string;
-  readonly intent: WorkstationInstallationIntentV1;
+  readonly intent: WorkstationInstallationIntent;
 }
 
 export interface MaintenanceResultV1 {
-  readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
+  readonly version: DistributionDocumentVersion;
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly requestId: string;
   readonly operation: DistributionOperation;
@@ -168,21 +200,37 @@ export interface MaintenanceResultV1 {
   readonly error?: string;
 }
 
+export interface ListenerProbeTarget {
+  readonly host: string;
+  readonly port: number;
+}
+
+export type ListenerProbe = (
+  targets: readonly ListenerProbeTarget[],
+) => Promise<{ readonly available: boolean; readonly detail: string }>;
+
 export async function planDistribution(
-  requestedIntent: WorkstationInstallationIntentV1,
+  requestedIntent: WorkstationInstallationIntent,
   operation: DistributionOperation,
   runtime: WorkstationRuntimeController,
-  options: { readonly targetReceiptId?: string; readonly probePorts?: boolean } = {},
+  options: {
+    readonly targetReceiptId?: string;
+    readonly probePorts?: boolean;
+    readonly probeListenerTargets?: ListenerProbe;
+    readonly privateIngressPreflight?: Partial<PrivateIngressPreflightDependencies>;
+  } = {},
 ): Promise<DistributionPlan> {
   const normalizedRequest = parseInstallationIntent(requestedIntent);
   const requestedArtifact = verifyDistributionArtifact(normalizedRequest.artifactRoot);
   const requestedLayout = createInstanceLayout(normalizedRequest, requestedArtifact.summary);
   const currentReceipt = readCurrentReceipt(requestedLayout);
   assertReceiptIdentity(currentReceipt, requestedLayout);
+  await assertPrivateIngressReceiptDigest(currentReceipt);
   const rollbackReceipt =
     operation === "rollback"
       ? readRollbackReceipt(requestedLayout, requiredTargetReceiptId(options))
       : undefined;
+  await assertPrivateIngressReceiptDigest(rollbackReceipt);
   const targetIntent =
     rollbackReceipt === undefined
       ? normalizedRequest
@@ -205,7 +253,21 @@ export async function planDistribution(
     layout,
     configuration,
   );
+  const privateIngressIntentDigest = isPrivateIngressInstallationIntent(targetIntent)
+    ? await digestPrivateIngressIntentV0(targetIntent.ingress)
+    : undefined;
+  const sourceTransition = isPrivateIngressInstallationIntent(targetIntent)
+    ? createOperatorSourceTransitionPlan(
+        artifact.manifest.sourceCommit,
+        artifact.summary,
+        configurationDigests.gateway,
+      )
+    : undefined;
   const checks: DistributionCheck[] = [];
+  const privateIngressPreflight = isPrivateIngressInstallationIntent(targetIntent)
+    ? await inspectPrivateIngressPreflight(targetIntent, options.privateIngressPreflight)
+    : undefined;
+  if (privateIngressPreflight !== undefined) checks.push(...privateIngressPreflight.checks);
 
   try {
     const expectedNodeExecutable = artifactNodeExecutable(
@@ -287,15 +349,31 @@ export async function planDistribution(
       : {}),
   });
 
+  const portTargets = listenerProbeTargets(targetIntent, layout, currentReceipt);
   const portProbe =
-    options.probePorts === false || currentReceipt !== undefined
-      ? { available: true, detail: "existing instance owns the unchanged loopback allocation" }
-      : await probePorts([layout.ports.gateway, layout.ports.naru]);
+    options.probePorts === false || portTargets.length === 0
+      ? { available: true, detail: "listener probe skipped or current receipt owns the targets" }
+      : await (options.probeListenerTargets ?? probeListenerTargets)(portTargets);
+  const listenerPreflight = options.probePorts === false ? "skipped-test" : "verified";
+  const listenerStateFingerprint = digestJson({
+    purpose: "naru.workstation.listener-preflight.v1",
+    mode: listenerPreflight,
+    available: portProbe.available,
+    targetCount: portTargets.length,
+  });
   checks.push({
-    id: "listener.loopback-allocation",
+    id: isPrivateIngressInstallationIntent(targetIntent)
+      ? "private-ingress.listener-allocation"
+      : "listener.loopback-allocation",
     status: portProbe.available ? "ok" : "blocked",
-    expected: "two distinct exact loopback ports without another listener",
-    actual: portProbe.detail,
+    expected: isPrivateIngressInstallationIntent(targetIntent)
+      ? "the exact private listener and loopback upstream ports are package-available"
+      : "two distinct exact loopback ports without another listener",
+    actual: isPrivateIngressInstallationIntent(targetIntent)
+      ? portProbe.available
+        ? "exact listener targets available or receipt-owned"
+        : "an exact listener target is unavailable"
+      : portProbe.detail,
     owner: "system",
     ...(portProbe.available
       ? {}
@@ -324,7 +402,13 @@ export async function planDistribution(
     currentReceipt?.intent.canonicalBrowserOrigin,
     targetIntent.canonicalBrowserOrigin,
   );
-  const stateFingerprint = fingerprintState(layout, currentReceipt, serviceStates);
+  const stateFingerprint = fingerprintState(
+    layout,
+    currentReceipt,
+    serviceStates,
+    privateIngressPreflight?.stateFingerprint,
+    listenerStateFingerprint,
+  );
   const actions = createActions(operation, layout, targetIntent, originTransition);
   const approvalBoundaries = [
     "This plan does not approve launchd install/start; the mutation command requires this exact digest.",
@@ -340,17 +424,20 @@ export async function planDistribution(
       ? "needs-input"
       : "ready";
   const core: Omit<DistributionPlan, "planDigest"> = {
-    version: DISTRIBUTION_SCHEMA_VERSION,
-    taskId: DISTRIBUTION_TASK_ID,
+    version: targetIntent.version,
+    taskId: distributionDocumentTaskId(targetIntent),
     packageId: WORKSTATION_PACKAGE_ID,
     command: "plan" as const,
     readOnly: true as const,
     operation,
     status,
     stateFingerprint,
+    listenerPreflight,
     ...(options.targetReceiptId === undefined ? {} : { targetReceiptId: options.targetReceiptId }),
     requestedIntent: normalizedRequest,
     targetIntent,
+    ...(privateIngressIntentDigest === undefined ? {} : { privateIngressIntentDigest }),
+    ...(sourceTransition === undefined ? {} : { sourceTransition }),
     artifact: artifact.summary,
     layout,
     ...(currentReceipt === undefined ? {} : { currentReceipt }),
@@ -366,8 +453,8 @@ export async function planDistribution(
 
 function approvalDigest(core: Omit<DistributionPlan, "planDigest">): string {
   const canonicalIntent = (
-    intent: WorkstationInstallationIntentV1,
-  ): WorkstationInstallationIntentV1 => ({
+    intent: WorkstationInstallationIntent,
+  ): WorkstationInstallationIntent => ({
     ...intent,
     artifactRoot: "<verified-artifact-transport>",
     ...(core.artifact.nodeRuntime === undefined
@@ -438,12 +525,13 @@ export function stageMaintenanceHandoff(
     { replace: true, parentPrivate: false },
   );
   const request: MaintenanceRequestV1 = {
-    version: DISTRIBUTION_SCHEMA_VERSION,
+    version: plan.targetIntent.version,
     packageId: WORKSTATION_PACKAGE_ID,
     requestId: randomUUID(),
     issuedAt: now.toISOString(),
     approvedPlanDigest,
     operation: plan.operation,
+    listenerPreflight: plan.listenerPreflight,
     ...(plan.targetReceiptId === undefined ? {} : { targetReceiptId: plan.targetReceiptId }),
     intent: maintenanceIntent,
   };
@@ -478,6 +566,8 @@ export async function executeMaintenanceRequest(
   options: {
     readonly now?: () => Date;
     readonly inspectNative?: typeof inspectNativeRuntime;
+    readonly privateIngressPreflight?: Partial<PrivateIngressPreflightDependencies>;
+    readonly probeListenerTargets?: ListenerProbe;
   } = {},
 ): Promise<MaintenanceResultV1> {
   const normalized = parseMaintenanceRequest(request);
@@ -488,7 +578,7 @@ export async function executeMaintenanceRequest(
   const releaseLock = acquireMaintenanceLock(previewLayout, normalized.requestId);
   const startedAt = now().toISOString();
   let currentResult: MaintenanceResultV1 = {
-    version: DISTRIBUTION_SCHEMA_VERSION,
+    version: normalized.intent.version,
     packageId: WORKSTATION_PACKAGE_ID,
     requestId: normalized.requestId,
     operation: normalized.operation,
@@ -505,7 +595,13 @@ export async function executeMaintenanceRequest(
       ...(normalized.targetReceiptId === undefined
         ? {}
         : { targetReceiptId: normalized.targetReceiptId }),
-      probePorts: false,
+      probePorts: normalized.listenerPreflight === "skipped-test" ? false : true,
+      ...(options.privateIngressPreflight === undefined
+        ? {}
+        : { privateIngressPreflight: options.privateIngressPreflight }),
+      ...(options.probeListenerTargets === undefined
+        ? {}
+        : { probeListenerTargets: options.probeListenerTargets }),
     });
     if (plan.planDigest !== normalized.approvedPlanDigest) {
       throw new Error("Workstation state drifted after approval; create and approve a new plan.");
@@ -616,7 +712,9 @@ export async function executeMaintenanceRequest(
       stage: "failed",
       completedAt: now().toISOString(),
       recovery,
-      error: safeError(error),
+      error: isPrivateIngressInstallationIntent(normalized.intent)
+        ? "Private ingress maintenance failed; create a fresh plan and run status or doctor."
+        : safeError(error),
     };
     writeMaintenanceResult(plan?.layout ?? previewLayout, currentResult);
     return currentResult;
@@ -632,10 +730,27 @@ export function readCurrentReceipt(
   return parseInstallationReceipt(readPrivateJson(layout.files.ownership, layout.uid));
 }
 
+export function readCurrentReceiptForIntent(
+  intent: WorkstationInstallationIntent,
+): InstallationReceiptV1 | undefined {
+  const path = createInstanceOwnershipReceiptPath(intent);
+  if (!existsSync(path)) return undefined;
+  const receipt = parseInstallationReceipt(readPrivateJson(path, intent.targetUid));
+  if (
+    receipt.namespace !== createInstanceNamespace(intent) ||
+    receipt.installationId !== intent.installationId ||
+    receipt.uid !== intent.targetUid
+  ) {
+    throw new Error("Existing ownership receipt belongs to another Workstation instance.");
+  }
+  return receipt;
+}
+
 export function parseMaintenanceRequest(value: unknown): MaintenanceRequestV1 {
   if (!isRecord(value)) throw new Error("Maintenance request must be a JSON object.");
   if (
-    value.version !== DISTRIBUTION_SCHEMA_VERSION ||
+    (value.version !== DISTRIBUTION_SCHEMA_VERSION &&
+      value.version !== PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION) ||
     value.packageId !== WORKSTATION_PACKAGE_ID ||
     typeof value.requestId !== "string" ||
     !isUuid(value.requestId) ||
@@ -647,19 +762,24 @@ export function parseMaintenanceRequest(value: unknown): MaintenanceRequestV1 {
       value.operation !== "upgrade" &&
       value.operation !== "reconfigure" &&
       value.operation !== "rollback") ||
+    (value.listenerPreflight !== "verified" && value.listenerPreflight !== "skipped-test") ||
     (value.targetReceiptId !== undefined &&
       (typeof value.targetReceiptId !== "string" || !isUuid(value.targetReceiptId)))
   ) {
     throw new Error("Maintenance request metadata is invalid.");
   }
   const intent = parseInstallationIntent(value.intent);
+  if (intent.version !== value.version) {
+    throw new Error("Maintenance request and intent versions do not match.");
+  }
   return {
-    version: DISTRIBUTION_SCHEMA_VERSION,
+    version: intent.version,
     packageId: WORKSTATION_PACKAGE_ID,
     requestId: value.requestId,
     issuedAt: value.issuedAt,
     approvedPlanDigest: value.approvedPlanDigest,
     operation: value.operation,
+    listenerPreflight: value.listenerPreflight,
     ...(value.targetReceiptId === undefined ? {} : { targetReceiptId: value.targetReceiptId }),
     intent,
   };
@@ -668,8 +788,10 @@ export function parseMaintenanceRequest(value: unknown): MaintenanceRequestV1 {
 export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 {
   if (!isRecord(value)) throw new Error("Installation receipt must be a JSON object.");
   if (
-    value.version !== DISTRIBUTION_SCHEMA_VERSION ||
-    value.taskId !== DISTRIBUTION_TASK_ID ||
+    (value.version !== DISTRIBUTION_SCHEMA_VERSION &&
+      value.version !== PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION) ||
+    (value.taskId !== DISTRIBUTION_TASK_ID &&
+      value.taskId !== PRIVATE_INGRESS_DISTRIBUTION_TASK_ID) ||
     value.packageId !== WORKSTATION_PACKAGE_ID ||
     typeof value.receiptId !== "string" ||
     !isUuid(value.receiptId) ||
@@ -694,13 +816,30 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
     throw new Error("Installation receipt metadata is invalid.");
   }
   const intent = parseInstallationIntent(value.intent);
+  const expectedTaskId = distributionDocumentTaskId(intent);
+  if (value.version !== intent.version || value.taskId !== expectedTaskId) {
+    throw new Error("Installation receipt version does not match its intent contract.");
+  }
+  if (
+    isPrivateIngressInstallationIntent(intent) &&
+    (typeof value.privateIngressIntentDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(value.privateIngressIntentDigest))
+  ) {
+    throw new Error("Private ingress receipt digest is invalid.");
+  }
+  if (
+    isPrivateIngressInstallationIntent(intent) &&
+    (typeof value.sourceCommit !== "string" || !/^[a-f0-9]{40}$/.test(value.sourceCommit))
+  ) {
+    throw new Error("Private ingress receipt source commit is invalid.");
+  }
   const artifact = parseArtifactSummary(value.artifact);
   const configurationDigests = parseConfigurationDigests(value.configurationDigests);
   const webRelease = parseWebReceiptShape(value.webRelease);
   const labels = parseLabels(value.labels);
   return {
-    version: DISTRIBUTION_SCHEMA_VERSION,
-    taskId: DISTRIBUTION_TASK_ID,
+    version: intent.version,
+    taskId: expectedTaskId,
     packageId: WORKSTATION_PACKAGE_ID,
     receiptId: value.receiptId,
     sequence: value.sequence as number,
@@ -716,6 +855,12 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
     appliedAt: value.appliedAt,
     artifact,
     intent,
+    ...(isPrivateIngressInstallationIntent(intent)
+      ? { privateIngressIntentDigest: value.privateIngressIntentDigest as string }
+      : {}),
+    ...(isPrivateIngressInstallationIntent(intent)
+      ? { sourceCommit: value.sourceCommit as string }
+      : {}),
     configurationDigests,
     webRelease,
     vapidPublicKeyFingerprint: value.vapidPublicKeyFingerprint,
@@ -724,7 +869,7 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
 }
 
 function configurationDigest(
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   artifact: DistributionArtifactSummary,
   layout: WorkstationInstanceLayout,
   configuration: GeneratedInstanceConfiguration,
@@ -763,7 +908,7 @@ function operationCheck(
   current: InstallationReceiptV1 | undefined,
   rollback: InstallationReceiptV1 | undefined,
   artifact: VerifiedDistributionArtifact,
-  targetIntent: WorkstationInstallationIntentV1,
+  targetIntent: WorkstationInstallationIntent,
 ): DistributionCheck {
   let valid: boolean;
   let actual: string;
@@ -838,7 +983,7 @@ function operationCheck(
 }
 
 function transactionSettingsDigest(
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   artifact: DistributionArtifactSummary,
 ): string {
   return digestJson({
@@ -850,11 +995,11 @@ function transactionSettingsDigest(
   });
 }
 
-function nonRuntimeSettingsDigest(intent: WorkstationInstallationIntentV1): string {
+function nonRuntimeSettingsDigest(intent: WorkstationInstallationIntent): string {
   return digestJson(nonRuntimeSettings(intent));
 }
 
-function nonRuntimeSettings(intent: WorkstationInstallationIntentV1): unknown {
+function nonRuntimeSettings(intent: WorkstationInstallationIntent): unknown {
   return {
     installationId: intent.installationId,
     slug: intent.slug,
@@ -869,7 +1014,7 @@ function nonRuntimeSettings(intent: WorkstationInstallationIntentV1): unknown {
   };
 }
 
-function ingressPrerequisiteCheck(intent: WorkstationInstallationIntentV1): DistributionCheck {
+function ingressPrerequisiteCheck(intent: WorkstationInstallationIntent): DistributionCheck {
   if (intent.ingress.kind !== "tailscale-serve") {
     return {
       id: "ingress.user-owned-prerequisites",
@@ -892,7 +1037,7 @@ function ingressPrerequisiteCheck(intent: WorkstationInstallationIntentV1): Dist
 function createActions(
   operation: DistributionOperation,
   layout: WorkstationInstanceLayout,
-  intent: WorkstationInstallationIntentV1,
+  intent: WorkstationInstallationIntent,
   transition: OriginTransition,
 ): readonly DistributionAction[] {
   return [
@@ -955,6 +1100,8 @@ function fingerprintState(
   layout: WorkstationInstanceLayout,
   receipt: InstallationReceiptV1 | undefined,
   services: Readonly<Record<ServiceName, ServiceRuntimeState>>,
+  privateIngressStateFingerprint?: string,
+  listenerStateFingerprint?: string,
 ): string {
   const files = [
     layout.files.ownership,
@@ -975,6 +1122,8 @@ function fingerprintState(
       gateway: services.gateway,
       naru: services.naru,
     },
+    privateIngressStateFingerprint: privateIngressStateFingerprint ?? null,
+    listenerStateFingerprint: listenerStateFingerprint ?? null,
   });
 }
 
@@ -1081,8 +1230,8 @@ function writeInstallationReceipt(
 ): InstallationReceiptV1 {
   const current = plan.currentReceipt;
   const receipt: InstallationReceiptV1 = {
-    version: DISTRIBUTION_SCHEMA_VERSION,
-    taskId: DISTRIBUTION_TASK_ID,
+    version: plan.targetIntent.version,
+    taskId: distributionDocumentTaskId(plan.targetIntent),
     packageId: WORKSTATION_PACKAGE_ID,
     receiptId: randomUUID(),
     sequence: (current?.sequence ?? 0) + 1,
@@ -1100,6 +1249,12 @@ function writeInstallationReceipt(
       artifactRoot: plan.layout.releaseRoot,
       nodeExecutable: plan.layout.runtime.nodeExecutable,
     },
+    ...(plan.privateIngressIntentDigest === undefined
+      ? {}
+      : { privateIngressIntentDigest: plan.privateIngressIntentDigest }),
+    ...(plan.sourceTransition === undefined
+      ? {}
+      : { sourceCommit: plan.sourceTransition.exactTarget.sourceCommit }),
     configurationDigests: plan.configurationDigests,
     webRelease,
     vapidPublicKeyFingerprint,
@@ -1143,6 +1298,16 @@ function assertReceiptIdentity(
     receipt.uid !== layout.uid
   ) {
     throw new Error("Existing ownership receipt belongs to another Workstation instance.");
+  }
+}
+
+async function assertPrivateIngressReceiptDigest(
+  receipt: InstallationReceiptV1 | undefined,
+): Promise<void> {
+  if (receipt === undefined || !isPrivateIngressInstallationIntent(receipt.intent)) return;
+  const actual = await digestPrivateIngressIntentV0(receipt.intent.ingress);
+  if (actual !== receipt.privateIngressIntentDigest) {
+    throw new Error("Private ingress receipt intent digest does not match its immutable intent.");
   }
 }
 
@@ -1250,13 +1415,45 @@ function refuseUnconsumedMaintenanceRequest(layout: WorkstationInstanceLayout): 
   }
 }
 
-async function probePorts(
-  ports: readonly number[],
+function listenerProbeTargets(
+  intent: WorkstationInstallationIntent,
+  layout: WorkstationInstanceLayout,
+  current: InstallationReceiptV1 | undefined,
+): readonly ListenerProbeTarget[] {
+  const desired = configuredListenerTargets(intent, layout);
+  if (current === undefined) return desired;
+  const currentTargets = new Set(
+    configuredListenerTargets(current.intent, layout).map(listenerTargetKey),
+  );
+  return desired.filter((target) => !currentTargets.has(listenerTargetKey(target)));
+}
+
+function configuredListenerTargets(
+  intent: WorkstationInstallationIntent,
+  layout: WorkstationInstanceLayout,
+): readonly ListenerProbeTarget[] {
+  return isPrivateIngressInstallationIntent(intent)
+    ? [intent.ingress.listener, { host: "127.0.0.1", port: layout.ports.naru }]
+    : [
+        { host: "127.0.0.1", port: layout.ports.gateway },
+        { host: "127.0.0.1", port: layout.ports.naru },
+      ];
+}
+
+function listenerTargetKey(target: ListenerProbeTarget): string {
+  return `${target.host}:${target.port}`;
+}
+
+async function probeListenerTargets(
+  targets: readonly ListenerProbeTarget[],
 ): Promise<{ readonly available: boolean; readonly detail: string }> {
   const servers: Server[] = [];
   try {
-    for (const port of ports) servers.push(await holdPort(port));
-    return { available: true, detail: ports.map((port) => `127.0.0.1:${port}`).join(",") };
+    for (const target of targets) servers.push(await holdPort(target));
+    return {
+      available: true,
+      detail: targets.map((target) => `${target.host}:${target.port}`).join(","),
+    };
   } catch (error) {
     return { available: false, detail: safeError(error) };
   } finally {
@@ -1264,11 +1461,11 @@ async function probePorts(
   }
 }
 
-function holdPort(port: number): Promise<Server> {
+function holdPort(target: ListenerProbeTarget): Promise<Server> {
   return new Promise((resolvePromise, reject) => {
     const server = createServer();
     server.once("error", reject);
-    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+    server.listen({ host: target.host, port: target.port, exclusive: true }, () => {
       server.removeAllListeners("error");
       resolvePromise(server);
     });
@@ -1393,6 +1590,33 @@ function safeError(error: unknown): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 800);
+}
+
+function createOperatorSourceTransitionPlan(
+  sourceCommit: string,
+  artifact: DistributionArtifactSummary,
+  gatewayConfigurationDigest: string,
+): OperatorSourceTransitionPlan {
+  return {
+    mutation: "none",
+    requiresSeparateOperatorApproval: true,
+    exactTarget: {
+      sourceCommit,
+      artifactManifestDigest: artifact.manifestDigest,
+      artifactPayloadDigest: artifact.payloadDigest,
+      gatewayConfigurationDigest,
+    },
+    verification: [
+      "Verify the operator-private admission names the approved repository identity and this exact source commit.",
+      "Verify the expanded artifact manifest, payload and rendered Gateway configuration digests.",
+      "Run isolated status and doctor checks before any canonical listener cutover.",
+    ],
+    rollback: [
+      "Preserve the pre-existing service, data and source admission through cutover and soak.",
+      "Restore only the previous immutable receipt and listener if candidate verification fails.",
+      "Do not bypass a rejected operator admission with a manual production command.",
+    ],
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
