@@ -1,18 +1,19 @@
 import type { ServerOptions } from "node:https";
 import { networkInterfaces as systemNetworkInterfaces, type NetworkInterfaceInfo } from "node:os";
-import {
-  PrivateIpv4AddressSchema,
-  type PrivateIngressV0,
-} from "@naru/contracts/private-ingress/v0";
+import { PrivateIpv4AddressSchema } from "@naru/contracts/private-ingress/v0";
+import type { TlsMaterialLifecycleStatus } from "@naru/tls-material";
 import { GATEWAY_BROWSER_LIMITS } from "../browser-security.js";
 import type { DirectPrivateWorkstationGatewayConfig, WorkstationGatewayConfig } from "../config.js";
 import { isDirectPrivateWorkstationGatewayConfig } from "../config.js";
 import { installPrivateIpv4SourceAdmission, PrivateIpv4SourceAdmission } from "./source-policy.js";
-import type { GatewayBrowserListenerAdapter, GatewayBrowserServerPort } from "./types.js";
+import type {
+  GatewayBrowserListenerAdapter,
+  GatewayBrowserServerPort,
+  GatewayRawConnectionServer,
+} from "./types.js";
+import type { DirectPrivateTlsMaterialProvider } from "./tls-material.js";
 
-export interface DirectPrivateTlsBootstrap {
-  loadInitial(ingress: PrivateIngressV0): ServerOptions;
-}
+export type DirectPrivateTlsBootstrap = DirectPrivateTlsMaterialProvider;
 
 export type GatewayNetworkInterfaces = () => NodeJS.Dict<NetworkInterfaceInfo[]>;
 
@@ -21,7 +22,10 @@ export class DirectPrivateTlsListener implements GatewayBrowserListenerAdapter {
   readonly httpsOptions: ServerOptions;
   readonly #networkInterfaces: GatewayNetworkInterfaces;
   readonly #sourceAdmission: PrivateIpv4SourceAdmission;
+  readonly #tlsProvider: DirectPrivateTlsMaterialProvider;
   #sourceAdmissionInstalled = false;
+  #connectionGuardInstalled = false;
+  #tlsLifecycleStarted = false;
 
   constructor(
     readonly config: DirectPrivateWorkstationGatewayConfig,
@@ -36,6 +40,7 @@ export class DirectPrivateTlsListener implements GatewayBrowserListenerAdapter {
       requestTimeout: GATEWAY_BROWSER_LIMITS.requestTimeoutMs,
       keepAliveTimeout: GATEWAY_BROWSER_LIMITS.keepAliveTimeoutMs,
     };
+    this.#tlsProvider = tlsBootstrap;
     this.#networkInterfaces = networkInterfaces;
     this.#sourceAdmission = new PrivateIpv4SourceAdmission(config.browserIngress.sourcePolicy);
   }
@@ -49,11 +54,49 @@ export class DirectPrivateTlsListener implements GatewayBrowserListenerAdapter {
       installPrivateIpv4SourceAdmission(server.server, this.#sourceAdmission);
       this.#sourceAdmissionInstalled = true;
     }
-    await server.listen({
-      host: this.config.browserIngress.listener.host,
-      port: this.config.browserIngress.listener.port,
-    });
+    if (!this.#connectionGuardInstalled) {
+      installTlsAvailabilityGuard(
+        server.server,
+        () => this.#tlsProvider.acceptsNewConnections?.() !== false,
+      );
+      this.#connectionGuardInstalled = true;
+    }
+    try {
+      this.#tlsProvider.start?.(server.server);
+      this.#tlsLifecycleStarted = true;
+      await server.listen({
+        host: this.config.browserIngress.listener.host,
+        port: this.config.browserIngress.listener.port,
+      });
+    } catch (error) {
+      if (this.#tlsLifecycleStarted) this.#tlsProvider.stop?.();
+      this.#tlsLifecycleStarted = false;
+      throw error;
+    }
   }
+
+  close(): void {
+    if (this.#tlsLifecycleStarted) this.#tlsProvider.stop?.();
+    this.#tlsLifecycleStarted = false;
+  }
+
+  tlsStatus(): TlsMaterialLifecycleStatus {
+    return (
+      this.#tlsProvider.status?.() ?? {
+        status: "ok" as const,
+        lastReload: "initial" as const,
+      }
+    );
+  }
+}
+
+export function installTlsAvailabilityGuard(
+  server: GatewayRawConnectionServer,
+  acceptsNewConnections: () => boolean,
+): void {
+  server.prependListener("connection", (socket) => {
+    if (!acceptsNewConnections()) socket.destroy();
+  });
 }
 
 export function requireDirectPrivateWorkstationGatewayConfig(

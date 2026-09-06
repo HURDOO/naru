@@ -35,12 +35,16 @@ must match the active Gateway values exactly. Invalid or incomplete v2 input nev
 version 1 or loopback mode. In every version, the cookie name starts with `__Host-`, and managed
 route prefixes cannot overlap `/_gateway` or one another.
 
-PI-02 accepts already validated TLS server options through the direct-listener bootstrap port and
-fails before bind when that provider is absent. PI-03 drops a disallowed TLS socket before HTTP or
-WebSocket dispatch and rejects inbound forwarding or reserved identity headers before browser
-authentication in direct mode. The default certificate path validation, last-known-good reload,
-readiness projection, and distribution renderer remain disabled until PI-04 and PI-05 complete; a
-source build must not be treated as production-ready direct ingress.
+Direct mode uses the shared TLS material validator and fails before either listener binds unless the
+approved root, final certificate/key targets, current-user ownership, private modes, SAN, lifetime,
+and key pair are valid. It checks the declared material every ten seconds and atomically applies only
+a fully validated candidate to new handshakes. A rejected reload preserves the in-memory
+last-known-good context and existing HTTPS/WSS connections. Once that context expires, TLS readiness
+fails and new raw connections are closed before handshake while existing WSS and Host-owned PTYs
+remain intact. PI-03 additionally drops a disallowed TLS socket before HTTP or WebSocket dispatch and
+rejects inbound forwarding or reserved identity headers before browser authentication. The PI-05
+distribution renderer remains disabled, so a source build must not be treated as production-ready
+direct ingress.
 
 `/_gateway` and every descendant are Gateway-owned browser routes even when an app owns `/`.
 Application routers and service workers must leave them network-only and must never cache or replace
@@ -83,9 +87,11 @@ local administration API; publishing or distributing those keys is an integratio
 ## Administrative API
 
 The Unix-socket API exposes health/readiness, redacted app and credential inventories, verifier
-public keys, local bootstrap/recovery intent creation, and credential revocation. Requests and
-responses are JSON with `Cache-Control: no-store`; no endpoint returns private signing material,
-session secrets, raw WebAuthn credential IDs, or stored terminal data.
+public keys, local bootstrap/recovery intent creation, and credential revocation. Direct-mode
+readiness includes the certificate fingerprint, expiry, last reload state, and a stable failure code,
+but never a material path or raw provider error. Browser readiness exposes only the TLS check result.
+Requests and responses are JSON with `Cache-Control: no-store`; no endpoint returns private signing
+material, session secrets, raw WebAuthn credential IDs, or stored terminal data.
 
 Starting a real private listener or enrolling a real passkey is an explicit acceptance action. It
 must use an isolated runtime and requires fresh user approval under the repository operating rules.

@@ -2,8 +2,8 @@
 
 ## 1. 상태와 기준
 
-- 상태: PI-03 source·Origin·header 보안 완료, PI-04 구현 승인 전
-- 다음 작업: `private-ingress-v0/PI-04`
+- 상태: PI-04 TLS material·last-known-good lifecycle 완료, PI-05 구현 승인 전
+- 다음 작업: `private-ingress-v0/PI-05`
 - 단일 작업 원장: [`TASKS.md`](TASKS.md)
 - 보안 분석·ownership: [`THREAT_MODEL.md`](THREAT_MODEL.md)
 - 선행 기준: 동결된 DurableSession / Workstation v0와 현재 Naru 동작

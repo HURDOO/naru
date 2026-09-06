@@ -12,7 +12,9 @@ export interface GatewayLogRecord {
     | "proxy.request-started"
     | "proxy.request-failed"
     | "proxy.websocket-closed"
-    | "storage.failed";
+    | "storage.failed"
+    | "tls.material.reloaded"
+    | "tls.material.reload-rejected";
   readonly appId?: string;
   readonly code?: string;
   readonly diagnosticId?: string;

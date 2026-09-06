@@ -2,8 +2,13 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createTestTlsState } from "../../../packages/tls-material/test/support.js";
 import { WorkstationGateway } from "../src/gateway.js";
-import { createGatewayTestFixture } from "./support.js";
+import {
+  FakeGatewayClock,
+  createDirectGatewayTestFixture,
+  createGatewayTestFixture,
+} from "./support.js";
 
 describe("Gateway same-user admin IPC", () => {
   it("creates local-only bootstrap intents, exposes verifier material, and revokes passkey sessions", async () => {
@@ -79,6 +84,64 @@ describe("Gateway same-user admin IPC", () => {
       const response = await adminRequest(config.adminSocketPath, "POST", path, {});
       expect(response.statusCode).toBe(404);
     }
+    await gateway.close();
+  });
+
+  it("projects direct TLS readiness without exposing material paths", async () => {
+    const tls = createTestTlsState("gateway.fixture.invalid");
+    const generation = tls.createGeneration("readiness");
+    const fixture = createDirectGatewayTestFixture({
+      tls: {
+        approvedRoot: generation.directory,
+        certificateFile: generation.certificateFile,
+        privateKeyFile: generation.privateKeyFile,
+        reload: "watch-last-known-good",
+        materialOwner: "user",
+        renewalOwner: "external",
+        terminationOwner: "gateway",
+      },
+    });
+    const clock = new FakeGatewayClock(Date.now());
+    const gateway = await WorkstationGateway.create(fixture.config, { clock });
+    await gateway.admin.listen();
+
+    const ready = await adminRequest(fixture.config.adminSocketPath, "GET", "/readyz");
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json()).toMatchObject({
+      version: 1,
+      status: "ready",
+      checks: { storage: true, auth: true, registry: true, tls: true },
+      tlsMaterial: {
+        status: "ok",
+        fingerprint256: generation.fingerprint256,
+        lastReload: "initial",
+      },
+    });
+    expect(ready.body).not.toContain(generation.directory);
+    expect(ready.body).not.toContain(fixture.config.browserOrigin);
+
+    const browserReady = await gateway.browser.inject({
+      method: "GET",
+      url: "/_gateway/readyz",
+      headers: { host: new URL(fixture.config.browserOrigin).host },
+    });
+    expect(browserReady.json()).toMatchObject({
+      status: "ready",
+      checks: { tls: true },
+    });
+    expect(browserReady.body).not.toContain(generation.fingerprint256);
+
+    const expiresAt = (ready.json() as { tlsMaterial: { expiresAt: string } }).tlsMaterial
+      .expiresAt;
+    clock.value = Date.parse(expiresAt);
+    const expired = await adminRequest(fixture.config.adminSocketPath, "GET", "/readyz");
+    expect(expired.statusCode).toBe(503);
+    expect(expired.json()).toMatchObject({
+      status: "not-ready",
+      checks: { tls: false },
+      tlsMaterial: { status: "failed" },
+    });
+
     await gateway.close();
   });
 });

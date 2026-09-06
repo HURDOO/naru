@@ -31,7 +31,7 @@
 
 ## D006. 외부 network와 TLS material은 사용자 소유다
 
-- 상태: 승인
+- 상태: 승인·PI-04 검증/lifecycle 구현 완료
 - Package는 DNS, VPN, route, firewall과 certificate 발급·갱신을 임의 변경하지 않는다. Gateway는 승인된
   material을 검증하고 last-known-good reload만 수행한다.
 

@@ -51,14 +51,16 @@ type GatewayIngressV0 =
 - mode별 forbidden field를 strict schema로 거부하고 자동 fallback하지 않는다.
 - Gateway private config v2는 `browserIngress: GatewayIngressV0`를 하나만 요구한다. 기존 config v1은
   explicit legacy loopback adapter로 계속 읽지만 direct mode로 추론하거나 변환하지 않는다.
-- PI-02의 direct adapter는 이미 검증된 initial TLS server options를 주입받는다. Provider가 없으면
-  bind 전에 실패하며, path·owner·SAN·expiry 검증과 last-known-good reload provider는 PI-04에서 연결한다.
+- Direct adapter는 `@naru/tls-material`의 검증을 사용하는 기본 provider에서 initial TLS server options를
+  받고, material이 없거나 invalid이면 bind 전에 실패한다. Provider는 exact file reference를 주기적으로
+  다시 검증하고 valid candidate만 last-known-good context와 원자 교체한다.
 
 예상 코드 경계:
 
 ```text
 packages/contracts/src/private-ingress/v0/index.ts
 packages/contracts/src/private-ingress/v0/test-vectors.ts
+packages/tls-material/src/index.ts
 apps/workstation-gateway/src/config.ts
 apps/workstation-gateway/src/listeners/loopback-http.ts
 apps/workstation-gateway/src/listeners/direct-private-tls.ts
@@ -67,9 +69,11 @@ apps/workstation-gateway/src/listeners/source-policy.ts
 apps/workstation-gateway/src/ingress/doctor.ts
 ```
 
-기존 Naru TLS manager의 검증·last-known-good 동작은 production-specific 상수와 ACME provider 책임을
-제거한 뒤 재사용 가능한 모듈로 옮긴다. app-managed Naru와 gateway-managed Naru가 같은 external
-listener를 동시에 소유하지 않는다.
+기존 Naru TLS manager의 검증·last-known-good 상태기계는 production generation pointer와 ACME provider
+책임에서 분리해 `@naru/tls-material`로 옮긴다. Naru adapter는 기존 `current.json` generation 형식과
+strict no-symlink publication을 유지하고, Gateway adapter는 declared reference의 최종 `realpath`가
+approved root 안에 있을 때만 renewal symlink를 허용한다. app-managed Naru와 gateway-managed Naru가
+같은 external listener를 동시에 소유하지 않는다.
 
 ## 3. ownership
 
@@ -117,6 +121,10 @@ browser failure code를 사용하며 source나 header 값을 log하지 않는다
 - liveness는 process 생존, readiness는 config/listener/TLS/upstream/profile 일치를 판정한다.
 - TLS reload는 candidate를 별도 parse·verify한 뒤 secure context를 원자 교체한다.
 - invalid reload는 current context와 connection을 유지하고 redacted degraded state를 남긴다.
+- last-known-good context가 만료되면 browser와 owner-only admin readiness의 TLS check를 내리고 raw
+  connection gate에서 새 TLS handshake를 거부한다. 이미 upgrade된 WSS와 Host PTY는 종료하지 않는다.
+- Direct material은 10초 주기로 다시 읽되 같은 byte digest는 unchanged로 처리한다. 연속된 같은 failure는
+  한 번만 구조화 log에 남기며 raw path, Origin, provider error와 material byte를 기록하지 않는다.
 - Gateway/Naru restart는 Host-owned PTY를 종료하지 않는다.
 - Host restart 뒤 process continuity를 주장하지 않고 Session을 honest stopped로 복구한다.
 

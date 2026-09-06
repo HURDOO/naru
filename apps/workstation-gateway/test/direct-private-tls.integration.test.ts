@@ -1,14 +1,18 @@
 import { once } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+import { join } from "node:path";
 import type { InjectOptions } from "fastify";
 import WebSocket, { type RawData, WebSocketServer } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
-import { createTestTlsState } from "../../server/test/tls-fixture.js";
+import { createTestTlsState } from "../../../packages/tls-material/test/support.js";
 import { GATEWAY_BROWSER_LIMITS } from "../src/browser-security.js";
 import { WorkstationGateway } from "../src/gateway.js";
+import { installTlsAvailabilityGuard } from "../src/listeners/direct-private-tls.js";
+import { GatewayDirectTlsMaterialProvider } from "../src/listeners/tls-material.js";
 import type { GatewayLogRecord } from "../src/logging.js";
 import { createDirectGatewayTestFixture } from "./support.js";
 
@@ -19,6 +23,119 @@ afterEach(async () => {
 });
 
 describe("Gateway direct private TLS transport", () => {
+  it("fails before bind when initial TLS material is invalid and does not expose its path", async () => {
+    const fixture = createDirectGatewayTestFixture();
+
+    let failure: unknown;
+    try {
+      await WorkstationGateway.create(fixture.config);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ code: "TLS_APPROVED_ROOT_INVALID" });
+    expect(String(failure)).not.toContain(fixture.config.browserIngress.tls.approvedRoot);
+    expect(existsSync(fixture.config.adminSocketPath)).toBe(false);
+  });
+
+  it("applies valid TLS rotation to new handshakes while preserving an existing WSS", async () => {
+    const upstream = await createEchoUpstream();
+    running.push(upstream);
+    const tls = createTestTlsState("gateway.fixture.invalid");
+    const generationA = tls.createGeneration("rotation-a");
+    const generationB = tls.createGeneration("rotation-b");
+    const certificateFile = join(tls.stateDirectory, "current-certificate.pem");
+    const privateKeyFile = join(tls.stateDirectory, "current-private-key.pem");
+    pointTlsMaterial(certificateFile, privateKeyFile, generationA);
+    const fixture = createDirectGatewayTestFixture({
+      tls: {
+        approvedRoot: tls.stateDirectory,
+        certificateFile,
+        privateKeyFile,
+        reload: "watch-last-known-good",
+        materialOwner: "user",
+        renewalOwner: "external",
+        terminationOwner: "gateway",
+      },
+      appRegistrations: [
+        {
+          appId: "fixture-app",
+          mode: "gateway-managed",
+          routePrefix: "/app",
+          upstream: { kind: "loopback", origin: upstream.origin },
+          includeCredentialRef: true,
+          enabled: true,
+        },
+      ],
+    });
+    let now = Date.now();
+    const provider = new GatewayDirectTlsMaterialProvider(fixture.config.browserIngress, {
+      now: () => now,
+      reloadIntervalMs: 300_000,
+    });
+    const gateway = await WorkstationGateway.create(fixture.config, {
+      browserListener: { directTlsBootstrap: provider },
+    });
+    running.push({
+      close: async () => {
+        provider.stop();
+        await gateway.close();
+      },
+    });
+    const session = seedSession(gateway);
+    provider.start(gateway.browser.server);
+    installTlsAvailabilityGuard(gateway.browser.server, () => provider.acceptsNewConnections());
+    await gateway.browser.listen({ host: "127.0.0.1", port: 0 });
+    const gatewayPort = (gateway.browser.server.address() as AddressInfo).port;
+    expect(await tlsFingerprint(gatewayPort)).toBe(generationA.fingerprint256);
+
+    const client = new WebSocket(`wss://127.0.0.1:${gatewayPort}/app/socket`, {
+      rejectUnauthorized: false,
+      headers: {
+        host: new URL(fixture.config.browserOrigin).host,
+        origin: fixture.config.browserOrigin,
+        cookie: `${fixture.config.sessionCookieName}=${session.token}`,
+      },
+    });
+    await once(client, "open");
+    pointTlsMaterial(certificateFile, privateKeyFile, generationB);
+    expect(provider.reloadNow()).toBe("reloaded");
+    expect(await tlsFingerprint(gatewayPort)).toBe(generationB.fingerprint256);
+
+    client.send("still-connected-after-tls-rotation");
+    const [message] = (await once(client, "message")) as [Buffer];
+    expect(message.toString()).toBe("echo:still-connected-after-tls-rotation");
+    expect(client.readyState).toBe(WebSocket.OPEN);
+
+    pointTlsMaterial(certificateFile, privateKeyFile, {
+      certificateFile: generationA.certificateFile,
+      privateKeyFile: generationB.privateKeyFile,
+    });
+    expect(provider.reloadNow()).toBe("rejected");
+    expect(await tlsFingerprint(gatewayPort)).toBe(generationB.fingerprint256);
+    client.send("still-connected-after-rejected-rotation");
+    const [afterRejection] = (await once(client, "message")) as [Buffer];
+    expect(afterRejection.toString()).toBe("echo:still-connected-after-rejected-rotation");
+    expect(client.readyState).toBe(WebSocket.OPEN);
+
+    now = Date.parse(provider.status().expiresAt ?? "");
+    const expiredReadiness = await gateway.browser.inject({
+      method: "GET",
+      url: "/_gateway/readyz",
+      headers: { host: new URL(fixture.config.browserOrigin).host },
+    });
+    expect(expiredReadiness.statusCode).toBe(503);
+    expect(expiredReadiness.json()).toMatchObject({ checks: { tls: false } });
+    await expect(tlsFingerprint(gatewayPort)).rejects.toThrow();
+
+    client.send("existing-wss-survives-tls-expiry");
+    const [afterExpiry] = (await once(client, "message")) as [Buffer];
+    expect(afterExpiry.toString()).toBe("echo:existing-wss-survives-tls-expiry");
+    expect(client.readyState).toBe(WebSocket.OPEN);
+    const closed = once(client, "close");
+    client.close(1000, "fixture complete");
+    await closed;
+  });
+
   it("serves authenticated HTTPS and WSS while proxying only to exact IPv4 loopback", async () => {
     const upstream = await createEchoUpstream();
     running.push(upstream);
@@ -418,4 +535,48 @@ async function expectWebSocketUpgradeStatus(
       response.once("end", resolvePromise);
     });
   });
+}
+
+async function tlsFingerprint(port: number): Promise<string> {
+  return new Promise<string>((resolvePromise, reject) => {
+    const socket = tlsConnect(
+      {
+        host: "127.0.0.1",
+        port,
+        servername: "gateway.fixture.invalid",
+        rejectUnauthorized: false,
+        minVersion: "TLSv1.2",
+      },
+      () => {
+        const fingerprint = socket.getPeerCertificate().fingerprint256;
+        socket.destroy();
+        if (fingerprint === undefined) {
+          reject(new Error("TLS fixture certificate has no fingerprint."));
+          return;
+        }
+        resolvePromise(fingerprint);
+      },
+    );
+    socket.once("error", reject);
+  });
+}
+
+function pointTlsMaterial(
+  certificateReference: string,
+  privateKeyReference: string,
+  material: { readonly certificateFile: string; readonly privateKeyFile: string },
+): void {
+  for (const reference of [certificateReference, privateKeyReference]) {
+    try {
+      unlinkSync(reference);
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+    }
+  }
+  symlinkSync(material.certificateFile, certificateReference);
+  symlinkSync(material.privateKeyFile, privateKeyReference);
+}
+
+function isMissingFile(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }

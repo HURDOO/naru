@@ -1,4 +1,5 @@
 import type { WorkstationGatewayConfig } from "../config.js";
+import type { GatewayLogger } from "../logging.js";
 import { gatewayLoopbackListenTarget } from "../config.js";
 import {
   DirectPrivateTlsListener,
@@ -7,11 +8,15 @@ import {
   type GatewayNetworkInterfaces,
 } from "./direct-private-tls.js";
 import { LoopbackHttpListener } from "./loopback-http.js";
+import { GatewayDirectTlsMaterialProvider } from "./tls-material.js";
 import type { GatewayBrowserListenerAdapter } from "./types.js";
 
 export interface GatewayBrowserListenerDependencies {
   readonly directTlsBootstrap?: DirectPrivateTlsBootstrap;
   readonly networkInterfaces?: GatewayNetworkInterfaces;
+  readonly now?: () => number;
+  readonly tlsReloadIntervalMs?: number;
+  readonly logger?: GatewayLogger;
 }
 
 export function createGatewayBrowserListener(
@@ -19,14 +24,17 @@ export function createGatewayBrowserListener(
   dependencies: GatewayBrowserListenerDependencies = {},
 ): GatewayBrowserListenerAdapter {
   if (config.version === 2 && config.browserIngress.kind === "direct-private-tls") {
-    if (dependencies.directTlsBootstrap === undefined) {
-      throw new Error("Direct private TLS material provider is not configured.");
-    }
-    return new DirectPrivateTlsListener(
-      requireDirectPrivateWorkstationGatewayConfig(config),
-      dependencies.directTlsBootstrap,
-      dependencies.networkInterfaces,
-    );
+    const directConfig = requireDirectPrivateWorkstationGatewayConfig(config);
+    const tlsProvider =
+      dependencies.directTlsBootstrap ??
+      new GatewayDirectTlsMaterialProvider(directConfig.browserIngress, {
+        ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
+        ...(dependencies.tlsReloadIntervalMs === undefined
+          ? {}
+          : { reloadIntervalMs: dependencies.tlsReloadIntervalMs }),
+        ...(dependencies.logger === undefined ? {} : { logger: dependencies.logger }),
+      });
+    return new DirectPrivateTlsListener(directConfig, tlsProvider, dependencies.networkInterfaces);
   }
 
   const target = gatewayLoopbackListenTarget(config);
@@ -39,9 +47,15 @@ export function createGatewayBrowserListener(
 export {
   DirectPrivateTlsListener,
   assertActiveLocalPrivateIpv4,
+  installTlsAvailabilityGuard,
   type DirectPrivateTlsBootstrap,
   type GatewayNetworkInterfaces,
 } from "./direct-private-tls.js";
+export {
+  DIRECT_PRIVATE_TLS_RELOAD_INTERVAL_MS,
+  GatewayDirectTlsMaterialProvider,
+  type DirectPrivateTlsMaterialProvider,
+} from "./tls-material.js";
 export { LoopbackHttpListener, type LoopbackHttpListenerTarget } from "./loopback-http.js";
 export {
   installPrivateIpv4SourceAdmission,

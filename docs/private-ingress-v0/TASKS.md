@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-03 source·Origin·header 보안 완료, PI-04 구현 승인 전
-- 다음 작업: `PI-04`
+- PrivateIngress: PI-04 TLS material·last-known-good lifecycle 완료, PI-05 구현 승인 전
+- 다음 작업: `PI-05`
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -142,7 +142,7 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-04. TLS material과 last-known-good lifecycle
 
-- [>] **범위**: 기존 Naru TLS 검증을 production provider에서 분리해 Gateway direct listener에 연결한다.
+- [x] **범위**: 기존 Naru TLS 검증을 production provider에서 분리해 Gateway direct listener에 연결한다.
 - **선행 조건**: PI-02, PI-03
 - **산출물**: canonical path/owner/mode/SAN/key/expiry validator, hot reload, readiness/diagnostic
 - **완료 조건**:
@@ -150,11 +150,21 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - valid A→B는 새 handshake에 적용되고 기존 WSS/Host PTY는 유지된다.
   - invalid B는 A와 current connection을 보존한다.
   - certificate provider credential이나 raw path/error를 공개 log에 남기지 않는다.
+- **완료 증거 (2026-09-07)**: `@naru/tls-material`에 canonical approved-root/final-target,
+  current-user owner/private mode, regular-file/size, SAN/validity/key-pair validator와 reusable
+  last-known-good state machine을 분리했다. Naru의 기존 generation/ACME provider 계약을 보존하면서
+  Gateway direct provider의 10초 material reload, atomic secure-context 교체, redacted browser/admin
+  readiness와 expiry raw-connection gate를 연결했다. Valid A→B의 새 handshake 전환, invalid candidate에서
+  B와 existing WSS 유지, last-known-good 만료 뒤 신규 TLS 거부와 기존 WSS 유지, valid renewal 회복을
+  검증했다. Node 24.19.0에서 format, lint, typecheck, 678 passed/4 skipped test, build, E2E 14/14,
+  operations 64, distribution 47과 production smoke 1을 통과했고 public scan은 477 files/540 objects,
+  findings 0이었다. Public contract version, distribution/production, network와 remote는 변경하지
+  않았다.
 
 ## PI-05. Workstation distribution·maintenance 통합
 
-- [ ] **범위**: private ingress intent, plan/apply/status/doctor/reconfigure/rollback을 immutable release와
-      receipt에 연결한다.
+- [>] **범위**: private ingress intent, plan/apply/status/doctor/reconfigure/rollback을 immutable release와
+  receipt에 연결한다.
 - **선행 조건**: PI-03, PI-04
 - **산출물**: config renderer, launchd lifecycle, ownership preflight, transaction/rollback test
 - **완료 조건**:

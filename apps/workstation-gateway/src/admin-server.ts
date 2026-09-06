@@ -7,6 +7,7 @@ import type { WorkstationGatewayConfig } from "./config.js";
 import { GatewayError, internalGatewayError } from "./gateway-error.js";
 import type { GatewayVerifierKey } from "./keys.js";
 import type { GatewayPasskeyManager } from "./passkeys.js";
+import type { GatewayReadiness } from "./readiness.js";
 import { currentUid, ensurePrivateDirectory } from "./security.js";
 import type { GatewaySessionStore } from "./sessions.js";
 
@@ -18,7 +19,7 @@ export interface GatewayAdminServerOptions {
   readonly passkeys: GatewayPasskeyManager;
   readonly sessions: GatewaySessionStore;
   readonly verifierKey: GatewayVerifierKey;
-  readonly ready: () => boolean;
+  readonly readiness: () => GatewayReadiness;
   readonly onSessionsRevoked: (sessionIds: readonly string[]) => void;
 }
 
@@ -80,10 +81,12 @@ export class GatewayAdminServer {
         return;
       }
       if (request.method === "GET" && request.url === "/readyz") {
-        const ready = this.options.ready();
-        writeJson(response, ready ? 200 : 503, {
+        const readiness = this.options.readiness();
+        writeJson(response, readiness.ready ? 200 : 503, {
           version: 1,
-          status: ready ? "ready" : "not-ready",
+          status: readiness.ready ? "ready" : "not-ready",
+          checks: readiness.checks,
+          ...(readiness.tlsMaterial === undefined ? {} : { tlsMaterial: readiness.tlsMaterial }),
         });
         return;
       }

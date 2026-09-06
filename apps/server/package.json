@@ -22,6 +22,7 @@
     "@naru/durable-session-client": "workspace:*",
     "@naru/durable-session-integration": "workspace:*",
     "@naru/gateway-verifier": "workspace:*",
+    "@naru/tls-material": "workspace:*",
     "@simplewebauthn/server": "13.3.2",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",

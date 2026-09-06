@@ -1,4 +1,3 @@
-import { createPrivateKey, createPublicKey, timingSafeEqual, X509Certificate } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -10,15 +9,22 @@ import {
 } from "node:fs";
 import type { ServerOptions } from "node:https";
 import { dirname, isAbsolute, join } from "node:path";
-import { createSecureContext, type SecureContextOptions } from "node:tls";
+import {
+  LastKnownGoodTlsMaterialManager,
+  TlsMaterialError,
+  tlsMaterialServerOptions,
+  validateTlsMaterial,
+  type TlsMaterialLifecycleEvent,
+  type TlsMaterialSource,
+  type TlsMaterialWatcher,
+  type ValidatedTlsMaterial,
+} from "@naru/tls-material";
 import type { TlsConfig } from "./config.js";
 
 const TLS_POINTER_FILENAME = "current.json";
 const TLS_PRIVATE_KEY_FILENAME = "private-key.pem";
 const TLS_CERTIFICATE_CHAIN_FILENAME = "full-chain.pem";
 const TLS_POINTER_MAX_BYTES = 4 * 1024;
-const TLS_PRIVATE_KEY_MAX_BYTES = 128 * 1024;
-const TLS_CERTIFICATE_CHAIN_MAX_BYTES = 512 * 1024;
 const TLS_GENERATION_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
 export type TlsCertificateErrorCode =
@@ -68,10 +74,6 @@ export interface TlsCertificateEvent {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
-interface TlsSecureContextServer {
-  setSecureContext(options: SecureContextOptions): void;
-}
-
 interface TlsGenerationPointer {
   readonly formatVersion: 1;
   readonly generation: string;
@@ -96,23 +98,13 @@ export function readTlsCertificateGenerationById(
 }
 
 export function tlsServerOptions(material: TlsCertificateMaterial): ServerOptions {
-  return {
-    key: material.privateKey,
-    cert: material.certificateChain,
-    minVersion: "TLSv1.2",
-  };
+  return tlsMaterialServerOptions({ ...material, revision: material.generation });
 }
 
 export class TlsCertificateManager {
-  readonly #now: () => number;
-  #current: TlsCertificateMaterial | undefined;
-  #server: TlsSecureContextServer | undefined;
-  #timer: ReturnType<typeof setInterval> | undefined;
+  readonly #source: NaruTlsGenerationSource;
+  readonly #manager: LastKnownGoodTlsMaterialManager;
   #eventSink: ((event: TlsCertificateEvent) => void) | undefined;
-  #lastReload: TlsCertificateStatus["lastReload"] = "not_loaded";
-  #lastReloadAt: string | undefined;
-  #lastReloadErrorCode: TlsCertificateErrorCode | undefined;
-  #lastRejectedSignature: string | undefined;
 
   constructor(
     readonly config: TlsConfig,
@@ -121,8 +113,15 @@ export class TlsCertificateManager {
       eventSink?: (event: TlsCertificateEvent) => void;
     } = {},
   ) {
-    this.#now = options.now ?? Date.now;
+    this.#source = new NaruTlsGenerationSource(config);
     this.#eventSink = options.eventSink;
+    this.#manager = new LastKnownGoodTlsMaterialManager(this.#source, {
+      ...(options.now === undefined ? {} : { now: options.now }),
+      errorCode: tlsCertificateErrorCode,
+      rejectionSignature: (_error, code) =>
+        `${this.#source.lastCandidateGeneration ?? "unknown"}:${code}`,
+      eventSink: (event) => this.#emit(event),
+    });
   }
 
   setEventSink(eventSink: (event: TlsCertificateEvent) => void): void {
@@ -130,109 +129,90 @@ export class TlsCertificateManager {
   }
 
   loadInitial(): ServerOptions {
-    if (this.#current !== undefined) return tlsServerOptions(this.#current);
-    const material = readTlsCertificateGeneration(this.config, this.#now());
-    this.#current = material;
-    this.#lastReload = "initial";
-    this.#lastReloadAt = new Date(this.#now()).toISOString();
-    this.#lastReloadErrorCode = undefined;
-    return tlsServerOptions(material);
+    return this.#run(() => this.#manager.loadInitial());
   }
 
   start(server: unknown): void {
-    if (this.#timer !== undefined) return;
-    if (this.#current === undefined) throw new TlsCertificateError("TLS_STATE_INVALID");
-    if (!isTlsSecureContextServer(server)) {
-      throw new TlsCertificateError("TLS_SERVER_UNSUPPORTED");
-    }
-    this.#server = server;
-    this.#timer = setInterval(() => this.reloadNow(), this.config.reloadIntervalMs);
-    this.#timer.unref();
+    this.#run(() => this.#manager.start(server));
   }
 
   stop(): void {
-    if (this.#timer !== undefined) clearInterval(this.#timer);
-    this.#timer = undefined;
-    this.#server = undefined;
+    this.#manager.stop();
   }
 
   reloadNow(): TlsReloadResult {
-    const current = this.#current;
-    const server = this.#server;
-    if (current === undefined || server === undefined) {
-      throw new TlsCertificateError("TLS_STATE_INVALID");
-    }
-
-    let candidateGeneration: string | undefined;
-    try {
-      const stateDirectory = validateStateDirectory(this.config.stateDirectory);
-      candidateGeneration = readTlsGenerationPointerFromDirectory(stateDirectory).generation;
-      if (candidateGeneration === current.generation) return "unchanged";
-
-      const candidate = readTlsCertificateGenerationFromDirectory(
-        stateDirectory,
-        candidateGeneration,
-        this.config,
-        this.#now(),
-      );
-      server.setSecureContext(tlsServerOptions(candidate));
-      this.#current = candidate;
-      this.#lastReload = "reloaded";
-      this.#lastReloadAt = new Date(this.#now()).toISOString();
-      this.#lastReloadErrorCode = undefined;
-      this.#lastRejectedSignature = undefined;
-      this.#eventSink?.({
-        level: "info",
-        event: "tls.certificate.reloaded",
-        fields: { generation: candidate.generation, expiresAt: candidate.expiresAt },
-      });
-      return "reloaded";
-    } catch (error) {
-      const code =
-        error instanceof TlsCertificateError ? error.code : ("TLS_RELOAD_FAILED" as const);
-      this.#lastReload = "rejected";
-      this.#lastReloadAt = new Date(this.#now()).toISOString();
-      this.#lastReloadErrorCode = code;
-      const signature = `${candidateGeneration ?? "unknown"}:${code}`;
-      if (this.#lastRejectedSignature !== signature) {
-        this.#lastRejectedSignature = signature;
-        this.#eventSink?.({
-          level: "warn",
-          event: "tls.certificate.reload_rejected",
-          fields: {
-            errorCode: code,
-            ...(candidateGeneration === undefined ? {} : { generation: candidateGeneration }),
-          },
-        });
-      }
-      return "rejected";
-    }
+    return this.#run(() => this.#manager.reloadNow());
   }
 
   status(): TlsCertificateStatus {
-    const current = this.#current;
-    if (current === undefined) {
-      return {
-        status: "failed",
-        lastReload: this.#lastReload,
-        ...(this.#lastReloadAt === undefined ? {} : { lastReloadAt: this.#lastReloadAt }),
-        ...(this.#lastReloadErrorCode === undefined
-          ? {}
-          : { lastReloadErrorCode: this.#lastReloadErrorCode }),
-      };
-    }
-
+    const { lastReloadErrorCode, ...status } = this.#manager.status();
+    const generation = this.#manager.currentRevision();
     return {
-      status: this.#now() < Date.parse(current.expiresAt) ? "ok" : "failed",
-      generation: current.generation,
-      expiresAt: current.expiresAt,
-      fingerprint256: current.fingerprint256,
-      lastReload: this.#lastReload,
-      ...(this.#lastReloadAt === undefined ? {} : { lastReloadAt: this.#lastReloadAt }),
-      ...(this.#lastReloadErrorCode === undefined
+      ...status,
+      ...(generation === undefined ? {} : { generation }),
+      ...(lastReloadErrorCode === undefined
         ? {}
-        : { lastReloadErrorCode: this.#lastReloadErrorCode }),
+        : { lastReloadErrorCode: lastReloadErrorCode as TlsCertificateErrorCode }),
     };
+  }
+
+  #emit(event: TlsMaterialLifecycleEvent): void {
+    if (event.event === "tls.material.reloaded") {
+      this.#eventSink?.({
+        level: event.level,
+        event: "tls.certificate.reloaded",
+        fields: {
+          generation: this.#manager.currentRevision(),
+          expiresAt: event.expiresAt,
+        },
+      });
+      return;
+    }
+    this.#eventSink?.({
+      level: event.level,
+      event: "tls.certificate.reload_rejected",
+      fields: {
+        errorCode: event.errorCode,
+        ...(this.#source.lastCandidateGeneration === undefined
+          ? {}
+          : { generation: this.#source.lastCandidateGeneration }),
+      },
+    });
+  }
+
+  #run<T>(operation: () => T): T {
+    try {
+      return operation();
+    } catch (error) {
+      if (error instanceof TlsCertificateError) throw error;
+      throw new TlsCertificateError(tlsCertificateErrorCode(error));
+    }
+  }
+}
+
+class NaruTlsGenerationSource implements TlsMaterialSource {
+  lastCandidateGeneration: string | undefined;
+
+  constructor(private readonly config: TlsConfig) {}
+
+  load(now: number): ValidatedTlsMaterial {
+    this.lastCandidateGeneration = undefined;
+    const stateDirectory = validateStateDirectory(this.config.stateDirectory);
+    const generation = readTlsGenerationPointerFromDirectory(stateDirectory).generation;
+    this.lastCandidateGeneration = generation;
+    const material = readTlsCertificateGenerationFromDirectory(
+      stateDirectory,
+      generation,
+      this.config,
+      now,
+    );
+    return { ...material, revision: generation };
+  }
+
+  watch(onChange: () => void): TlsMaterialWatcher {
+    const timer = setInterval(onChange, this.config.reloadIntervalMs);
+    timer.unref();
+    return { close: () => clearInterval(timer) };
   }
 }
 
@@ -251,76 +231,27 @@ function readTlsCertificateGenerationFromDirectory(
   ) {
     throw new TlsCertificateError("TLS_GENERATION_INVALID");
   }
-
-  const privateKey = readPrivateRegularFile(
-    join(generationDirectory, TLS_PRIVATE_KEY_FILENAME),
-    TLS_PRIVATE_KEY_MAX_BYTES,
-    "TLS_PRIVATE_KEY_INVALID",
-  );
-  const certificateChain = readPrivateRegularFile(
-    join(generationDirectory, TLS_CERTIFICATE_CHAIN_FILENAME),
-    TLS_CERTIFICATE_CHAIN_MAX_BYTES,
-    "TLS_CERTIFICATE_INVALID",
-  );
-
-  let certificate: X509Certificate;
   try {
-    certificate = new X509Certificate(certificateChain);
-  } catch {
-    throw new TlsCertificateError("TLS_CERTIFICATE_INVALID");
-  }
-
-  const validFrom = Date.parse(certificate.validFrom);
-  const validTo = Date.parse(certificate.validTo);
-  if (!Number.isFinite(validFrom) || !Number.isFinite(validTo) || validTo <= validFrom) {
-    throw new TlsCertificateError("TLS_CERTIFICATE_INVALID");
-  }
-  if (now < validFrom) throw new TlsCertificateError("TLS_CERTIFICATE_NOT_YET_VALID");
-  if (now >= validTo) throw new TlsCertificateError("TLS_CERTIFICATE_EXPIRED");
-
-  for (const serverName of config.serverNames) {
-    try {
-      if (certificate.checkHost(serverName, { subject: "never" }) === undefined) {
-        throw new TlsCertificateError("TLS_CERTIFICATE_HOSTNAME_MISMATCH");
-      }
-    } catch (error) {
-      if (error instanceof TlsCertificateError) throw error;
-      throw new TlsCertificateError("TLS_CERTIFICATE_HOSTNAME_MISMATCH");
-    }
-  }
-
-  try {
-    const privateKeyObject = createPrivateKey(privateKey);
-    const privatePublicKey = Buffer.from(
-      createPublicKey(privateKeyObject).export({ format: "der", type: "spki" }),
+    const material = validateTlsMaterial(
+      {
+        approvedRoot: generationDirectory,
+        privateKeyFile: join(generationDirectory, TLS_PRIVATE_KEY_FILENAME),
+        certificateFile: join(generationDirectory, TLS_CERTIFICATE_CHAIN_FILENAME),
+        serverNames: config.serverNames,
+      },
+      { now },
     );
-    const certificatePublicKey = Buffer.from(
-      certificate.publicKey.export({ format: "der", type: "spki" }),
-    );
-    if (
-      privatePublicKey.byteLength !== certificatePublicKey.byteLength ||
-      !timingSafeEqual(privatePublicKey, certificatePublicKey)
-    ) {
-      throw new TlsCertificateError("TLS_KEY_MISMATCH");
-    }
+    return {
+      generation,
+      privateKey: material.privateKey,
+      certificateChain: material.certificateChain,
+      expiresAt: material.expiresAt,
+      fingerprint256: material.fingerprint256,
+    };
   } catch (error) {
     if (error instanceof TlsCertificateError) throw error;
-    throw new TlsCertificateError("TLS_PRIVATE_KEY_INVALID");
+    throw new TlsCertificateError(tlsCertificateErrorCode(error));
   }
-
-  try {
-    createSecureContext({ key: privateKey, cert: certificateChain, minVersion: "TLSv1.2" });
-  } catch {
-    throw new TlsCertificateError("TLS_CERTIFICATE_INVALID");
-  }
-
-  return {
-    generation,
-    privateKey,
-    certificateChain,
-    expiresAt: new Date(validTo).toISOString(),
-    fingerprint256: certificate.fingerprint256,
-  };
 }
 
 function validateStateDirectory(directory: string): string {
@@ -431,17 +362,23 @@ function assertSafeGeneration(generation: string): void {
   }
 }
 
-function isTlsSecureContextServer(value: unknown): value is TlsSecureContextServer {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "setSecureContext" in value &&
-    typeof value.setSecureContext === "function"
-  );
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function tlsCertificateErrorCode(error: unknown): TlsCertificateErrorCode {
+  if (error instanceof TlsCertificateError) return error.code;
+  if (error instanceof TlsMaterialError) {
+    switch (error.code) {
+      case "TLS_APPROVED_ROOT_INVALID":
+        return "TLS_GENERATION_INVALID";
+      case "TLS_LIFECYCLE_INVALID":
+        return "TLS_STATE_INVALID";
+      default:
+        return error.code;
+    }
+  }
+  return "TLS_RELOAD_FAILED";
 }
 
 function tlsErrorMessage(code: TlsCertificateErrorCode): string {

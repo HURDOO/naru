@@ -6,5 +6,5 @@ export default defineConfig({
   platform: "node",
   sourcemap: true,
   clean: true,
-  noExternal: ["@naru/contracts", "@naru/domain", "@naru/gateway-verifier"],
+  noExternal: ["@naru/contracts", "@naru/domain", "@naru/gateway-verifier", "@naru/tls-material"],
 });

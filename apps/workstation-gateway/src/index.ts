@@ -35,16 +35,21 @@ export {
 } from "./logging.js";
 export {
   DirectPrivateTlsListener,
+  GatewayDirectTlsMaterialProvider,
   LoopbackHttpListener,
+  DIRECT_PRIVATE_TLS_RELOAD_INTERVAL_MS,
   assertActiveLocalPrivateIpv4,
+  installTlsAvailabilityGuard,
   createGatewayBrowserListener,
   type DirectPrivateTlsBootstrap,
+  type DirectPrivateTlsMaterialProvider,
   type GatewayBrowserListenerAdapter,
   type GatewayBrowserListenerDependencies,
   type GatewayBrowserServerPort,
   type GatewayNetworkInterfaces,
   type LoopbackHttpListenerTarget,
 } from "./listeners/index.js";
+export type { GatewayReadiness } from "./readiness.js";
 export {
   GatewayPasskeyManager,
   type GatewayAuthenticationResponse,

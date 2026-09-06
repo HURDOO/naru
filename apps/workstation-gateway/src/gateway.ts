@@ -16,6 +16,7 @@ import {
 import type { GatewayLogger } from "./logging.js";
 import { silentGatewayLogger } from "./logging.js";
 import { GatewayPasskeyManager, type WebAuthnOperations } from "./passkeys.js";
+import type { GatewayReadiness } from "./readiness.js";
 import { GatewaySessionStore, SystemGatewayClock, type GatewayClock } from "./sessions.js";
 import { GatewayWebSocketRegistry } from "./websocket-registry.js";
 
@@ -81,7 +82,11 @@ export class WorkstationGateway {
     const logger = dependencies.logger ?? silentGatewayLogger;
     const authenticationRateLimiter =
       dependencies.authenticationRateLimiter ?? new GatewayAuthenticationRateLimiter();
-    const browserListener = createGatewayBrowserListener(config, dependencies.browserListener);
+    const browserListener = createGatewayBrowserListener(config, {
+      logger,
+      now: () => clock.nowMs(),
+      ...dependencies.browserListener,
+    });
     const keys = loadOrCreateGatewayKeys(config.dataDirectory);
     const repository = new GatewayRepository(join(config.dataDirectory, "gateway.sqlite"));
     const registry = new GatewayAppRegistry(config.appRegistrations);
@@ -98,7 +103,21 @@ export class WorkstationGateway {
     );
     const issuer = new GatewayAssertionIssuer(config, keys, clock);
     const sockets = new GatewayWebSocketRegistry(() => clock.nowMs());
-    const ready = (): boolean => repository.ping();
+    const readiness = (): GatewayReadiness => {
+      const storage = repository.ping();
+      const tlsMaterial = browserListener.tlsStatus?.();
+      const checks = {
+        storage,
+        auth: storage,
+        registry: storage,
+        ...(tlsMaterial === undefined ? {} : { tls: tlsMaterial.status === "ok" }),
+      };
+      return {
+        ready: Object.values(checks).every(Boolean),
+        checks,
+        ...(tlsMaterial === undefined ? {} : { tlsMaterial }),
+      };
+    };
     let browser: FastifyInstance;
     try {
       browser = await buildGatewayBrowserServer({
@@ -109,7 +128,7 @@ export class WorkstationGateway {
         issuer,
         sockets,
         logger,
-        ready,
+        readiness,
         authenticationRateLimiter,
         nowMs: () => clock.nowMs(),
         ...(browserListener.httpsOptions === undefined
@@ -126,7 +145,7 @@ export class WorkstationGateway {
       passkeys,
       sessions,
       verifierKey: gatewayVerifierKey(keys),
-      ready,
+      readiness,
       onSessionsRevoked: (sessionIds) => {
         for (const sessionId of sessionIds) sockets.closeSession(sessionId);
       },
@@ -151,6 +170,7 @@ export class WorkstationGateway {
     try {
       await this.browserListener.listen(this.browser);
     } catch (error) {
+      this.browserListener.close?.();
       await this.admin.close();
       throw error;
     }
@@ -161,6 +181,7 @@ export class WorkstationGateway {
     if (this.#closed) return;
     this.#closed = true;
     this.#logger.write({ level: "info", event: "gateway.stopping" });
+    this.browserListener.close?.();
     this.sockets.closeAll();
     await this.browser.close();
     await this.admin.close();

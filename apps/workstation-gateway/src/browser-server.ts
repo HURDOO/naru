@@ -25,6 +25,7 @@ import type { GatewayLogger } from "./logging.js";
 import type { GatewayPasskeyManager } from "./passkeys.js";
 import { sendGatewayPreAuthPage } from "./pre-auth-page.js";
 import { proxyGatewayHttp, proxyGatewayWebSocket } from "./proxy.js";
+import type { GatewayReadiness } from "./readiness.js";
 import type { AuthenticatedGatewaySession, GatewaySessionStore } from "./sessions.js";
 import type { GatewayWebSocketRegistry } from "./websocket-registry.js";
 
@@ -87,7 +88,7 @@ export interface GatewayBrowserServerOptions {
   readonly issuer: GatewayAssertionIssuer;
   readonly sockets: GatewayWebSocketRegistry;
   readonly logger: GatewayLogger;
-  readonly ready: () => boolean;
+  readonly readiness: () => GatewayReadiness;
   readonly authenticationRateLimiter: GatewayAuthenticationRateLimiter;
   readonly nowMs: () => number;
   readonly httpsOptions?: ServerOptions;
@@ -144,11 +145,11 @@ export async function buildGatewayBrowserServer(
   });
   server.get("/_gateway/readyz", (request, reply) => {
     requireExactHost(request, options.config);
-    const ready = options.ready();
-    return reply.code(ready ? 200 : 503).send({
+    const readiness = options.readiness();
+    return reply.code(readiness.ready ? 200 : 503).send({
       version: 1,
-      status: ready ? "ready" : "not-ready",
-      checks: { storage: ready, auth: ready, registry: ready },
+      status: readiness.ready ? "ready" : "not-ready",
+      checks: readiness.checks,
     });
   });
 

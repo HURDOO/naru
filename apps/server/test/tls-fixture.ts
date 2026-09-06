@@ -23,7 +23,7 @@ export interface TestTlsGeneration {
 export interface TestTlsState {
   readonly root: string;
   readonly stateDirectory: string;
-  createGeneration(generation: string, serverName?: string): TestTlsGeneration;
+  createGeneration(generation: string, serverName?: string, validDays?: number): TestTlsGeneration;
   publish(generation: string): void;
 }
 
@@ -39,7 +39,7 @@ export function createTestTlsState(serverName = "naru.example.test"): TestTlsSta
   return {
     root,
     stateDirectory,
-    createGeneration(generation, certificateServerName = serverName) {
+    createGeneration(generation, certificateServerName = serverName, validDays = 2) {
       const directory = join(generationsDirectory, generation);
       const privateKeyFile = join(directory, "private-key.pem");
       const certificateFile = join(directory, "full-chain.pem");
@@ -57,7 +57,7 @@ export function createTestTlsState(serverName = "naru.example.test"): TestTlsSta
           "-out",
           certificateFile,
           "-days",
-          "2",
+          String(validDays),
           "-set_serial",
           `0x${randomBytes(12).toString("hex")}`,
           "-subj",

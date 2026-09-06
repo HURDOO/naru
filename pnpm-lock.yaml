@@ -133,6 +133,9 @@ importers:
       '@naru/gateway-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-verifier
+      '@naru/tls-material':
+        specifier: workspace:*
+        version: link:../../packages/tls-material
       '@simplewebauthn/server':
         specifier: 13.3.2
         version: 13.3.2
@@ -234,6 +237,9 @@ importers:
       '@naru/gateway-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-verifier
+      '@naru/tls-material':
+        specifier: workspace:*
+        version: link:../../packages/tls-material
       '@simplewebauthn/server':
         specifier: 13.3.2
         version: 13.3.2
@@ -303,6 +309,8 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/tls-material: {}
 
 packages:
 

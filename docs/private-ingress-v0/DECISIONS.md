@@ -144,3 +144,20 @@
   bounded in-memory limit을 적용하며 기존 `BOOTSTRAP_DENIED`/`PASSKEY_DENIED` code로 429를 반환한다.
 - 호환성: PrivateIngress와 Gateway browser public schema/version은 바꾸지 않는다. Source, Origin,
   spoofed header 값과 rate-limit key는 structured log에 기록하지 않는다.
+
+## PI-D015. TLS 검증과 last-known-good 상태기계를 provider에서 분리한다
+
+- 상태: accepted
+- 결정: certificate/key의 canonical target, owner/mode/type/size, SAN, validity와 key pair 검증 및
+  last-known-good secure-context 교체를 `@naru/tls-material`의 reusable state machine으로 둔다. Naru는
+  기존 generation pointer provider를, Gateway direct ingress는 exact file reference provider를 사용한다.
+- path 경계: approved root 자체는 canonical current-user private directory여야 한다. Gateway renewal
+  reference는 symlink일 수 있지만 매 reload마다 최종 `realpath`가 approved root의 strict child인지 다시
+  확인한다. Naru의 기존 generation publication은 symlink를 계속 거부한다.
+- expiry 경계: valid candidate만 `setSecureContext`로 교체한다. last-known-good가 만료되면 readiness를
+  내리고 새 raw connection을 TLS handshake 전에 닫되 기존 HTTPS/WSS와 Host runtime은 유지한다.
+- 진단: browser readiness는 TLS boolean만 공개하고 owner-only admin readiness만 fingerprint, expiry,
+  reload 상태와 stable error code를 제공한다. Structured log에는 raw path, Origin, IP, provider error,
+  credential이나 TLS byte를 기록하지 않는다.
+- 호환성: `PrivateIngressV0`, Gateway config v1/v2와 기존 Naru TLS environment/generation 형식은 바꾸지
+  않는다. Distribution renderer와 production activation은 PI-05 이후에만 수행한다.

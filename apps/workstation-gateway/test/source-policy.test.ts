@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import type { TLSSocket } from "node:tls";
 import WebSocket from "ws";
 import { describe, expect, it, vi } from "vitest";
-import { createTestTlsState } from "../../server/test/tls-fixture.js";
+import { createTestTlsState } from "../../../packages/tls-material/test/support.js";
 import {
   installPrivateIpv4SourceAdmission,
   PrivateIpv4SourceAdmission,

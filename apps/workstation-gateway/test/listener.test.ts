@@ -1,4 +1,5 @@
 import type { NetworkInterfaceInfo } from "node:os";
+import type { Socket } from "node:net";
 import type { TLSSocket } from "node:tls";
 import { describe, expect, it, vi } from "vitest";
 import { GATEWAY_BROWSER_LIMITS } from "../src/browser-security.js";
@@ -23,11 +24,9 @@ describe("Gateway browser listener adapters", () => {
     expect(server.listen).toHaveBeenCalledWith({ host: "127.0.0.1", port: 49_199 });
   });
 
-  it("requires TLS bootstrap and binds direct mode to the selected active private address", async () => {
+  it("fails closed on invalid default material and binds valid direct dependencies exactly", async () => {
     const { config } = createDirectGatewayTestFixture();
-    expect(() => createGatewayBrowserListener(config)).toThrow(
-      "Direct private TLS material provider is not configured.",
-    );
+    expect(() => createGatewayBrowserListener(config)).toThrow("TLS material is invalid.");
 
     const listener = createGatewayBrowserListener(config, {
       directTlsBootstrap: {
@@ -51,7 +50,7 @@ describe("Gateway browser listener adapters", () => {
     });
     expect(server.listen).toHaveBeenCalledOnce();
     expect(server.listen).toHaveBeenCalledWith({ host: "10.44.0.2", port: 8_443 });
-    expect(server.prependListener).toHaveBeenCalledOnce();
+    expect(server.prependListener).toHaveBeenCalledTimes(2);
 
     const admitted = fakeTlsSocket("10.44.0.10");
     server.secureConnection(admitted.socket);
@@ -60,6 +59,26 @@ describe("Gateway browser listener adapters", () => {
     const denied = fakeTlsSocket("10.44.0.11");
     server.secureConnection(denied.socket);
     expect(denied.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("drops new raw connections when the last-known-good certificate is expired", async () => {
+    const { config } = createDirectGatewayTestFixture();
+    const listener = createGatewayBrowserListener(config, {
+      directTlsBootstrap: {
+        loadInitial: () => ({ key: "fixture-key", cert: "fixture-certificate" }),
+        acceptsNewConnections: () => false,
+      },
+      networkInterfaces: () => ({
+        utunFixture: [privateInterface("10.44.0.2")],
+      }),
+    });
+    const server = fakeBrowserServer();
+    await listener.listen(server.port);
+    const connection = fakeRawSocket();
+
+    server.connection(connection.socket);
+
+    expect(connection.destroy).toHaveBeenCalledOnce();
   });
 
   it("fails closed before bind when the configured private address is not active", async () => {
@@ -96,13 +115,18 @@ function fakeBrowserServer(): {
   readonly listen: ReturnType<typeof vi.fn>;
   readonly prependListener: ReturnType<typeof vi.fn>;
   secureConnection(socket: TLSSocket): void;
+  connection(socket: Socket): void;
 } {
   const listen = vi.fn(() => Promise.resolve("fixture-listener"));
   let secureConnectionListener: ((socket: TLSSocket) => void) | undefined;
+  let connectionListener: ((socket: Socket) => void) | undefined;
   const rawServer = {
     prependListener: vi.fn(
-      (_event: "secureConnection", listener: (socket: TLSSocket) => void): unknown => {
-        secureConnectionListener = listener;
+      (event: string, listener: (socket: TLSSocket | Socket) => void): unknown => {
+        if (event === "secureConnection") {
+          secureConnectionListener = listener;
+        }
+        if (event === "connection") connectionListener = listener;
         return rawServer;
       },
     ),
@@ -117,6 +141,12 @@ function fakeBrowserServer(): {
       }
       secureConnectionListener(socket);
     },
+    connection: (socket) => {
+      if (connectionListener === undefined) {
+        throw new Error("Raw connection listener was not installed.");
+      }
+      connectionListener(socket);
+    },
   };
 }
 
@@ -129,6 +159,14 @@ function fakeTlsSocket(remoteAddress: string | undefined): {
     socket: { remoteAddress, destroy } as unknown as TLSSocket,
     destroy,
   };
+}
+
+function fakeRawSocket(): {
+  readonly socket: Socket;
+  readonly destroy: ReturnType<typeof vi.fn>;
+} {
+  const destroy = vi.fn();
+  return { socket: { destroy } as unknown as Socket, destroy };
 }
 
 function privateInterface(address: string): NetworkInterfaceInfo {
