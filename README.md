@@ -1,41 +1,66 @@
 # Naru
 
-Naru는 언제 어디서든 Codex 작업을 할 수 있도록 만들어진, 웹 기반 원격 ADE입니다.
-집에 있는 컴퓨터에 Naru를 설치하면, 다양한 내 기기에서 언제 어디서든 같은 작업창에 접속하여 개발할 수 있습니다.
-컴퓨터로 하던 작업을 그대로 밖에서, 휴대폰으로 이어서 하는 경험을 누려보세요.
+[한국어](README.ko.md)
 
-Naru는 실행 중인 shell과 Codex CLI 작업을 데스크톱·모바일 브라우저에서 이어 쓰는 개인용 웹 Agent
-IDE입니다. DurableSession Host가 PTY와 runtime을 소유하고, Naru는 Project·Pane과 반응형 UI를,
-Workstation Gateway는 선택적인 Passkey·private ingress 경계를 담당합니다.
+**Continue the Codex and terminal sessions running on your Mac from any of your devices.**
+
+Naru is a self-hosted web IDE for one person. Run it on a Mac you control, then reconnect to the
+same Codex and terminal sessions from a desktop or mobile browser over your private network.
+Closing the browser or switching devices does not end the work running on the Mac.
+
+## Why Naru
+
+- Pick up the same terminal or Codex session from another device.
+- Arrange multiple terminals, Codex sessions, documents, and files in persistent panes.
+- Discover Git worktrees without connecting or starting them until you choose to.
+- Keep multiple browsers in sync while allowing exactly one of them to control terminal input.
+- Reconnect to running sessions after the Naru server or optional Gateway restarts.
+- Add passkey sign-in, an installable web app, and push notifications with Workstation Gateway.
+
+Naru does not claim that a process survives a DurableSession Host or OS restart. If the Host
+restarts, Naru restores the session record and reports the process as stopped.
+
+## How it works
 
 ```text
-private HTTPS browser
-        |
-        v
-Workstation Gateway -- signed app assertion --> Naru
-                                                    |
-local Session CLI -------- app capability ----------+
-                                                    v
-                                           DurableSession Host
-                                                    |
-                                                PTY / Codex
+desktop or mobile browser
+           |
+           v
+Workstation Gateway (optional)   passkey, Origin, and network policy
+           |
+           v
+Naru server + web UI             projects, panes, files, and layout
+           |
+           v
+DurableSession Host              terminal process, output, and control
+           |
+           v
+      shell / Codex CLI
 ```
 
-## 주요 기능
+The DurableSession Host owns the running process and terminal state. Naru manages the workspace
+around it, while Workstation Gateway can provide a separate authentication and private-ingress
+boundary. These layers use distinct permissions; access to the private network is not treated as
+authentication.
 
-- server project 등록, Git worktree 발견과 명시적 연결
-- 여러 Codex·terminal Pane과 저장되는 split layout
-- observer 한 명 이상과 정확히 한 명의 controller, 명시적 handoff/preempt
-- reconnect 및 Naru/Gateway restart 뒤 같은 Host runtime 재연결
-- public TypeScript client와 local `durable-session` CLI
-- optional Gateway Passkey, PWA/Web Push와 macOS arm64 standalone distribution
+## Before you run it
 
-Host가 재시작되면 이전 process나 terminal 화면이 살아 있다고 주장하지 않고 Session을 `stopped`로
-표시합니다. multi-user/RBAC, public internet hosting과 transcript 영구 저장은 현재 범위가 아닙니다.
+> [!WARNING]
+> Naru exposes a shell with the permissions of the OS user who installed it. For normal use, put
+> Naru behind Workstation Gateway and use its passkey authentication, exact Origin checks, and
+> scoped app assertions.
+>
+> The Gateway does not make an unsafe network setup safe. Keep every listener and allowed source
+> private and exact, review TLS, DNS, VPN, firewall, and router settings yourself, and never expose
+> Naru directly to the public internet.
+
+The current supported host and package target is macOS on Apple silicon. Naru is designed for one
+OS user and one personal instance; multi-user access and role-based access control are not
+supported.
 
 ## Source development
 
-Node.js 24 LTS와 pnpm 11.12.0이 필요합니다.
+Install Node.js 24 LTS and pnpm 11.12.0, then run:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -44,21 +69,39 @@ pnpm password:hash
 pnpm dev
 ```
 
-`.env`의 모든 placeholder를 개발 instance 전용 값으로 바꾸세요. 실제 secret, project path, domain,
-IP 또는 certificate를 commit하지 마세요. 자세한 절차는 [Getting started](docs/GETTING_STARTED.md)와
-[known limitations](docs/LIMITATIONS.md)를 확인하세요.
+Replace every placeholder in `.env` with development-only values. Never commit real secrets,
+project paths, domains, IP addresses, certificates, or terminal output. See
+[Getting started](docs/GETTING_STARTED.md) for the complete setup and
+[Known limitations](docs/LIMITATIONS.md) before using Naru outside a local development environment.
 
-## 보안 경계
+## Security boundaries
 
-- terminal은 설치한 OS 사용자와 같은 권한으로 실행됩니다.
-- project는 매 요청에서 `realpath`로 정규화하고 승인 root 밖 symlink를 거부합니다.
-- terminal/Codex 원문, cookie, private key와 credential은 DB나 구조화 로그에 저장하지 않습니다.
-- Gateway cookie·forwarding header는 upstream에 전달하지 않고 짧은 app assertion으로 바꿉니다.
-- network 접근은 authentication이 아니며 public bind와 암묵적 network mutation을 지원하지 않습니다.
+- Project paths are resolved with `realpath` and must remain inside an approved root.
+- HTTP mutations and WebSocket connections validate the exact Origin, session, and message shape.
+- Gateway credentials are not forwarded to Naru; the Gateway exchanges them for a short-lived,
+  scoped assertion.
+- Host capabilities are bound to the application, caller, session, runtime, and generation.
+- Cookies, private keys, capabilities, and raw terminal or Codex output are not written to the
+  database or structured logs.
+- Naru does not automatically change DNS, VPN, firewall, router, or certificate settings.
 
-상세 위협 모델은 [Security](docs/SECURITY.md)를 참고하세요.
+Read the full [security model](docs/SECURITY.md) and [architecture](docs/ARCHITECTURE.md) before
+changing authentication, networking, process control, or path handling.
 
-## 검증
+## Repository map
+
+| Path                               | Purpose                                         |
+| ---------------------------------- | ----------------------------------------------- |
+| `apps/server/`, `apps/web/`        | Naru reference server and responsive web UI     |
+| `apps/durable-session-host/`       | Terminal process lifecycle, output, and control |
+| `packages/contracts/`              | Versioned protocol and runtime schemas          |
+| `packages/durable-session-client/` | Public TypeScript client                        |
+| `apps/cli/`                        | Same-user local session CLI                     |
+| `apps/workstation-gateway/`        | Passkey Gateway and private-ingress adapters    |
+| `ops/workstation/distribution/`    | Standalone macOS arm64 packaging                |
+| `skills/`                          | Setup, integration, and operation skills        |
+
+## Verification
 
 ```bash
 pnpm format
@@ -74,18 +117,6 @@ pnpm audit:security
 pnpm public:scan
 ```
 
-## 구성요소
-
-| 경로                               | 역할                                |
-| ---------------------------------- | ----------------------------------- |
-| `apps/durable-session-host/`       | PTY lifecycle, event와 control      |
-| `packages/contracts/`              | versioned protocol과 runtime schema |
-| `packages/durable-session-client/` | public TypeScript client            |
-| `apps/cli/`                        | same-user local Session CLI         |
-| `apps/workstation-gateway/`        | Passkey Gateway와 ingress adapter   |
-| `apps/server/`, `apps/web/`        | Naru reference application          |
-| `ops/workstation/distribution/`    | macOS arm64 standalone package      |
-| `skills/`                          | setup·integration·operation skills  |
-
-Naru source는 [Apache License 2.0](LICENSE)으로 배포됩니다. Third-party runtime과 font 고지는
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다.
+Contributions are welcome; start with [CONTRIBUTING.md](CONTRIBUTING.md). Naru is licensed under
+the [Apache License 2.0](LICENSE). Dependency, runtime, and bundled-font notices are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
