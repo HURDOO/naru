@@ -24,9 +24,10 @@
 
 ## D005. Private Ingress는 Gateway listener adapter다
 
-- 상태: 승인·PI-02 listener adapter 구현 완료
+- 상태: 승인·PI-03 source/request 경계 구현 완료
 - `loopback-proxy`와 `direct-private-tls`를 strict union으로 분리한다. Direct mode는 exact private bind,
-  TLS와 실제 socket source를 Gateway에서 검증하며 forwarded identity에 의존하지 않는다.
+  TLS, 실제 socket source와 exact Host/Origin을 Gateway에서 검증하고 forwarded identity를 인증 전에
+  거부한다.
 
 ## D006. 외부 network와 TLS material은 사용자 소유다
 

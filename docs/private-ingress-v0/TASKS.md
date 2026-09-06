@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-02 Gateway direct private TLS listener 완료, PI-03 구현 승인 전
-- 다음 작업: `PI-03`
+- PrivateIngress: PI-03 source·Origin·header 보안 완료, PI-04 구현 승인 전
+- 다음 작업: `PI-04`
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -122,18 +122,27 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-03. source·Origin·header 보안
 
-- [>] **범위**: actual socket source allowlist, exact Host/Origin과 spoofed proxy/identity header 경계를
-  direct listener에 적용한다.
+- [x] **범위**: actual socket source allowlist, exact Host/Origin과 spoofed proxy/identity header 경계를
+      direct listener에 적용한다.
 - **선행 조건**: PI-02
 - **산출물**: source policy, header sanitization, size/timeout limit와 negative test matrix
 - **완료 조건**:
   - wildcard/public bind, public·invalid IPv4/CIDR source, wrong Origin/Host와 비허용 IP를 거부한다.
   - inbound forwarding/Gateway identity spoof가 Naru에 도달하지 않는다.
   - HTTP와 WebSocket에 같은 source/auth policy를 적용한다.
+- **완료 증거 (2026-09-07)**: Direct TLS `secureConnection`에서 actual canonical IPv4 exact/CIDR source를
+  검사하고 비허용·missing·public·loopback·IPv6·IPv4-mapped source를 HTTP/WSS dispatch 전에 닫았다.
+  모든 browser request의 exact Host/제공된 Origin, unsafe HTTP/WSS의 required Origin, direct-mode
+  forwarding/assertion/identity header 사전 거부와 upstream sanitizer를 적용했다. Header 16 KiB·64 fields,
+  header 5초/request 30초/keep-alive 5초/socket당 100 request, 기존 body/WS payload·queue 상한과 actual
+  source당 20회/분·global 100회/분 authentication rate limit을 고정했다. Node 24.19.0에서 format, lint,
+  typecheck, 667 passed/4 skipped test, build와 E2E 14/14를 통과했고 public scan은 469 files/510 objects,
+  findings 0이었다. TLS validator/reload는 PI-04로 유지했고 distribution, production과 remote는 변경하지
+  않았다.
 
 ## PI-04. TLS material과 last-known-good lifecycle
 
-- [ ] **범위**: 기존 Naru TLS 검증을 production provider에서 분리해 Gateway direct listener에 연결한다.
+- [>] **범위**: 기존 Naru TLS 검증을 production provider에서 분리해 Gateway direct listener에 연결한다.
 - **선행 조건**: PI-02, PI-03
 - **산출물**: canonical path/owner/mode/SAN/key/expiry validator, hot reload, readiness/diagnostic
 - **완료 조건**:

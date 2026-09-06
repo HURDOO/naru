@@ -3,9 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
+import type { InjectOptions } from "fastify";
 import WebSocket, { type RawData, WebSocketServer } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestTlsState } from "../../server/test/tls-fixture.js";
+import { GATEWAY_BROWSER_LIMITS } from "../src/browser-security.js";
 import { WorkstationGateway } from "../src/gateway.js";
 import type { GatewayLogRecord } from "../src/logging.js";
 import { createDirectGatewayTestFixture } from "./support.js";
@@ -65,6 +67,25 @@ describe("Gateway direct private TLS transport", () => {
     expect(health.body).toBe('{"version":1,"status":"ok"}');
     await expect(cleartextRequest(gatewayPort)).rejects.toThrow();
 
+    await expectWebSocketUpgradeStatus(
+      `wss://127.0.0.1:${gatewayPort}/app/socket`,
+      {
+        host: new URL(fixture.config.browserOrigin).host,
+        origin: fixture.config.browserOrigin,
+      },
+      401,
+    );
+    await expectWebSocketUpgradeStatus(
+      `wss://127.0.0.1:${gatewayPort}/app/socket`,
+      {
+        host: new URL(fixture.config.browserOrigin).host,
+        origin: fixture.config.browserOrigin,
+        cookie: `${fixture.config.sessionCookieName}=${session.token}`,
+        "x-workstation-gateway-assertion": "externally-injected",
+      },
+      400,
+    );
+
     const client = new WebSocket(`wss://127.0.0.1:${gatewayPort}/app/socket`, {
       rejectUnauthorized: false,
       headers: {
@@ -85,6 +106,178 @@ describe("Gateway direct private TLS transport", () => {
     expect(serializedLogs).not.toContain(generation.directory);
     expect(serializedLogs).not.toContain(fixture.config.browserIngress.listener.host);
     expect(serializedLogs).not.toContain(fixture.config.browserOrigin);
+  });
+
+  it("rejects wrong request authority, spoofed identity headers, and bounded inputs before auth", async () => {
+    const tls = createTestTlsState("gateway.fixture.invalid");
+    const generation = tls.createGeneration("direct-request-boundary");
+    const fixture = createDirectGatewayTestFixture({
+      tls: {
+        approvedRoot: generation.directory,
+        certificateFile: generation.certificateFile,
+        privateKeyFile: generation.privateKeyFile,
+        reload: "watch-last-known-good",
+        materialOwner: "user",
+        renewalOwner: "external",
+        terminationOwner: "gateway",
+      },
+    });
+    const logs: GatewayLogRecord[] = [];
+    const gateway = await WorkstationGateway.create(fixture.config, {
+      logger: { write: (record) => logs.push(record) },
+      browserListener: {
+        directTlsBootstrap: {
+          loadInitial: (ingress) => ({
+            key: readFileSync(ingress.tls.privateKeyFile),
+            cert: readFileSync(ingress.tls.certificateFile),
+          }),
+        },
+      },
+    });
+    running.push({ close: () => gateway.close() });
+    const host = new URL(fixture.config.browserOrigin).host;
+    const inject = (input: InjectOptions) =>
+      gateway.browser.inject({ ...input, remoteAddress: "10.44.0.10" });
+
+    expect(gateway.browser.initialConfig).toMatchObject({
+      requestTimeout: GATEWAY_BROWSER_LIMITS.requestTimeoutMs,
+      keepAliveTimeout: GATEWAY_BROWSER_LIMITS.keepAliveTimeoutMs,
+      maxRequestsPerSocket: GATEWAY_BROWSER_LIMITS.requestsPerSocket,
+    });
+    expect(gateway.browser.server.headersTimeout).toBe(GATEWAY_BROWSER_LIMITS.headersTimeoutMs);
+
+    const wrongHost = await inject({
+      method: "GET",
+      url: "/_gateway/healthz",
+      headers: { host: "wrong.fixture.invalid" },
+    });
+    expect(wrongHost.statusCode).toBe(403);
+
+    const wrongOrigin = await inject({
+      method: "GET",
+      url: "/_gateway/healthz",
+      headers: { host, origin: "https://wrong.fixture.invalid" },
+    });
+    expect(wrongOrigin.statusCode).toBe(403);
+
+    for (const [name, value] of [
+      ["forwarded", "for=203.0.113.9"],
+      ["x-forwarded-for", "203.0.113.9"],
+      ["x-workstation-gateway-assertion", "externally-injected"],
+      ["x-durable-session-capability", "externally-injected"],
+    ] as const) {
+      const denied = await inject({
+        method: "GET",
+        url: "/app/private",
+        headers: { host, [name]: value },
+      });
+      expect(denied.statusCode, name).toBe(400);
+      expect(denied.json()).toMatchObject({ error: { code: "REQUEST_INVALID" } });
+    }
+
+    const allowedCsrfHeader = await inject({
+      method: "GET",
+      url: "/app/private",
+      headers: { host, "x-workstation-gateway-csrf": "browser-input" },
+    });
+    expect(allowedCsrfHeader.statusCode).toBe(401);
+
+    const manyHeaders: Record<string, string> = { host };
+    for (let index = 0; index < GATEWAY_BROWSER_LIMITS.headerCount; index += 1) {
+      manyHeaders[`x-fixture-${index}`] = "value";
+    }
+    const tooManyHeaders = await inject({
+      method: "GET",
+      url: "/_gateway/healthz",
+      headers: manyHeaders,
+    });
+    expect(tooManyHeaders.statusCode).toBe(431);
+
+    const oversizedHeader = await inject({
+      method: "GET",
+      url: "/_gateway/healthz",
+      headers: { host, "x-fixture": "x".repeat(GATEWAY_BROWSER_LIMITS.headerBytes) },
+    });
+    expect(oversizedHeader.statusCode).toBe(431);
+
+    const oversizedBody = await inject({
+      method: "POST",
+      url: "/app/private",
+      headers: {
+        host,
+        origin: fixture.config.browserOrigin,
+        "content-type": "application/octet-stream",
+      },
+      payload: Buffer.alloc(fixture.config.requestBodyBytes + 1),
+    });
+    expect(oversizedBody.statusCode).toBe(413);
+    expect(oversizedBody.json()).toMatchObject({ error: { code: "REQUEST_INVALID" } });
+
+    const serializedLogs = JSON.stringify(logs);
+    for (const privateValue of [
+      "10.44.0.10",
+      "203.0.113.9",
+      "wrong.fixture.invalid",
+      "externally-injected",
+    ]) {
+      expect(serializedLogs).not.toContain(privateValue);
+    }
+  });
+
+  it("rate limits authentication work by actual socket source with a generic failure", async () => {
+    const tls = createTestTlsState("gateway.fixture.invalid");
+    const generation = tls.createGeneration("direct-auth-rate");
+    const fixture = createDirectGatewayTestFixture({
+      tls: {
+        approvedRoot: generation.directory,
+        certificateFile: generation.certificateFile,
+        privateKeyFile: generation.privateKeyFile,
+        reload: "watch-last-known-good",
+        materialOwner: "user",
+        renewalOwner: "external",
+        terminationOwner: "gateway",
+      },
+    });
+    const gateway = await WorkstationGateway.create(fixture.config, {
+      browserListener: {
+        directTlsBootstrap: {
+          loadInitial: (ingress) => ({
+            key: readFileSync(ingress.tls.privateKeyFile),
+            cert: readFileSync(ingress.tls.certificateFile),
+          }),
+        },
+      },
+    });
+    running.push({ close: () => gateway.close() });
+    const headers = {
+      host: new URL(fixture.config.browserOrigin).host,
+      origin: fixture.config.browserOrigin,
+      "content-type": "application/json",
+    };
+
+    for (
+      let attempt = 0;
+      attempt < GATEWAY_BROWSER_LIMITS.authenticationAttemptsPerSource;
+      attempt += 1
+    ) {
+      const response = await gateway.browser.inject({
+        method: "POST",
+        url: "/_gateway/auth/authentication/options",
+        headers,
+        payload: {},
+        remoteAddress: "10.44.0.10",
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    const limited = await gateway.browser.inject({
+      method: "POST",
+      url: "/_gateway/auth/authentication/options",
+      headers,
+      payload: {},
+      remoteAddress: "10.44.0.10",
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({ error: { code: "PASSKEY_DENIED" } });
   });
 
   it("removes the admin socket when direct address admission fails before browser bind", async () => {
@@ -149,7 +342,7 @@ async function createEchoUpstream(): Promise<{
   const sockets = new WebSocketServer({ server });
   sockets.on("connection", (socket) => {
     socket.on("message", (data: RawData, binary: boolean) => {
-      socket.send(binary ? data : `echo:${data.toString()}`, { binary });
+      socket.send(binary ? data : `echo:${rawDataText(data)}`, { binary });
     });
   });
   server.listen(0, "127.0.0.1");
@@ -164,6 +357,12 @@ async function createEchoUpstream(): Promise<{
         server.close((error) => (error ? reject(error) : resolvePromise()));
       }),
   };
+}
+
+function rawDataText(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  return Buffer.from(data).toString("utf8");
 }
 
 async function secureRequest(
@@ -202,5 +401,21 @@ async function cleartextRequest(port: number): Promise<void> {
     const request = httpRequest({ hostname: "127.0.0.1", port, path: "/" }, () => resolvePromise());
     request.once("error", reject);
     request.end();
+  });
+}
+
+async function expectWebSocketUpgradeStatus(
+  url: string,
+  headers: Record<string, string>,
+  expectedStatus: number,
+): Promise<void> {
+  const client = new WebSocket(url, { headers, rejectUnauthorized: false });
+  await new Promise<void>((resolvePromise, reject) => {
+    client.once("error", reject);
+    client.once("unexpected-response", (_request, response) => {
+      expect(response.statusCode).toBe(expectedStatus);
+      response.resume();
+      response.once("end", resolvePromise);
+    });
   });
 }

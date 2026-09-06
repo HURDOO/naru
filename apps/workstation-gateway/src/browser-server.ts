@@ -12,7 +12,14 @@ import type { WebSocket } from "ws";
 import { z, ZodError } from "zod";
 import type { GatewayAppRegistry } from "./app-registry.js";
 import type { GatewayAssertionIssuer } from "./assertion-issuer.js";
+import {
+  GATEWAY_BROWSER_LIMITS,
+  hasReservedIdentityHeader,
+  rawHeaderBytes,
+  type GatewayAuthenticationRateLimiter,
+} from "./browser-security.js";
 import type { GatewayManagedAppRegistration, WorkstationGatewayConfig } from "./config.js";
+import { isDirectPrivateWorkstationGatewayConfig } from "./config.js";
 import { GatewayError, internalGatewayError } from "./gateway-error.js";
 import type { GatewayLogger } from "./logging.js";
 import type { GatewayPasskeyManager } from "./passkeys.js";
@@ -81,6 +88,8 @@ export interface GatewayBrowserServerOptions {
   readonly sockets: GatewayWebSocketRegistry;
   readonly logger: GatewayLogger;
   readonly ready: () => boolean;
+  readonly authenticationRateLimiter: GatewayAuthenticationRateLimiter;
+  readonly nowMs: () => number;
   readonly httpsOptions?: ServerOptions;
 }
 
@@ -99,6 +108,7 @@ export async function buildGatewayBrowserServer(
     if (isWorkstationGatewayBrowserPath(new URL(request.url, "https://gateway.invalid").pathname)) {
       reply.header("cache-control", "no-store");
     }
+    requireRequestEnvelope(request, options.config);
     await Promise.resolve();
   });
 
@@ -153,12 +163,14 @@ export async function buildGatewayBrowserServer(
   });
 
   server.post("/_gateway/auth/registration/options", async (request) => {
+    requireAuthenticationAttempt(request, options, "registration");
     requireExactBrowserRequest(request, options.config, true);
     const input = RegistrationOptionsRequestSchema.parse(parseJsonBody(request));
     return options.passkeys.beginRegistration(input.code, options.config.browserOrigin);
   });
 
   server.post("/_gateway/auth/registration/verify", async (request, reply) => {
+    requireAuthenticationAttempt(request, options, "registration");
     requireExactBrowserRequest(request, options.config, true);
     const input = RegistrationVerifyRequestSchema.parse(parseJsonBody(request));
     const result = await options.passkeys.finishRegistration(options.config.browserOrigin, {
@@ -176,12 +188,14 @@ export async function buildGatewayBrowserServer(
   });
 
   server.post("/_gateway/auth/authentication/options", async (request) => {
+    requireAuthenticationAttempt(request, options, "authentication");
     requireExactBrowserRequest(request, options.config, true);
     requireEmptyJsonBody(request);
     return options.passkeys.beginAuthentication(options.config.browserOrigin);
   });
 
   server.post("/_gateway/auth/authentication/verify", async (request, reply) => {
+    requireAuthenticationAttempt(request, options, "authentication");
     requireExactBrowserRequest(request, options.config, true);
     const input = AuthenticationVerifyRequestSchema.parse(parseJsonBody(request));
     const session = await options.passkeys.finishAuthentication(options.config.browserOrigin, {
@@ -338,10 +352,38 @@ function createGatewayFastifyServer(options: GatewayBrowserServerOptions): Fasti
     logger: false,
     trustProxy: false,
     bodyLimit: options.config.requestBodyBytes,
+    requestTimeout: GATEWAY_BROWSER_LIMITS.requestTimeoutMs,
+    keepAliveTimeout: GATEWAY_BROWSER_LIMITS.keepAliveTimeoutMs,
+    maxRequestsPerSocket: GATEWAY_BROWSER_LIMITS.requestsPerSocket,
     routerOptions: { maxParamLength: 1_024 },
   } as const;
-  if (options.httpsOptions === undefined) return Fastify(serverOptions);
-  return Fastify({ ...serverOptions, https: options.httpsOptions });
+  const server =
+    options.httpsOptions === undefined
+      ? Fastify(serverOptions)
+      : Fastify({ ...serverOptions, https: options.httpsOptions });
+  server.server.headersTimeout = GATEWAY_BROWSER_LIMITS.headersTimeoutMs;
+  return server;
+}
+
+function requireRequestEnvelope(request: FastifyRequest, config: WorkstationGatewayConfig): void {
+  if (
+    request.raw.rawHeaders.length / 2 > GATEWAY_BROWSER_LIMITS.headerCount ||
+    rawHeaderBytes(request.raw.rawHeaders) > GATEWAY_BROWSER_LIMITS.headerBytes
+  ) {
+    throw new GatewayError("REQUEST_INVALID", 431, "Gateway request headers are too large.");
+  }
+  requireExactHost(request, config);
+  const rawOrigin = request.headers.origin;
+  const origin = singleHeader(rawOrigin);
+  if (rawOrigin !== undefined && (origin === undefined || origin !== config.browserOrigin)) {
+    throw new GatewayError("ORIGIN_DENIED", 403, "Gateway request Origin is not allowed.");
+  }
+  if (
+    isDirectPrivateWorkstationGatewayConfig(config) &&
+    hasReservedIdentityHeader(request.headers)
+  ) {
+    throw new GatewayError("REQUEST_INVALID", 400, "Gateway request headers are invalid.");
+  }
 }
 
 function requireExactHost(request: FastifyRequest, config: WorkstationGatewayConfig): void {
@@ -357,13 +399,32 @@ function requireExactBrowserRequest(
   originRequired: boolean,
 ): void {
   requireExactHost(request, config);
-  const origin = singleHeader(request.headers.origin);
+  const rawOrigin = request.headers.origin;
+  const origin = singleHeader(rawOrigin);
   if (
     (originRequired && origin === undefined) ||
-    (origin !== undefined && origin !== config.browserOrigin)
+    (rawOrigin !== undefined && (origin === undefined || origin !== config.browserOrigin))
   ) {
     throw new GatewayError("ORIGIN_DENIED", 403, "Gateway request Origin is not allowed.");
   }
+}
+
+function requireAuthenticationAttempt(
+  request: FastifyRequest,
+  options: GatewayBrowserServerOptions,
+  kind: "registration" | "authentication",
+): void {
+  if (options.authenticationRateLimiter.consume(request.socket.remoteAddress, options.nowMs())) {
+    return;
+  }
+  if (kind === "registration") {
+    throw new GatewayError(
+      "BOOTSTRAP_DENIED",
+      429,
+      "Gateway bootstrap or recovery intent is invalid.",
+    );
+  }
+  throw new GatewayError("PASSKEY_DENIED", 429, "Gateway passkey ceremony is invalid.");
 }
 
 function requireSession(
@@ -525,5 +586,17 @@ function normalizeError(error: unknown): GatewayError {
   if (error instanceof ZodError) {
     return new GatewayError("REQUEST_INVALID", 400, "Gateway request body is invalid.");
   }
+  if (hasErrorCode(error, "FST_ERR_CTP_BODY_TOO_LARGE")) {
+    return new GatewayError("REQUEST_INVALID", 413, "Gateway request body is too large.");
+  }
   return internalGatewayError();
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === code
+  );
 }

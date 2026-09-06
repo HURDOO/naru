@@ -91,8 +91,11 @@ PrivateIngress config에서 세 책임을 분리한다. Workstation v0 envelope 
 1. Gateway가 exact local private address에서 TLS handshake를 수행한다.
 2. handshake 전에 유효한 current secure context가 없으면 연결을 수락하지 않는다.
 3. 실제 socket source가 명시적 exact IPv4 또는 canonical private IPv4 CIDR allowlist에 없으면
-   정적 asset을 포함한 모든 request와 upgrade를 거부한다.
-4. Host, Origin과 method/size를 검사하고 inbound proxy·identity header를 제거한다.
+   TLS `secureConnection`에서 socket을 응답 없이 닫아 정적 asset을 포함한 모든 request와 upgrade를
+   거부한다. IPv4-mapped IPv6를 IPv4로 추론하지 않는다.
+4. 모든 request의 exact Host와 제공된 Origin을 검사하고, unsafe HTTP와 WebSocket에는 Origin을
+   요구한다. Direct mode의 inbound proxy·identity header는 인증 전에 거부하며 loopback mode와
+   upstream에는 기존 sanitizer를 방어 심층화로 유지한다.
 5. Gateway Passkey/session/CSRF 또는 WebSocket upgrade auth를 검증한다.
 6. Gateway cookie를 제거하고 short-lived app-scoped signed principal을 만든다.
 7. exact loopback Naru upstream으로 HTTP 또는 WebSocket을 전달한다.
@@ -100,6 +103,12 @@ PrivateIngress config에서 세 책임을 분리한다. Workstation v0 envelope 
 
 IP/CIDR allowlist는 user identity가 아니며 Passkey를 생략하거나 Gateway principal capability가 되지
 않는다. CIDR membership도 inbound forwarding header가 아닌 actual socket remote address로만 판정한다.
+
+Browser listener는 header 16 KiB·64 fields, header receipt 5초, request receipt 30초, keep-alive 5초와
+socket당 100 request 상한을 고정한다. 기존 configured HTTP body limit, WebSocket 4 MiB payload와
+1 MiB/64-message pending queue도 유지한다. Passkey/bootstrap endpoint는 실제 socket source당 분당
+20회, 전체 분당 100회로 제한하고 source bucket을 bounded memory에만 둔다. 제한 결과는 기존 generic
+browser failure code를 사용하며 source나 header 값을 log하지 않는다.
 
 ## 5. lifecycle과 health
 

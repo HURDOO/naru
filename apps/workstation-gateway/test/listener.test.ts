@@ -1,5 +1,7 @@
 import type { NetworkInterfaceInfo } from "node:os";
+import type { TLSSocket } from "node:tls";
 import { describe, expect, it, vi } from "vitest";
+import { GATEWAY_BROWSER_LIMITS } from "../src/browser-security.js";
 import {
   assertActiveLocalPrivateIpv4,
   createGatewayBrowserListener,
@@ -40,9 +42,24 @@ describe("Gateway browser listener adapters", () => {
     await listener.listen(server.port);
 
     expect(listener.kind).toBe("direct-private-tls");
-    expect(listener.httpsOptions).toMatchObject({ minVersion: "TLSv1.2" });
+    expect(listener.httpsOptions).toMatchObject({
+      minVersion: "TLSv1.2",
+      maxHeaderSize: GATEWAY_BROWSER_LIMITS.headerBytes,
+      headersTimeout: GATEWAY_BROWSER_LIMITS.headersTimeoutMs,
+      requestTimeout: GATEWAY_BROWSER_LIMITS.requestTimeoutMs,
+      keepAliveTimeout: GATEWAY_BROWSER_LIMITS.keepAliveTimeoutMs,
+    });
     expect(server.listen).toHaveBeenCalledOnce();
     expect(server.listen).toHaveBeenCalledWith({ host: "10.44.0.2", port: 8_443 });
+    expect(server.prependListener).toHaveBeenCalledOnce();
+
+    const admitted = fakeTlsSocket("10.44.0.10");
+    server.secureConnection(admitted.socket);
+    expect(admitted.destroy).not.toHaveBeenCalled();
+
+    const denied = fakeTlsSocket("10.44.0.11");
+    server.secureConnection(denied.socket);
+    expect(denied.destroy).toHaveBeenCalledOnce();
   });
 
   it("fails closed before bind when the configured private address is not active", async () => {
@@ -77,9 +94,41 @@ describe("Gateway browser listener adapters", () => {
 function fakeBrowserServer(): {
   readonly port: GatewayBrowserServerPort;
   readonly listen: ReturnType<typeof vi.fn>;
+  readonly prependListener: ReturnType<typeof vi.fn>;
+  secureConnection(socket: TLSSocket): void;
 } {
   const listen = vi.fn(() => Promise.resolve("fixture-listener"));
-  return { port: { listen }, listen };
+  let secureConnectionListener: ((socket: TLSSocket) => void) | undefined;
+  const rawServer = {
+    prependListener: vi.fn(
+      (_event: "secureConnection", listener: (socket: TLSSocket) => void): unknown => {
+        secureConnectionListener = listener;
+        return rawServer;
+      },
+    ),
+  };
+  return {
+    port: { server: rawServer, listen },
+    listen,
+    prependListener: rawServer.prependListener,
+    secureConnection: (socket) => {
+      if (secureConnectionListener === undefined) {
+        throw new Error("Secure connection listener was not installed.");
+      }
+      secureConnectionListener(socket);
+    },
+  };
+}
+
+function fakeTlsSocket(remoteAddress: string | undefined): {
+  readonly socket: TLSSocket;
+  readonly destroy: ReturnType<typeof vi.fn>;
+} {
+  const destroy = vi.fn();
+  return {
+    socket: { remoteAddress, destroy } as unknown as TLSSocket,
+    destroy,
+  };
 }
 
 function privateInterface(address: string): NetworkInterfaceInfo {

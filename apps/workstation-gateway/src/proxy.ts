@@ -7,6 +7,7 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { WORKSTATION_GATEWAY_ASSERTION_HEADER } from "@naru/contracts/workstation-gateway/v1";
 import WebSocket, { type RawData } from "ws";
+import { isReservedIdentityHeaderName } from "./browser-security.js";
 import type { GatewayManagedAppRegistration } from "./config.js";
 import { GatewayError } from "./gateway-error.js";
 import type { GatewayLogger } from "./logging.js";
@@ -26,38 +27,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-
-const RESERVED_EXACT_HEADERS = new Set([
-  "authorization",
-  "expect",
-  "forwarded",
-  "remote-user",
-  "x-real-ip",
-  "x-ms-client-principal",
-]);
-
-const RESERVED_HEADER_PREFIXES = [
-  "cf-access-",
-  "x-amzn-oidc-",
-  "x-auth-",
-  "x-authenticated-",
-  "x-consumer-",
-  "x-forwarded-",
-  "x-gateway-",
-  "x-goog-authenticated-",
-  "x-identity-",
-  "x-ms-client-principal-",
-  "x-oidc-",
-  "x-original-",
-  "x-pomerium-",
-  "x-remote-",
-  "x-ssl-client-",
-  "x-tailscale-",
-  "x-user-",
-  "x-workstation-gateway-",
-  "x-durable-session-",
-  "x-capability-",
-];
 
 export interface GatewayHttpProxyInput {
   readonly request: FastifyRequest;
@@ -222,8 +191,7 @@ export function sanitizedUpstreamHeaders(
       name === "host" ||
       HOP_BY_HOP_HEADERS.has(name) ||
       connectionTokens.has(name) ||
-      RESERVED_EXACT_HEADERS.has(name) ||
-      RESERVED_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix))
+      isReservedIdentityHeaderName(name)
     ) {
       continue;
     }

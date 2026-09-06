@@ -127,3 +127,20 @@
   구현해 fail-closed 계약을 약화하지 않는다.
 - 후속 조치: PI-04가 기존 Naru validator를 재사용 가능한 provider로 분리해 이 port에 연결한다. PI-05
   전에는 distribution이 direct config를 생성하거나 production에 활성화하지 않는다.
+
+## PI-D014. Direct source는 TLS socket에서 차단하고 identity spoof는 인증 전에 거부한다
+
+- 상태: accepted
+- 결정: `direct-private-tls`는 validated source policy를 numeric IPv4 range matcher로 compile하고 TLS
+  `secureConnection`의 실제 `remoteAddress`가 exact address/CIDR에 없으면 HTTP나 WebSocket dispatch
+  전에 socket을 닫는다. IPv4-mapped IPv6, loopback, public·malformed address는 다른 address로
+  normalize하지 않고 거부한다.
+- header 경계: 모든 browser request는 exact Host와 제공된 exact Origin을 검사한다. Unsafe HTTP와
+  WebSocket은 Origin을 필수로 하고, direct mode는 inbound forwarding, assertion과 reserved identity·
+  capability header를 인증 전에 generic `REQUEST_INVALID`로 거부한다. Loopback compatibility와
+  upstream sanitizer는 유지한다.
+- bounded work: header 16 KiB·64 fields, header/request/keep-alive timeout, socket당 request 수와 기존
+  body/WebSocket 상한을 명시한다. Authentication endpoint는 actual source당 20회/분, 전체 100회/분의
+  bounded in-memory limit을 적용하며 기존 `BOOTSTRAP_DENIED`/`PASSKEY_DENIED` code로 429를 반환한다.
+- 호환성: PrivateIngress와 Gateway browser public schema/version은 바꾸지 않는다. Source, Origin,
+  spoofed header 값과 rate-limit key는 structured log에 기록하지 않는다.

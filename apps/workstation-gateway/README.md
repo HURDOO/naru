@@ -10,7 +10,9 @@ stop, or bypass DurableSession Host or any registered application.
 - Config v1 retains the exact `127.0.0.1` HTTP listener used by Tailscale Serve. Config v2 selects
   exactly one strict `loopback-proxy | direct-private-tls` browser ingress adapter.
 - Direct mode terminates HTTPS/WSS in Gateway, verifies that its exact RFC1918 IPv4 bind is active
-  locally, and requires every enabled Gateway-managed app to use an exact `127.0.0.1` HTTP upstream.
+  locally, admits only configured actual-socket RFC1918 IPv4 sources, and requires every enabled
+  Gateway-managed app to use an exact `127.0.0.1` HTTP upstream. Forwarded addresses are never
+  consulted.
 - The local administration API is available only through a current-user Unix socket with mode
   `0600`.
 - Gateway-managed upstreams must be either a current-user `0600` Unix socket or an exact loopback
@@ -34,9 +36,11 @@ version 1 or loopback mode. In every version, the cookie name starts with `__Hos
 route prefixes cannot overlap `/_gateway` or one another.
 
 PI-02 accepts already validated TLS server options through the direct-listener bootstrap port and
-fails before bind when that provider is absent. The default certificate path validation,
-last-known-good reload, readiness projection, and distribution renderer remain disabled until
-PI-04 and PI-05 complete; a source build must not be treated as production-ready direct ingress.
+fails before bind when that provider is absent. PI-03 drops a disallowed TLS socket before HTTP or
+WebSocket dispatch and rejects inbound forwarding or reserved identity headers before browser
+authentication in direct mode. The default certificate path validation, last-known-good reload,
+readiness projection, and distribution renderer remain disabled until PI-04 and PI-05 complete; a
+source build must not be treated as production-ready direct ingress.
 
 `/_gateway` and every descendant are Gateway-owned browser routes even when an app owns `/`.
 Application routers and service workers must leave them network-only and must never cache or replace
@@ -57,11 +61,20 @@ user verification. Authentication also requires user verification. The resulting
 idle and absolute expiry. Unsafe browser requests additionally require the exact Origin and a
 rotating CSRF token.
 
+Every request requires the exact configured Host. A supplied Origin must match the one canonical
+browser Origin, while navigation and other safe HTTP requests may omit Origin as browsers normally
+do. HTTP headers are limited to 16 KiB and 64 fields; header receipt, request receipt, keep-alive,
+and requests per socket are bounded. Authentication work is limited to 20 requests per actual
+socket source and 100 requests globally per rolling minute. These counters are memory-only and
+bounded; source addresses and rejected header values are never logged.
+
 Before HTTP or WebSocket proxying, the Gateway removes cookies, authorization, forwarding metadata,
 connection-token headers, and all reserved identity/capability headers. It then injects only
-`x-workstation-gateway-assertion`. The assertion carries an app-scoped opaque credential reference,
-not the WebAuthn credential ID. WebSocket identity is fixed at upgrade time and the socket closes on
-logout, credential revocation, session expiry, route disable, or Gateway shutdown.
+`x-workstation-gateway-assertion`. Direct ingress rejects those reserved browser headers instead of
+silently accepting them; upstream sanitization remains as defense in depth and preserves the
+loopback-proxy compatibility boundary. The assertion carries an app-scoped opaque credential
+reference, not the WebAuthn credential ID. WebSocket identity is fixed at upgrade time and the
+socket closes on logout, credential revocation, session expiry, route disable, or Gateway shutdown.
 
 Consumers verify assertions with `@naru/gateway-verifier`. They must bind issuer, audience, exact
 origin, time, signature key, and a bounded replay store. Public verifier keys are available from the

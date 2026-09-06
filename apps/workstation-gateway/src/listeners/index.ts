@@ -43,4 +43,9 @@ export {
   type GatewayNetworkInterfaces,
 } from "./direct-private-tls.js";
 export { LoopbackHttpListener, type LoopbackHttpListenerTarget } from "./loopback-http.js";
+export {
+  installPrivateIpv4SourceAdmission,
+  PrivateIpv4SourceAdmission,
+  type GatewaySecureConnectionServer,
+} from "./source-policy.js";
 export type { GatewayBrowserListenerAdapter, GatewayBrowserServerPort } from "./types.js";

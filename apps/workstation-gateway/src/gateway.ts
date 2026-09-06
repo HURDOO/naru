@@ -5,6 +5,7 @@ import { GatewayAppRegistry } from "./app-registry.js";
 import { GatewayAssertionIssuer } from "./assertion-issuer.js";
 import { buildGatewayBrowserServer } from "./browser-server.js";
 import type { WorkstationGatewayConfig } from "./config.js";
+import { GatewayAuthenticationRateLimiter } from "./browser-security.js";
 import { GatewayRepository } from "./database.js";
 import { gatewayVerifierKey, loadOrCreateGatewayKeys, type GatewayKeys } from "./keys.js";
 import {
@@ -23,6 +24,7 @@ export interface WorkstationGatewayDependencies {
   readonly logger?: GatewayLogger;
   readonly webauthn?: WebAuthnOperations;
   readonly browserListener?: GatewayBrowserListenerDependencies;
+  readonly authenticationRateLimiter?: GatewayAuthenticationRateLimiter;
 }
 
 export class WorkstationGateway {
@@ -77,6 +79,8 @@ export class WorkstationGateway {
   ): Promise<WorkstationGateway> {
     const clock = dependencies.clock ?? new SystemGatewayClock();
     const logger = dependencies.logger ?? silentGatewayLogger;
+    const authenticationRateLimiter =
+      dependencies.authenticationRateLimiter ?? new GatewayAuthenticationRateLimiter();
     const browserListener = createGatewayBrowserListener(config, dependencies.browserListener);
     const keys = loadOrCreateGatewayKeys(config.dataDirectory);
     const repository = new GatewayRepository(join(config.dataDirectory, "gateway.sqlite"));
@@ -106,6 +110,8 @@ export class WorkstationGateway {
         sockets,
         logger,
         ready,
+        authenticationRateLimiter,
+        nowMs: () => clock.nowMs(),
         ...(browserListener.httpsOptions === undefined
           ? {}
           : { httpsOptions: browserListener.httpsOptions }),

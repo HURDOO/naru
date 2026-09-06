@@ -4,8 +4,10 @@ import {
   PrivateIpv4AddressSchema,
   type PrivateIngressV0,
 } from "@naru/contracts/private-ingress/v0";
+import { GATEWAY_BROWSER_LIMITS } from "../browser-security.js";
 import type { DirectPrivateWorkstationGatewayConfig, WorkstationGatewayConfig } from "../config.js";
 import { isDirectPrivateWorkstationGatewayConfig } from "../config.js";
+import { installPrivateIpv4SourceAdmission, PrivateIpv4SourceAdmission } from "./source-policy.js";
 import type { GatewayBrowserListenerAdapter, GatewayBrowserServerPort } from "./types.js";
 
 export interface DirectPrivateTlsBootstrap {
@@ -18,6 +20,8 @@ export class DirectPrivateTlsListener implements GatewayBrowserListenerAdapter {
   readonly kind = "direct-private-tls" as const;
   readonly httpsOptions: ServerOptions;
   readonly #networkInterfaces: GatewayNetworkInterfaces;
+  readonly #sourceAdmission: PrivateIpv4SourceAdmission;
+  #sourceAdmissionInstalled = false;
 
   constructor(
     readonly config: DirectPrivateWorkstationGatewayConfig,
@@ -27,8 +31,13 @@ export class DirectPrivateTlsListener implements GatewayBrowserListenerAdapter {
     this.httpsOptions = {
       ...tlsBootstrap.loadInitial(config.browserIngress),
       minVersion: "TLSv1.2",
+      maxHeaderSize: GATEWAY_BROWSER_LIMITS.headerBytes,
+      headersTimeout: GATEWAY_BROWSER_LIMITS.headersTimeoutMs,
+      requestTimeout: GATEWAY_BROWSER_LIMITS.requestTimeoutMs,
+      keepAliveTimeout: GATEWAY_BROWSER_LIMITS.keepAliveTimeoutMs,
     };
     this.#networkInterfaces = networkInterfaces;
+    this.#sourceAdmission = new PrivateIpv4SourceAdmission(config.browserIngress.sourcePolicy);
   }
 
   async listen(server: GatewayBrowserServerPort): Promise<void> {
@@ -36,6 +45,10 @@ export class DirectPrivateTlsListener implements GatewayBrowserListenerAdapter {
       this.config.browserIngress.listener.host,
       this.#networkInterfaces(),
     );
+    if (!this.#sourceAdmissionInstalled) {
+      installPrivateIpv4SourceAdmission(server.server, this.#sourceAdmission);
+      this.#sourceAdmissionInstalled = true;
+    }
     await server.listen({
       host: this.config.browserIngress.listener.host,
       port: this.config.browserIngress.listener.port,
