@@ -1063,4 +1063,5 @@ export const ServerWsFrameSchema = z.discriminatedUnion("type", [
 export type ServerWsFrame = z.infer<typeof ServerWsFrameSchema>;
 
 export * as DurableSessionV0 from "./durable-session/v0/index.js";
+export * as PrivateIngressV0 from "./private-ingress/v0/index.js";
 export * as WorkstationGatewayV1 from "./workstation-gateway/v1/index.js";

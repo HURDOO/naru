@@ -3,7 +3,7 @@
 ## 상태
 
 - DurableSession / Workstation v0: 완료·동결
-- 활성 program: `private-ingress-v0/PI-00`
+- 활성 program: `private-ingress-v0`; current task는 해당 `TASKS.md`를 따른다.
 - Private Ingress 상태는 `docs/private-ingress-v0/TASKS.md`에서만 관리한다.
 
 ## 표기
@@ -14,8 +14,8 @@
 - `[~]` 보류
 - `[x]` 완료·검증
 
-PI-00 완료 전에는 application feature를 시작하지 않는다. 완료 뒤 각 작업은 public repository의 별도
-worktree에서 lane ownership과 integration gate를 지킨다.
+PI-00 public baseline은 완료됐다. 각 작업은 public repository의 별도 worktree에서 lane
+ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 

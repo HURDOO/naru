@@ -29,7 +29,9 @@ program은 Private Ingress v0다.
 
 ## 보안 불변조건
 
-- public/wildcard listener, CIDR client allowlist와 forwarded identity 추론은 기본 허용하지 않는다.
+- public/wildcard listener와 forwarded identity 추론은 허용하지 않는다. CIDR source admission은
+  Private Ingress의 explicit canonical RFC1918 IPv4 allowlist와 독립 Gateway authentication 아래에서만
+  허용한다.
 - HTTP mutation과 WebSocket은 exact Origin, session, CSRF와 payload 상한을 검사한다.
 - Gateway assertion은 Host capability가 아니다. Naru가 app/resource 권한을 확인한 뒤 scoped caller를
   만든다.

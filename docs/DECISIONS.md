@@ -18,13 +18,13 @@
 
 ## D004. 공개 저장소는 clean allowlisted snapshot으로 시작한다
 
-- 상태: 구현 진행 중
+- 상태: 승인·완료
 - private history, 실제 instance topology와 운영 evidence를 복사하지 않는다. 공개 source에는 generic
   fixture와 재현 가능한 privacy scan을 둔다. Remote 추가와 push는 별도 승인이다.
 
 ## D005. Private Ingress는 Gateway listener adapter다
 
-- 상태: 승인, 구현 미시작
+- 상태: 승인, Private Ingress v0 계약 고정 완료·listener 미구현
 - `loopback-proxy`와 `direct-private-tls`를 strict union으로 분리한다. Direct mode는 exact private bind,
   TLS와 실제 socket source를 Gateway에서 검증하며 forwarded identity에 의존하지 않는다.
 

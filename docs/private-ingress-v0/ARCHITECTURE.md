@@ -47,12 +47,14 @@ type GatewayIngressV0 =
 - `loopback-proxy`는 동결된 Tailscale Serve happy path를 보존한다.
 - `direct-private-tls`는 WireGuard/trusted LAN의 first-party adapter다.
 - 한 instance는 하나의 `canonicalBrowserOrigin`과 하나의 active browser listener를 가진다.
+- Inventory에는 두 mode의 profile을 모두 보존할 수 있지만 v0 runtime selection은 정확히 하나다.
 - mode별 forbidden field를 strict schema로 거부하고 자동 fallback하지 않는다.
 
 예상 코드 경계:
 
 ```text
-packages/contracts/src/private-ingress-v0.ts
+packages/contracts/src/private-ingress/v0/index.ts
+packages/contracts/src/private-ingress/v0/test-vectors.ts
 apps/workstation-gateway/src/listeners/loopback-http.ts
 apps/workstation-gateway/src/listeners/direct-private-tls.ts
 apps/workstation-gateway/src/listeners/tls-material.ts
@@ -83,14 +85,16 @@ PrivateIngress config에서 세 책임을 분리한다. Workstation v0 envelope 
 
 1. Gateway가 exact local private address에서 TLS handshake를 수행한다.
 2. handshake 전에 유효한 current secure context가 없으면 연결을 수락하지 않는다.
-3. 실제 socket source가 exact allowlist에 없으면 정적 asset을 포함한 모든 request와 upgrade를 거부한다.
+3. 실제 socket source가 명시적 exact IPv4 또는 canonical private IPv4 CIDR allowlist에 없으면
+   정적 asset을 포함한 모든 request와 upgrade를 거부한다.
 4. Host, Origin과 method/size를 검사하고 inbound proxy·identity header를 제거한다.
 5. Gateway Passkey/session/CSRF 또는 WebSocket upgrade auth를 검증한다.
 6. Gateway cookie를 제거하고 short-lived app-scoped signed principal을 만든다.
 7. exact loopback Naru upstream으로 HTTP 또는 WebSocket을 전달한다.
 8. Naru verifier와 app authorization을 통과한 요청만 Host caller context를 얻는다.
 
-IP allowlist는 user identity가 아니며 Passkey를 생략하거나 Gateway principal capability가 되지 않는다.
+IP/CIDR allowlist는 user identity가 아니며 Passkey를 생략하거나 Gateway principal capability가 되지
+않는다. CIDR membership도 inbound forwarding header가 아닌 actual socket remote address로만 판정한다.
 
 ## 5. lifecycle과 health
 

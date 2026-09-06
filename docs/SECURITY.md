@@ -8,8 +8,9 @@ Gateway authentication, Naru authorization과 Host capability를 모두 통과�
 
 ## 주요 불변조건
 
-- Browser listener는 wildcard/public bind, CIDR source policy와 forwarded client identity를 기본으로
-  허용하지 않는다.
+- Browser listener는 wildcard/public bind와 forwarded client identity를 허용하지 않는다. CIDR source
+  policy는 Private Ingress의 explicit canonical RFC1918 IPv4 allowlist로만 허용하며 authentication을
+  대체하지 않는다.
 - HTTP mutation과 WebSocket은 exact Origin, session, CSRF, message schema와 size limit을 검사한다.
 - Gateway는 cookie, authorization, forwarding·reserved header를 upstream에 전달하지 않는다.
 - Signed app assertion은 issuer, audience, Origin, time, signature와 replay를 검증한다.

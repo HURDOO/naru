@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-00 공개 기준선 완료, PI-01 구현 승인 전
-- 다음 작업: `PI-01`
+- PrivateIngress: PI-01 계약·threat model 고정 완료, PI-02 구현 승인 전
+- 다음 작업: `PI-02`
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -84,21 +84,28 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-01. PrivateIngress 계약·threat model 고정
 
-- [>] **범위**: 문서의 `PrivateIngressV0`를 runtime schema, TypeScript type, 정상·거부 fixture와
-  ownership matrix로 고정한다. 구현 listener는 만들지 않는다.
+- [x] **범위**: 문서의 `PrivateIngressV0`를 runtime schema, TypeScript type, 정상·거부 fixture와
+      ownership matrix로 고정한다. 구현 listener는 만들지 않는다.
 - **선행 조건**: PI-00
 - **산출물**: public contract, JSON/Zod schema, redacted fixtures, threat model, ADR
 - **완료 조건**:
   - loopback-proxy와 direct-private-tls의 required/forbidden field가 strict하게 분리된다.
-  - exact Origin/listener/source/TLS ownership과 public exposure 거부가 fixture에 포함된다.
+  - exact Origin/listener, explicit private IPv4/CIDR source, TLS ownership과 public exposure 거부가
+    fixture에 포함된다.
   - secret/path redaction과 receipt digest 규칙이 확정된다.
   - contract test가 통과하고 사용자가 구현 시작을 승인한다.
+- **완료 증거 (2026-09-06)**: additive `@naru/contracts/private-ingress/v0` Zod/JSON schema와
+  TypeScript type, accepted/rejected/redaction/digest vector, single-active listener union, explicit RFC1918
+  exact IPv4/CIDR source contract, threat model·ownership matrix와 PI-D009~PI-D011을 고정했다.
+  Node 24.19.0에서 format, lint, typecheck, 649 passed/4 skipped test, build를 통과했고 변경
+  포함 public scan은 459 files/470 objects, findings 0이었다. Listener, production과 remote는
+  변경하지 않았다.
 - **병렬 경계**: T52와 T53을 별도 worktree에서 시작할 수 있다.
 
 ## PI-02. Gateway direct private TLS listener
 
-- [ ] **범위**: Gateway browser listener를 strict adapter union으로 바꾸고 direct HTTPS/WSS mode를
-      구현한다. 기존 loopback/Tailscale 경로를 보존한다.
+- [>] **범위**: Gateway browser listener를 strict adapter union으로 바꾸고 direct HTTPS/WSS mode를
+  구현한다. 기존 loopback/Tailscale 경로를 보존한다.
 - **선행 조건**: PI-01
 - **산출물**: listener adapter, exact private bind, HTTPS/WSS server, config tests
 - **완료 조건**:
@@ -114,7 +121,7 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 - **선행 조건**: PI-02
 - **산출물**: source policy, header sanitization, size/timeout limit와 negative test matrix
 - **완료 조건**:
-  - wildcard/public bind, CIDR source, wrong Origin/Host와 비허용 IP를 거부한다.
+  - wildcard/public bind, public·invalid IPv4/CIDR source, wrong Origin/Host와 비허용 IP를 거부한다.
   - inbound forwarding/Gateway identity spoof가 Naru에 도달하지 않는다.
   - HTTP와 WebSocket에 같은 source/auth policy를 적용한다.
 
@@ -195,3 +202,19 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - Tailscale global/account state가 아니라 package-owned test route만 rollback한다.
   - pre-existing resource 삭제·rename은 exact target과 복구 가능성을 확인한 별도 승인 뒤 수행한다.
   - public remote push 방식도 root GitHub 계정 지침에 따라 별도 결정한다.
+
+## PI-10. Multi-ingress 후속 설계·구현
+
+- [ ] **범위**: 하나의 Gateway instance에서 Tailscale `loopback-proxy`와 LAN/WireGuard
+      `direct-private-tls`를 동시에 active browser ingress로 운영할 수 있도록 multi-ingress 계약을
+      별도 설계한다. v0의 하나의 canonical Origin·active listener 불변조건은 유지하며, v0 이후 작업으로
+      수행한다.
+- **선행 조건**: PI-09 및 v0 soak/rollback 완료
+- **산출물**: multi-ingress ADR, versioned contract/schema migration, Origin별 session·Passkey·PWA/
+  service-worker·cookie 정책, listener별 source/TLS/health/rollback 모델, compatibility test matrix
+- **완료 조건**:
+  - 여러 ingress profile을 inventory에 보관하고 여러 profile을 명시적으로 active로 선택할 수 있다.
+  - Tailscale과 LAN/WireGuard의 서로 다른 Origin 및 동일 hostname/split-DNS 전략을 각각 명시한다.
+  - listener별 authentication, Origin/Host, source policy와 readiness를 독립적으로 검증한다.
+  - 한 listener 장애·reconfigure·rollback이 다른 active ingress와 session을 부당하게 손상하지 않는다.
+  - 기존 v0 단일-ingress 설정의 migration 및 rollback 경로가 검증된다.

@@ -59,3 +59,50 @@
   분리한다.
 - 결과: PI-05에서 generic distribution과 operator transition을 검증한다. Production tooling의 target
   변경은 별도 승인을 받고 admission이 맞지 않으면 manual production command로 우회하지 않는다.
+
+## PI-D008. Multi-ingress는 Private Ingress v0 이후로 연기한다
+
+- 상태: accepted
+- 결정: v0는 instance당 하나의 `canonicalBrowserOrigin`과 하나의 active browser listener만 유지한다.
+  Tailscale `loopback-proxy`와 LAN/WireGuard `direct-private-tls`는 inventory와 호환 경로로 보존할 수
+  있지만, v0 runtime에서 동시에 active로 운영하지 않는다.
+- 이유: 서로 다른 Origin의 Passkey RP ID, session/CSRF cookie, PWA/service-worker, WebSocket Origin,
+  canonical URL과 listener별 rollback/readiness 모델을 별도로 정의해야 한다.
+- 후속 조치: Tailscale과 LAN/WireGuard 동시 운영은 `TASKS.md`의 PI-10에서 versioned contract,
+  migration과 compatibility test를 설계한 뒤 구현한다. v0의 implicit fallback이나 기존 단일-ingress
+  계약을 소급 변경하지 않는다.
+
+## PI-D009. PrivateIngress contract는 Workstation v0에 additive하게 공개한다
+
+- 상태: accepted
+- 결정: `@naru/contracts/private-ingress/v0`에 `PrivateIngressV0` Zod/JSON schema, TypeScript
+  type, `GatewayIngressV0` strict union과 public test vector를 추가한다.
+- 호환성: 동결된 `@naru/contracts/workstation-gateway/v1` `IngressProfileV0`와 consumer를
+  변경하지 않는다. 기존 `direct-private-listener`/`tlsOwner`는 새 Gateway-owned
+  `direct-private-tls` contract와 동일하지 않다.
+- migration: PI-02/PI-05가 명시적 profile selection·preflight·receipt migration을 구현한다.
+  새 field를 추론하거나 기존 profile에서 implicit fallback하지 않는다.
+
+## PI-D010. Explicit private IPv4 CIDR source admission을 허용한다
+
+- 상태: accepted
+- 결정: `private-ipv4-allowlist`는 exact RFC1918 IPv4와 canonical RFC1918 IPv4 CIDR를
+  별도 array로 받고 한 policy에서 함께 사용할 수 있다. listener bind는 계속 exact
+  private IPv4만 허용한다.
+- 제약: public/wildcard/IPv6, host bit가 있는 CIDR, duplicate, overlapping CIDR과 CIDR에
+  이미 포함된 exact address를 거부한다. 실제 socket remote address만 판정하고 forwarded
+  header를 source로 사용하지 않는다.
+- 보안 결과: CIDR은 network admission 범위를 넓힐 뿐 authentication이 아니다. Gateway
+  Passkey/session/CSRF/WS auth, Naru authorization과 Host capability를 계속 독립적으로 요구한다.
+
+## PI-D011. Intent digest와 diagnostic redaction을 contract에서 고정한다
+
+- 상태: accepted
+- 결정: strict parse 후 source set을 numeric order로 정렬하고 purpose-tagged canonical JSON의
+  UTF-8 SHA-256 lowercase hex를 intent digest로 사용한다. exact private reference는 digest에
+  결합하지만 preimage는 로그하지 않는다.
+- redaction: public diagnostic은 profile, Origin, listener·source와 TLS path를 출력하지 않고
+  source count와 non-secret ownership/mode만 유지한다. Owner-only private receipt와 public-safe
+  projection을 분리한다.
+- 후속 조치: PI-05는 intent digest에 operation, artifact/config identity와 actual-state fingerprint를
+  결합해 fresh plan approval과 immutable receipt를 구현한다.

@@ -2,9 +2,10 @@
 
 ## 1. 상태와 기준
 
-- 상태: PI-00 공개 기준선 작업 진행 중
-- 첫 작업: `private-ingress-v0/PI-00`
+- 상태: PI-01 계약·threat model 고정 완료, PI-02 구현 승인 전
+- 다음 작업: `private-ingress-v0/PI-02`
 - 단일 작업 원장: [`TASKS.md`](TASKS.md)
+- 보안 분석·ownership: [`THREAT_MODEL.md`](THREAT_MODEL.md)
 - 선행 기준: 동결된 DurableSession / Workstation v0와 현재 Naru 동작
 - 목표 운영 경로: operator가 관리하는 private DNS·trusted LAN·WireGuard와 canonical HTTPS Origin에서
   Naru를 gateway-managed DurableSession runtime으로 운영
@@ -45,8 +46,9 @@ interface PrivateIngressV0 {
     readonly terminationOwner: "gateway";
   };
   readonly sourcePolicy: {
-    readonly mode: "exact-ip";
+    readonly mode: "private-ipv4-allowlist";
     readonly allowedAddresses: readonly string[];
+    readonly allowedCidrs: readonly string[];
   };
 }
 ```
@@ -59,7 +61,11 @@ interface PrivateIngressV0 {
 - `browserOrigin`은 path·query·fragment가 없는 단일 exact HTTPS Origin이어야 한다.
 - v0 production listener는 활성 local interface의 exact private IPv4만 허용한다.
 - `0.0.0.0`, `::`, public address, 임의 hostname bind와 plain HTTP를 거부한다.
-- source policy는 v0에서 exact IPv4만 허용하고 CIDR, wildcard, forwarded address 추론을 거부한다.
+- source policy는 canonical RFC1918 exact IPv4와 RFC1918 내에 완전히 포함된 canonical IPv4
+  CIDR를 명시적으로 허용한다. 최소 한 항목이 필요하고 duplicate, overlap, CIDR에 포함된
+  redundant exact address를 거부한다.
+- public·wildcard·IPv6 address/CIDR, host bit가 있는 non-canonical CIDR와 forwarded address 추론을
+  거부한다. CIDR admission은 network source 범위일 뿐 user identity가 아니다.
 - private ingress는 authentication이 아니다. 네트워크를 통과해도 Gateway Passkey/session이 필수다.
 - direct mode는 실제 socket address만 사용하고 inbound `Forwarded`, `X-Forwarded-*`, Gateway identity·
   assertion header를 인증 전에 제거하거나 거부한다.
@@ -81,7 +87,20 @@ interface PrivateIngressV0 {
 - last-known-good certificate까지 만료되면 readiness를 내리고 신규 TLS 연결을 안전하게 거부한다.
 - package는 certificate를 발급·갱신하거나 DNS provider credential을 읽지 않는다.
 
-## 6. 운영 명령
+## 6. Redaction과 receipt digest
+
+- Private intent와 owner-only receipt는 exact Origin, listener, source policy와 TLS path reference를 가질 수
+  있지만 public source, structured log, public error와 diagnostic projection에는 이 값을 남기지 않는다.
+- Diagnostic projection은 profile, Origin, listener, TLS path를 고정 redaction marker로 바꾸고 source
+  address/CIDR는 개수만 보고한다. TLS ownership과 reload mode는 비밀이 아니므로 유지한다.
+- Intent digest는 strict schema를 통과한 값에서 source address/CIDR를 numeric order로 정렬한 뒤,
+  `{ purpose: "naru.private-ingress.intent.v0", ingress }`를 object key lexical order·array order 보존
+  canonical JSON으로 encoding하고 UTF-8 SHA-256 lowercase hex로 계산한다.
+- Digest는 private path/topology reference를 결합하지만 preimage는 로그하지 않는다. PI-05의
+  plan/receipt는 이 intent digest와 operation, artifact/config identity, actual state fingerprint를 함께
+  결합해 stale approval을 거부한다.
+
+## 7. 운영 명령
 
 `plan`, `apply`, `status`, `doctor`, `reconfigure`, `rollback`을 제공한다.
 
@@ -95,7 +114,7 @@ interface PrivateIngressV0 {
 어떤 명령도 WireGuard peer, DNS, router, firewall, certificate 발급 상태나 다른 profile의 자원을
 임의로 변경하지 않는다.
 
-## 7. 공개 저장소 계약
+## 8. 공개 저장소 계약
 
 새 공개 저장소는 기존 `.git` 이력이나 raw checkout 복사가 아니라 allowlist 기반 clean snapshot으로
 시작한다. 첫 commit 전에 다음을 만족해야 한다.
@@ -110,17 +129,19 @@ interface PrivateIngressV0 {
 Source repository에는 migration 전 배포의 위치, 이름, receipt나 rollback 자료를 기록하지 않는다.
 Pre-existing deployment가 있다면 operator-private inventory에서 cutover·soak가 끝날 때까지 보존한다.
 
-## 8. 범위 제외
+## 9. 범위 제외
 
 - WireGuard 설치·peer·route·DNS·router·firewall 자동 구성
-- CIDR source allowlist, IPv6 private listener와 public internet hosting
+- IPv6 source/listener, public source/network와 public internet hosting
 - generic third-party runtime plugin loading 또는 marketplace
 - multi-user, RBAC, concurrent writer
 - automatic certificate issuance/provider integration
 - current production 삭제·rename 또는 공개 remote push
 - PrivateIngress 작업에 포함되지 않은 Naru UI backlog 자체의 일괄 구현
+- 하나의 instance에서 여러 browser ingress/Origin을 동시에 active로 운영하는 multi-ingress; 이는
+  v0 이후 PI-10에서 별도 versioned contract와 migration으로 다룬다.
 
-## 9. 완료 조건
+## 10. 완료 조건
 
 1. contract/schema와 정상·거부 fixture가 구현에 앞서 고정된다.
 2. loopback-proxy와 direct-private-tls가 명시적 mode로 분리되고 implicit fallback이 없다.
