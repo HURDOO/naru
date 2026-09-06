@@ -1,6 +1,10 @@
 import type { IngressProfileV0 } from "@naru/contracts/workstation-gateway/v1";
 import { effectiveOriginPort } from "@naru/domain/workstation";
-import { readWorkstationGatewayConfig, type WorkstationGatewayConfig } from "../config.js";
+import {
+  gatewayLoopbackListenTarget,
+  readWorkstationGatewayConfig,
+  type WorkstationGatewayConfig,
+} from "../config.js";
 import type { WorkstationNetworkConfig } from "./config.js";
 import { assertSha256Digest, canonicalJson, digestValue } from "./canonical.js";
 import { NetworkManifestStore } from "./manifest-store.js";
@@ -485,14 +489,16 @@ export class WorkstationNetworkManager {
         } else {
           checks.push(await this.#originCheck(profile, "/_gateway/readyz"));
         }
-        if (gateway.config === undefined) {
+        const loopbackTarget =
+          gateway.config === undefined ? undefined : gatewayLoopbackListenTarget(gateway.config);
+        if (gateway.config === undefined || loopbackTarget === undefined) {
           checks.push(
             unavailableCheck(
               "gateway.ready",
               profile.id,
               "gateway",
-              "private Gateway readiness",
-              gateway.error ?? "Gateway config unavailable",
+              "loopback Gateway readiness",
+              gateway.error ?? "Gateway did not select loopback ingress",
               "package",
             ),
           );
@@ -504,7 +510,7 @@ export class WorkstationNetworkManager {
               "listener",
               {
                 kind: "loopback-http",
-                origin: `http://${gateway.config.listenHost}:${gateway.config.listenPort}`,
+                origin: `http://${loopbackTarget.host}:${loopbackTarget.port}`,
                 path: "/_gateway/readyz",
               },
               "exact loopback Gateway listener readiness",
@@ -788,11 +794,16 @@ export class WorkstationNetworkManager {
         ),
       ];
     }
-    const expectedUpstream = `http://${gateway.config.listenHost}:${gateway.config.listenPort}`;
+    const loopbackTarget = gatewayLoopbackListenTarget(gateway.config);
+    const expectedUpstream =
+      loopbackTarget === undefined
+        ? undefined
+        : `http://${loopbackTarget.host}:${loopbackTarget.port}`;
     const target = gateway.config.appRegistrations.find((app) => app.appId === profile.targetAppId);
     const aligned =
       gateway.config.browserOrigin === profile.browserOrigin &&
       gateway.config.ingressProfileId === profile.id &&
+      expectedUpstream !== undefined &&
       expectedUpstream === profile.bindOrUpstream &&
       target?.mode === "gateway-managed" &&
       target.enabled;
@@ -817,7 +828,22 @@ export class WorkstationNetworkManager {
     gateway: GatewayConfigResult,
   ): Promise<readonly NetworkCheck[]> {
     if (gateway.config === undefined) return [];
-    const localOrigin = `http://${gateway.config.listenHost}:${gateway.config.listenPort}`;
+    const loopbackTarget = gatewayLoopbackListenTarget(gateway.config);
+    if (loopbackTarget === undefined) {
+      return [
+        networkCheck({
+          id: "listener.gateway",
+          profileId: profile.id,
+          layer: "listener",
+          status: "blocked",
+          expected: "the exact loopback listener selected for this Tailscale profile",
+          actual: "Gateway selected a different listener mode",
+          owner: "package",
+          remediation: "Select the explicit loopback-proxy Gateway profile before applying.",
+        }),
+      ];
+    }
+    const localOrigin = `http://${loopbackTarget.host}:${loopbackTarget.port}`;
     const listener = await this.#probeCheck(
       "listener.gateway",
       profile.id,

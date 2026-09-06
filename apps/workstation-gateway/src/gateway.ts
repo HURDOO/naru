@@ -7,6 +7,11 @@ import { buildGatewayBrowserServer } from "./browser-server.js";
 import type { WorkstationGatewayConfig } from "./config.js";
 import { GatewayRepository } from "./database.js";
 import { gatewayVerifierKey, loadOrCreateGatewayKeys, type GatewayKeys } from "./keys.js";
+import {
+  createGatewayBrowserListener,
+  type GatewayBrowserListenerAdapter,
+  type GatewayBrowserListenerDependencies,
+} from "./listeners/index.js";
 import type { GatewayLogger } from "./logging.js";
 import { silentGatewayLogger } from "./logging.js";
 import { GatewayPasskeyManager, type WebAuthnOperations } from "./passkeys.js";
@@ -17,6 +22,7 @@ export interface WorkstationGatewayDependencies {
   readonly clock?: GatewayClock;
   readonly logger?: GatewayLogger;
   readonly webauthn?: WebAuthnOperations;
+  readonly browserListener?: GatewayBrowserListenerDependencies;
 }
 
 export class WorkstationGateway {
@@ -28,6 +34,7 @@ export class WorkstationGateway {
   readonly issuer: GatewayAssertionIssuer;
   readonly sockets: GatewayWebSocketRegistry;
   readonly browser: FastifyInstance;
+  readonly browserListener: GatewayBrowserListenerAdapter;
   readonly admin: GatewayAdminServer;
   readonly #clock: GatewayClock;
   readonly #logger: GatewayLogger;
@@ -36,6 +43,7 @@ export class WorkstationGateway {
   private constructor(
     readonly config: WorkstationGatewayConfig,
     browser: FastifyInstance,
+    browserListener: GatewayBrowserListenerAdapter,
     components: {
       repository: GatewayRepository;
       keys: GatewayKeys;
@@ -58,6 +66,7 @@ export class WorkstationGateway {
     this.sockets = components.sockets;
     this.admin = components.admin;
     this.browser = browser;
+    this.browserListener = browserListener;
     this.#clock = components.clock;
     this.#logger = components.logger;
   }
@@ -68,6 +77,7 @@ export class WorkstationGateway {
   ): Promise<WorkstationGateway> {
     const clock = dependencies.clock ?? new SystemGatewayClock();
     const logger = dependencies.logger ?? silentGatewayLogger;
+    const browserListener = createGatewayBrowserListener(config, dependencies.browserListener);
     const keys = loadOrCreateGatewayKeys(config.dataDirectory);
     const repository = new GatewayRepository(join(config.dataDirectory, "gateway.sqlite"));
     const registry = new GatewayAppRegistry(config.appRegistrations);
@@ -96,6 +106,9 @@ export class WorkstationGateway {
         sockets,
         logger,
         ready,
+        ...(browserListener.httpsOptions === undefined
+          ? {}
+          : { httpsOptions: browserListener.httpsOptions }),
       });
     } catch (error) {
       repository.close();
@@ -112,7 +125,7 @@ export class WorkstationGateway {
         for (const sessionId of sessionIds) sockets.closeSession(sessionId);
       },
     });
-    return new WorkstationGateway(config, browser, {
+    return new WorkstationGateway(config, browser, browserListener, {
       repository,
       keys,
       registry,
@@ -130,7 +143,7 @@ export class WorkstationGateway {
     this.#assertOpen();
     await this.admin.listen();
     try {
-      await this.browser.listen({ host: this.config.listenHost, port: this.config.listenPort });
+      await this.browserListener.listen(this.browser);
     } catch (error) {
       await this.admin.close();
       throw error;

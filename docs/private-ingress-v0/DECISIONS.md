@@ -106,3 +106,24 @@
   projection을 분리한다.
 - 후속 조치: PI-05는 intent digest에 operation, artifact/config identity와 actual-state fingerprint를
   결합해 fresh plan approval과 immutable receipt를 구현한다.
+
+## PI-D012. Gateway config v2에서 active browser ingress를 명시한다
+
+- 상태: accepted
+- 결정: Gateway private config v2는 `browserIngress: GatewayIngressV0`를 정확히 하나 요구한다. 기존
+  config v1은 frozen loopback listener shape로 계속 읽되 direct mode나 새 network field로 추론하지 않는다.
+- 호환성: v1 loopback/Tailscale runtime과 auth consumer는 유지한다. Direct mode는 v2에서만 허용하고
+  top-level legacy listen field, profile/Origin drift와 mode별 forbidden field를 strict하게 거부한다.
+- migration: PI-05 distribution renderer가 승인된 active profile로 v2 config를 생성한다. Runtime은 invalid
+  v2 또는 missing direct dependency를 v1/loopback으로 fallback하지 않는다.
+
+## PI-D013. PI-02 direct listener는 검증된 TLS bootstrap port를 사용한다
+
+- 상태: accepted
+- 결정: PI-02는 Gateway의 HTTPS/WSS transport와 exact bind lifecycle을 구현하되 TLS bytes를 임의로
+  읽는 임시 production loader를 추가하지 않는다. Direct listener는 검증된 initial TLS server options를
+  dependency로 받고, provider가 없으면 listener와 admin bind 전에 실패한다.
+- 이유: canonical path, owner/mode, SAN, key pair, validity, expiry와 last-known-good reload를 일부만
+  구현해 fail-closed 계약을 약화하지 않는다.
+- 후속 조치: PI-04가 기존 Naru validator를 재사용 가능한 provider로 분리해 이 port에 연결한다. PI-05
+  전에는 distribution이 direct config를 생성하거나 production에 활성화하지 않는다.

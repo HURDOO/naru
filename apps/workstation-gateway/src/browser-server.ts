@@ -1,3 +1,4 @@
+import type { ServerOptions } from "node:https";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
@@ -80,17 +81,13 @@ export interface GatewayBrowserServerOptions {
   readonly sockets: GatewayWebSocketRegistry;
   readonly logger: GatewayLogger;
   readonly ready: () => boolean;
+  readonly httpsOptions?: ServerOptions;
 }
 
 export async function buildGatewayBrowserServer(
   options: GatewayBrowserServerOptions,
 ): Promise<FastifyInstance> {
-  const server = Fastify({
-    logger: false,
-    trustProxy: false,
-    bodyLimit: options.config.requestBodyBytes,
-    routerOptions: { maxParamLength: 1_024 },
-  });
+  const server = createGatewayFastifyServer(options);
   server.removeAllContentTypeParsers();
   server.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
@@ -334,6 +331,17 @@ export async function buildGatewayBrowserServer(
     });
   }
   return server;
+}
+
+function createGatewayFastifyServer(options: GatewayBrowserServerOptions): FastifyInstance {
+  const serverOptions = {
+    logger: false,
+    trustProxy: false,
+    bodyLimit: options.config.requestBodyBytes,
+    routerOptions: { maxParamLength: 1_024 },
+  } as const;
+  if (options.httpsOptions === undefined) return Fastify(serverOptions);
+  return Fastify({ ...serverOptions, https: options.httpsOptions });
 }
 
 function requireExactHost(request: FastifyRequest, config: WorkstationGatewayConfig): void {

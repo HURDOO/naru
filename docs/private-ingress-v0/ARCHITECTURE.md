@@ -49,12 +49,17 @@ type GatewayIngressV0 =
 - 한 instance는 하나의 `canonicalBrowserOrigin`과 하나의 active browser listener를 가진다.
 - Inventory에는 두 mode의 profile을 모두 보존할 수 있지만 v0 runtime selection은 정확히 하나다.
 - mode별 forbidden field를 strict schema로 거부하고 자동 fallback하지 않는다.
+- Gateway private config v2는 `browserIngress: GatewayIngressV0`를 하나만 요구한다. 기존 config v1은
+  explicit legacy loopback adapter로 계속 읽지만 direct mode로 추론하거나 변환하지 않는다.
+- PI-02의 direct adapter는 이미 검증된 initial TLS server options를 주입받는다. Provider가 없으면
+  bind 전에 실패하며, path·owner·SAN·expiry 검증과 last-known-good reload provider는 PI-04에서 연결한다.
 
 예상 코드 경계:
 
 ```text
 packages/contracts/src/private-ingress/v0/index.ts
 packages/contracts/src/private-ingress/v0/test-vectors.ts
+apps/workstation-gateway/src/config.ts
 apps/workstation-gateway/src/listeners/loopback-http.ts
 apps/workstation-gateway/src/listeners/direct-private-tls.ts
 apps/workstation-gateway/src/listeners/tls-material.ts

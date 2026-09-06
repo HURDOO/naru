@@ -6,10 +6,17 @@ export { WORKSTATION_GATEWAY_CSRF_HEADER } from "@naru/contracts/workstation-gat
 export {
   GatewayAppRegistrationSchema,
   WorkstationGatewayConfigSchema,
+  WorkstationGatewayConfigV1Schema,
+  WorkstationGatewayConfigV2Schema,
+  gatewayLoopbackListenTarget,
+  isDirectPrivateWorkstationGatewayConfig,
   readWorkstationGatewayConfig,
+  type DirectPrivateWorkstationGatewayConfig,
   type GatewayAppRegistration,
   type GatewayManagedAppRegistration,
   type WorkstationGatewayConfig,
+  type WorkstationGatewayConfigV1,
+  type WorkstationGatewayConfigV2,
 } from "./config.js";
 export { GatewayRepository } from "./database.js";
 export { GatewayError, internalGatewayError, type GatewayErrorCode } from "./gateway-error.js";
@@ -26,6 +33,18 @@ export {
   type GatewayLogger,
   type GatewayLogRecord,
 } from "./logging.js";
+export {
+  DirectPrivateTlsListener,
+  LoopbackHttpListener,
+  assertActiveLocalPrivateIpv4,
+  createGatewayBrowserListener,
+  type DirectPrivateTlsBootstrap,
+  type GatewayBrowserListenerAdapter,
+  type GatewayBrowserListenerDependencies,
+  type GatewayBrowserServerPort,
+  type GatewayNetworkInterfaces,
+  type LoopbackHttpListenerTarget,
+} from "./listeners/index.js";
 export {
   GatewayPasskeyManager,
   type GatewayAuthenticationResponse,

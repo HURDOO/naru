@@ -7,8 +7,10 @@ stop, or bypass DurableSession Host or any registered application.
 
 ## Runtime boundary
 
-- The browser listener accepts only `127.0.0.1`; a separately managed private HTTPS ingress must
-  preserve the configured exact `Host` and `Origin`.
+- Config v1 retains the exact `127.0.0.1` HTTP listener used by Tailscale Serve. Config v2 selects
+  exactly one strict `loopback-proxy | direct-private-tls` browser ingress adapter.
+- Direct mode terminates HTTPS/WSS in Gateway, verifies that its exact RFC1918 IPv4 bind is active
+  locally, and requires every enabled Gateway-managed app to use an exact `127.0.0.1` HTTP upstream.
 - The local administration API is available only through a current-user Unix socket with mode
   `0600`.
 - Gateway-managed upstreams must be either a current-user `0600` Unix socket or an exact loopback
@@ -24,9 +26,17 @@ The executable accepts one positional argument:
 workstation-gateway <private-config.json>
 ```
 
-The configuration is strict and versioned. `src/config.ts` is the canonical schema. In particular,
-`browserOrigin` is an exact HTTPS origin, `listenHost` is always `127.0.0.1`, the cookie name starts
-with `__Host-`, and managed route prefixes cannot overlap `/_gateway` or one another.
+The configuration is strict and versioned. `src/config.ts` is the canonical schema. Version 1 keeps
+the frozen top-level `listenHost: "127.0.0.1"` and `listenPort` fields. Version 2 replaces those
+fields with one `browserIngress` from `@naru/contracts/private-ingress/v0`; direct profile and Origin
+must match the active Gateway values exactly. Invalid or incomplete v2 input never falls back to
+version 1 or loopback mode. In every version, the cookie name starts with `__Host-`, and managed
+route prefixes cannot overlap `/_gateway` or one another.
+
+PI-02 accepts already validated TLS server options through the direct-listener bootstrap port and
+fails before bind when that provider is absent. The default certificate path validation,
+last-known-good reload, readiness projection, and distribution renderer remain disabled until
+PI-04 and PI-05 complete; a source build must not be treated as production-ready direct ingress.
 
 `/_gateway` and every descendant are Gateway-owned browser routes even when an app owns `/`.
 Application routers and service workers must leave them network-only and must never cache or replace

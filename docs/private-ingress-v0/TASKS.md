@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-01 계약·threat model 고정 완료, PI-02 구현 승인 전
-- 다음 작업: `PI-02`
+- PrivateIngress: PI-02 Gateway direct private TLS listener 완료, PI-03 구현 승인 전
+- 다음 작업: `PI-03`
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -104,8 +104,8 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-02. Gateway direct private TLS listener
 
-- [>] **범위**: Gateway browser listener를 strict adapter union으로 바꾸고 direct HTTPS/WSS mode를
-  구현한다. 기존 loopback/Tailscale 경로를 보존한다.
+- [x] **범위**: Gateway browser listener를 strict adapter union으로 바꾸고 direct HTTPS/WSS mode를
+      구현한다. 기존 loopback/Tailscale 경로를 보존한다.
 - **선행 조건**: PI-01
 - **산출물**: listener adapter, exact private bind, HTTPS/WSS server, config tests
 - **완료 조건**:
@@ -113,11 +113,17 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - Naru는 gateway-managed exact loopback upstream만 사용한다.
   - 두 mode가 forbidden field나 fallback을 공유하지 않는다.
   - listener lifecycle과 existing Gateway auth regression이 통과한다.
+- **완료 증거 (2026-09-07)**: Gateway config v2의 explicit `browserIngress` union과 v1 loopback
+  compatibility, direct exact active RFC1918 bind, Gateway-owned HTTPS/WSS, exact `127.0.0.1` managed
+  upstream과 fail-closed TLS bootstrap port를 구현했다. Node 24.19.0에서 format, lint, typecheck,
+  657 passed/4 skipped test, build와 E2E 14/14를 통과했고 public scan은 465 files/490 objects,
+  findings 0이었다. TLS material validator/reload는 PI-04, source admission/header limit은 PI-03,
+  distribution/production activation은 PI-05 이후로 남겼고 remote와 production은 변경하지 않았다.
 
 ## PI-03. source·Origin·header 보안
 
-- [ ] **범위**: actual socket source allowlist, exact Host/Origin과 spoofed proxy/identity header 경계를
-      direct listener에 적용한다.
+- [>] **범위**: actual socket source allowlist, exact Host/Origin과 spoofed proxy/identity header 경계를
+  direct listener에 적용한다.
 - **선행 조건**: PI-02
 - **산출물**: source policy, header sanitization, size/timeout limit와 negative test matrix
 - **완료 조건**:

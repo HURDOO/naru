@@ -5,6 +5,7 @@ import {
   GatewayAppModeSchema,
   isWorkstationGatewayBrowserPath,
 } from "@naru/contracts/workstation-gateway/v1";
+import { GatewayIngressV0Schema, type PrivateIngressV0 } from "@naru/contracts/private-ingress/v0";
 import { z } from "zod";
 import { assertPrivateRegularFile } from "./security.js";
 
@@ -66,60 +67,115 @@ export const GatewayAppRegistrationSchema = z.discriminatedUnion("mode", [
   AppManagedAppSchema,
 ]);
 
+const WorkstationGatewayCommonConfigShape = {
+  instanceId: IdentifierSchema,
+  ownerSubject: IdentifierSchema,
+  browserOrigin: ExactHttpsOriginSchema,
+  ingressProfileId: IdentifierSchema,
+  rpName: z.string().min(1).max(128),
+  dataDirectory: AbsolutePathSchema,
+  adminSocketPath: AbsolutePathSchema.refine(
+    (path) => Buffer.byteLength(path) <= 103,
+    "Unix socket path exceeds the macOS limit.",
+  ),
+  sessionCookieName: z
+    .string()
+    .min(8)
+    .max(128)
+    .regex(/^__Host-[!#$%&'*+.^_`|~0-9A-Za-z-]+$/),
+  bootstrapTtlMs: z
+    .number()
+    .int()
+    .min(30_000)
+    .max(30 * 60_000)
+    .default(5 * 60_000),
+  ceremonyTtlMs: z
+    .number()
+    .int()
+    .min(30_000)
+    .max(30 * 60_000)
+    .default(5 * 60_000),
+  sessionAbsoluteTtlMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .max(7 * 24 * 60 * 60_000)
+    .default(8 * 60 * 60_000),
+  sessionIdleTtlMs: z
+    .number()
+    .int()
+    .min(30_000)
+    .max(24 * 60 * 60_000)
+    .default(60 * 60_000),
+  principalTtlSeconds: z.number().int().min(5).max(60).default(30),
+  requestBodyBytes: z
+    .number()
+    .int()
+    .min(1_024)
+    .max(4 * 1_024 * 1_024)
+    .default(512 * 1_024),
+  appRegistrations: z.array(GatewayAppRegistrationSchema).min(1).max(1_000),
+} as const;
+
+export const WorkstationGatewayConfigV1Schema = z.strictObject({
+  version: z.literal(1),
+  ...WorkstationGatewayCommonConfigShape,
+  listenHost: z.literal("127.0.0.1"),
+  listenPort: z.number().int().min(1).max(65_535),
+});
+
+export const WorkstationGatewayConfigV2Schema = z.strictObject({
+  version: z.literal(2),
+  ...WorkstationGatewayCommonConfigShape,
+  browserIngress: GatewayIngressV0Schema,
+});
+
 export const WorkstationGatewayConfigSchema = z
-  .strictObject({
-    version: z.literal(1),
-    instanceId: IdentifierSchema,
-    ownerSubject: IdentifierSchema,
-    browserOrigin: ExactHttpsOriginSchema,
-    ingressProfileId: IdentifierSchema,
-    rpName: z.string().min(1).max(128),
-    dataDirectory: AbsolutePathSchema,
-    adminSocketPath: AbsolutePathSchema.refine(
-      (path) => Buffer.byteLength(path) <= 103,
-      "Unix socket path exceeds the macOS limit.",
-    ),
-    listenHost: z.literal("127.0.0.1"),
-    listenPort: z.number().int().min(1).max(65_535),
-    sessionCookieName: z
-      .string()
-      .min(8)
-      .max(128)
-      .regex(/^__Host-[!#$%&'*+.^_`|~0-9A-Za-z-]+$/),
-    bootstrapTtlMs: z
-      .number()
-      .int()
-      .min(30_000)
-      .max(30 * 60_000)
-      .default(5 * 60_000),
-    ceremonyTtlMs: z
-      .number()
-      .int()
-      .min(30_000)
-      .max(30 * 60_000)
-      .default(5 * 60_000),
-    sessionAbsoluteTtlMs: z
-      .number()
-      .int()
-      .min(60_000)
-      .max(7 * 24 * 60 * 60_000)
-      .default(8 * 60 * 60_000),
-    sessionIdleTtlMs: z
-      .number()
-      .int()
-      .min(30_000)
-      .max(24 * 60 * 60_000)
-      .default(60 * 60_000),
-    principalTtlSeconds: z.number().int().min(5).max(60).default(30),
-    requestBodyBytes: z
-      .number()
-      .int()
-      .min(1_024)
-      .max(4 * 1_024 * 1_024)
-      .default(512 * 1_024),
-    appRegistrations: z.array(GatewayAppRegistrationSchema).min(1).max(1_000),
-  })
+  .discriminatedUnion("version", [
+    WorkstationGatewayConfigV1Schema,
+    WorkstationGatewayConfigV2Schema,
+  ])
   .superRefine((config, context) => {
+    if (config.version === 2 && config.browserIngress.kind === "direct-private-tls") {
+      if (config.browserOrigin !== config.browserIngress.browserOrigin) {
+        context.addIssue({
+          code: "custom",
+          path: ["browserIngress", "browserOrigin"],
+          message: "Direct listener Origin must match the Gateway browser Origin.",
+        });
+      }
+      if (config.ingressProfileId !== config.browserIngress.profileId) {
+        context.addIssue({
+          code: "custom",
+          path: ["browserIngress", "profileId"],
+          message: "Direct listener profile must match the active Gateway ingress profile.",
+        });
+      }
+      const managedApps = config.appRegistrations.filter(
+        (app): app is GatewayManagedAppRegistration =>
+          app.mode === "gateway-managed" && app.enabled,
+      );
+      if (managedApps.length === 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["appRegistrations"],
+          message: "Direct listener mode requires an enabled Gateway-managed app.",
+        });
+      }
+      for (const app of managedApps) {
+        if (
+          app.upstream.kind !== "loopback" ||
+          !isExactIpv4LoopbackHttpOrigin(app.upstream.origin)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["appRegistrations", config.appRegistrations.indexOf(app), "upstream"],
+            message: "Direct listener Gateway-managed apps require exact 127.0.0.1 HTTP upstreams.",
+          });
+        }
+      }
+    }
+
     const appIds = new Set<string>();
     const routes: { index: number; prefix: string }[] = [];
     for (const [index, app] of config.appRegistrations.entries()) {
@@ -153,11 +209,36 @@ export const WorkstationGatewayConfigSchema = z
   });
 
 export type WorkstationGatewayConfig = z.infer<typeof WorkstationGatewayConfigSchema>;
+export type WorkstationGatewayConfigV1 = z.infer<typeof WorkstationGatewayConfigV1Schema>;
+export type WorkstationGatewayConfigV2 = z.infer<typeof WorkstationGatewayConfigV2Schema>;
 export type GatewayAppRegistration = z.infer<typeof GatewayAppRegistrationSchema>;
 export type GatewayManagedAppRegistration = Extract<
   GatewayAppRegistration,
   { mode: "gateway-managed" }
 >;
+export type DirectPrivateWorkstationGatewayConfig = Omit<
+  WorkstationGatewayConfigV2,
+  "browserIngress"
+> & {
+  readonly browserIngress: PrivateIngressV0;
+};
+
+export function isDirectPrivateWorkstationGatewayConfig(
+  config: WorkstationGatewayConfig,
+): config is DirectPrivateWorkstationGatewayConfig {
+  return config.version === 2 && config.browserIngress.kind === "direct-private-tls";
+}
+
+export function gatewayLoopbackListenTarget(
+  config: WorkstationGatewayConfig,
+): { readonly host: "127.0.0.1"; readonly port: number } | undefined {
+  if (config.version === 1) return { host: config.listenHost, port: config.listenPort };
+  if (config.browserIngress.kind !== "loopback-proxy") return undefined;
+  return {
+    host: config.browserIngress.listenHost,
+    port: config.browserIngress.listenPort,
+  };
+}
 
 export function readWorkstationGatewayConfig(path: string): WorkstationGatewayConfig {
   assertPrivateRegularFile(path);
@@ -208,6 +289,25 @@ function isExactLoopbackHttpOrigin(value: string): boolean {
       parsed.hash === "" &&
       parsed.port !== "" &&
       (parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExactIpv4LoopbackHttpOrigin(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" &&
+      parsed.origin === value &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === "" &&
+      parsed.port !== "" &&
+      parsed.hostname === "127.0.0.1"
     );
   } catch {
     return false;
