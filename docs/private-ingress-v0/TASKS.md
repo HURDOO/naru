@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-00 공개 기준선 작업 진행 중
-- 다음 작업: `PI-00`
+- PrivateIngress: PI-00 공개 기준선 완료, PI-01 구현 승인 전
+- 다음 작업: `PI-01`
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -60,9 +60,9 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-00. 공개 가능한 clean repository 기준선
 
-- [-] **범위**: 승인된 source inventory에서 공개 allowlist를 만들고 이전 private `.git` 이력 없이
-  Naru repository 기준선을 준비한다. 개인정보·운영 topology·historical evidence를 root commit 전에
-  제거한다.
+- [x] **범위**: 승인된 source inventory에서 공개 allowlist를 만들고 이전 private `.git` 이력 없이
+      Naru repository 기준선을 준비한다. 개인정보·운영 topology·historical evidence를 root commit 전에
+      제거한다.
 - **선행 조건**: 이 계약과 사용자 승인
 - **산출물**: export inventory, sanitized source tree, generic public docs/AGENTS, clean initial Git commit,
   secret/privacy scan과 build/test 결과
@@ -76,12 +76,16 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - dedicated secret/privacy scan에서 차단 항목이 없고 새 repository status가 clean이다.
   - remote를 추가하거나 push하지 않는다.
   - 사용자에게 export inventory와 제외 목록을 제시하고 완료 승인을 받는다.
+- **완료 증거 (2026-09-06)**: allowlisted 454-file public baseline의 `c77638c` clean root commit,
+  449 reachable-object privacy scan 0건, 표준 format/lint/typecheck/test/build,
+  operations/distribution/production smoke와 E2E 14/14 통과를 확인했다. 교체 전 unreachable 객체를
+  제거했고 사용자가 완료를 승인했다. Remote와 production은 변경하지 않았다.
 - **병렬 경계**: 완료 전에는 current source 기준선이 움직이지 않도록 다른 Naru feature를 시작하지 않는다.
 
 ## PI-01. PrivateIngress 계약·threat model 고정
 
-- [ ] **범위**: 문서의 `PrivateIngressV0`를 runtime schema, TypeScript type, 정상·거부 fixture와
-      ownership matrix로 고정한다. 구현 listener는 만들지 않는다.
+- [>] **범위**: 문서의 `PrivateIngressV0`를 runtime schema, TypeScript type, 정상·거부 fixture와
+  ownership matrix로 고정한다. 구현 listener는 만들지 않는다.
 - **선행 조건**: PI-00
 - **산출물**: public contract, JSON/Zod schema, redacted fixtures, threat model, ADR
 - **완료 조건**:
