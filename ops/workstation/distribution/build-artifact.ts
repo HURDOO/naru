@@ -360,6 +360,7 @@ function pruneDeployedComponent(componentRoot: string, packageName: string): voi
   for (const name of [".bin", ".modules.yaml", ".pnpm", ".pnpm-workspace-state-v1.json", "@naru"]) {
     rmSync(join(componentRoot, "node_modules", name), { recursive: true, force: true });
   }
+  pruneNativeBuildMetadata(componentRoot);
   const packagePath = join(componentRoot, "package.json");
   writeFileSync(
     packagePath,
@@ -371,6 +372,21 @@ function pruneDeployedComponent(componentRoot: string, packageName: string): voi
     { mode: PRIVATE_FILE_MODE },
   );
   chmodSync(packagePath, PRIVATE_FILE_MODE);
+}
+
+export function pruneNativeBuildMetadata(componentRoot: string): void {
+  const packageRoot = join(componentRoot, "node_modules", "better-sqlite3");
+  if (!existsSync(packageRoot)) return;
+  const packageMetadata = lstatSync(packageRoot);
+  if (!packageMetadata.isDirectory() || packageMetadata.isSymbolicLink()) {
+    throw new Error("Deployed better-sqlite3 package root is unsafe.");
+  }
+  const targetBinary = join(packageRoot, "prebuilds", "darwin-arm64.node");
+  const targetMetadata = lstatSync(targetBinary);
+  if (!targetMetadata.isFile() || targetMetadata.isSymbolicLink()) {
+    throw new Error("Deployed better-sqlite3 target binary is unsafe.");
+  }
+  rmSync(join(packageRoot, "build"), { recursive: true, force: true });
 }
 
 function assertBuildRootIsAbsent(artifactRoot: string, repositoryRoot: string): void {

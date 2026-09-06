@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,9 +10,26 @@ import {
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installVerifiedArtifact, verifyDistributionArtifact } from "./artifact.js";
+import { pruneNativeBuildMetadata } from "./build-artifact.js";
 import { createArtifactFixture } from "./test-support.js";
 
 describe("T14 standalone artifact", () => {
+  it("removes local native build metadata while retaining the target prebuild", () => {
+    const component = mkdtempSync("/private/tmp/naru-t14-native-prune-");
+    const packageRoot = join(component, "node_modules", "better-sqlite3");
+    const targetBinary = join(packageRoot, "prebuilds", "darwin-arm64.node");
+    const buildMetadata = join(packageRoot, "build", "Makefile");
+    mkdirSync(join(packageRoot, "prebuilds"), { recursive: true });
+    mkdirSync(join(packageRoot, "build"), { recursive: true });
+    writeFileSync(targetBinary, "fixture-native-binary");
+    writeFileSync(buildMetadata, "fixture-build-path");
+
+    pruneNativeBuildMetadata(component);
+
+    expect(existsSync(targetBinary)).toBe(true);
+    expect(existsSync(join(packageRoot, "build"))).toBe(false);
+  });
+
   it("verifies a darwin-arm64 payload with packaged native modules", () => {
     const parent = mkdtempSync("/private/tmp/naru-t14-artifact-test-");
     const root = createArtifactFixture(parent, "artifact-test-0001");
