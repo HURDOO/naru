@@ -1399,7 +1399,7 @@ function updateStage(
 
 function refuseUnconsumedMaintenanceRequest(layout: WorkstationInstanceLayout): void {
   if (!existsSync(layout.files.maintenanceRequest)) return;
-  const request = parseMaintenanceRequest(
+  const request = parsePriorMaintenanceRequest(
     readPrivateJson(layout.files.maintenanceRequest, layout.uid),
   );
   if (!existsSync(layout.files.maintenanceResult)) {
@@ -1413,6 +1413,20 @@ function refuseUnconsumedMaintenanceRequest(layout: WorkstationInstanceLayout): 
   ) {
     throw new Error(`Maintenance request ${request.requestId} is still active or ambiguous.`);
   }
+}
+
+function parsePriorMaintenanceRequest(value: unknown): MaintenanceRequestV1 {
+  if (
+    isRecord(value) &&
+    value.version === DISTRIBUTION_SCHEMA_VERSION &&
+    value.listenerPreflight === undefined
+  ) {
+    // Requests written before Private Ingress added listenerPreflight can only be observed here,
+    // where a matching terminal result is required before the file is replaced. The worker entry
+    // point continues to use parseMaintenanceRequest directly and never executes this legacy shape.
+    return parseMaintenanceRequest({ ...value, listenerPreflight: "verified" });
+  }
+  return parseMaintenanceRequest(value);
 }
 
 function listenerProbeTargets(

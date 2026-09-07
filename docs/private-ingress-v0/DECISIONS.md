@@ -186,3 +186,15 @@
   admission이 거부하면 manual stop/deploy/bootstrap으로 우회하지 않는다.
 - rollback: pre-existing service, data와 source admission을 soak 종료 전까지 보존하고 실패 시
   package-owned candidate만 이전 immutable receipt와 listener로 복원한다.
+
+## PI-D018. 완료된 legacy v1 maintenance request는 reconciliation에서만 읽는다
+
+- 상태: accepted
+- 배경: PI-07에서 기존 Workstation v1 test instance를 재사용하려 했지만, Private Ingress 도입 전에
+  완료된 `current-request.json`에 새 `listenerPreflight` field가 없어 RC1 handoff가 mutation 전에
+  fail-closed로 거부됐다.
+- 결정: 다음 handoff는 field가 없는 distribution v1 request를 동일 `requestId`의 terminal
+  `completed`/`failed` result와 대조하는 reconciliation 경계에서만 읽을 수 있다. 새 request 작성과
+  maintenance worker 실행은 계속 `listenerPreflight`를 필수로 요구한다.
+- migration: 기존 request/result를 직접 수정·삭제하지 않는다. RC1은 거부하고 이 compatibility와
+  regression을 포함한 새 deterministic candidate를 전체 PI-06 gate로 다시 검증한다.

@@ -248,6 +248,77 @@ describe("T14 deterministic maintenance transactions", () => {
     );
   });
 
+  it("reconciles a terminal pre-private-ingress v1 request before the next handoff", async () => {
+    const fixture = createDistributionFixture();
+    const runtime = new FakeWorkstationRuntime();
+    const installPlan = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    const installRequest = stageMaintenanceHandoff(installPlan, installPlan.planDigest, runtime);
+    await executeMaintenanceRequest(installRequest, runtime, { inspectNative: () => [] });
+
+    const legacyRequest = JSON.parse(
+      readFileSync(installPlan.layout.files.maintenanceRequest, "utf8"),
+    ) as Record<string, unknown>;
+    delete legacyRequest.listenerPreflight;
+    writeFileSync(
+      installPlan.layout.files.maintenanceRequest,
+      `${JSON.stringify(legacyRequest)}\n`,
+      { mode: 0o600 },
+    );
+
+    const upgradeIntent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot: createArtifactFixture(fixture.root, "fixture-build-legacy-request-upgrade"),
+    });
+    const plan = await planDistribution(upgradeIntent, "upgrade", runtime, {
+      probePorts: false,
+    });
+    const request = stageMaintenanceHandoff(plan, plan.planDigest, runtime);
+
+    expect(request.listenerPreflight).toBe("skipped-test");
+    expect(JSON.parse(readFileSync(plan.layout.files.maintenanceRequest, "utf8"))).toMatchObject({
+      requestId: request.requestId,
+      listenerPreflight: "skipped-test",
+    });
+  });
+
+  it("does not execute or replace an unterminated legacy v1 request", async () => {
+    const fixture = createDistributionFixture();
+    const runtime = new FakeWorkstationRuntime();
+    const installPlan = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    const installRequest = stageMaintenanceHandoff(installPlan, installPlan.planDigest, runtime);
+    await executeMaintenanceRequest(installRequest, runtime, { inspectNative: () => [] });
+
+    const legacyRequest = JSON.parse(
+      readFileSync(installPlan.layout.files.maintenanceRequest, "utf8"),
+    ) as Record<string, unknown>;
+    delete legacyRequest.listenerPreflight;
+    writeFileSync(
+      installPlan.layout.files.maintenanceRequest,
+      `${JSON.stringify(legacyRequest)}\n`,
+      { mode: 0o600 },
+    );
+    rmSync(installPlan.layout.files.maintenanceResult);
+
+    const upgradeIntent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot: createArtifactFixture(fixture.root, "fixture-build-legacy-request-blocked"),
+    });
+    const plan = await planDistribution(upgradeIntent, "upgrade", runtime, {
+      probePorts: false,
+    });
+
+    expect(() => stageMaintenanceHandoff(plan, plan.planDigest, runtime)).toThrow(
+      /has no terminal result/,
+    );
+    await expect(
+      executeMaintenanceRequest(legacyRequest as never, runtime, { inspectNative: () => [] }),
+    ).rejects.toThrow(/Maintenance request metadata is invalid/);
+  });
+
   it("upgrades packaged artifacts without treating their release-local Node paths as settings", async () => {
     const fixture = createDistributionFixture({ packagedNodeRuntime: true });
     const runtime = new FakeWorkstationRuntime();

@@ -211,7 +211,7 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-07. WireGuard/LAN 임시 Origin 실기기 인수
 
-- [>] **범위**: 기존 production을 유지한 채 같은 private hostname의 승인된 임시 port에서 새 pinned
+- [-] **범위**: 기존 production을 유지한 채 같은 private hostname의 승인된 임시 port에서 새 pinned
   stack을 설치하고 실제 기기 인수를 수행한다.
 - **선행 조건**: PI-06, production 외부 변경의 fresh 사용자 승인
 - **산출물**: Mac/Windows/Android acceptance, Passkey/PWA/Push, restart/reboot/rollback evidence

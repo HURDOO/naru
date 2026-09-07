@@ -16,18 +16,18 @@ Tailscale, DNS, routes, firewall, router, or certificate state.
 
 ## Required matrix
 
-| Boundary                           | Release evidence                                                                                                                          |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Contract and mode separation       | PrivateIngress accepted/rejected vectors; strict Gateway v1/v2 and loopback/direct union tests                                            |
-| Listener and source admission      | exact private bind lifecycle; wildcard/public/IPv6 rejection; denied actual TLS sockets never dispatch HTTP or WSS                        |
-| Host, Origin, and identity headers | exact authority and unsafe-Origin tests; forwarding/assertion/capability spoof rejection and upstream sanitization                        |
-| Authentication and bounded work    | Passkey/session/CSRF/WS tests; source/global authentication rate limits; header/body/message/queue/timeout limits                         |
-| TLS material lifecycle             | canonical path/owner/mode/SAN/key-pair/expiry validation; valid rotation, rejected rotation, last-known-good expiry and recovery          |
-| HTTP and WSS chain                 | authenticated direct TLS HTTP/WSS integration and Gateway-to-Naru signed-principal proxy integration                                      |
-| Actual PTY continuity              | isolated Gateway and Naru restart acceptance retains one Host `sessionId`, `runtimeId`, increasing terminal sequence, and live WSS output |
-| Distribution transaction           | private intent/config/artifact/state digest, stale approval rejection, owner-only receipt, redacted status/doctor, v1/v2 rollback         |
-| Public exposure and ownership      | public DNS answer rejection, direct candidate with no Funnel route, no public/wildcard bind, and no package authority for port forwarding |
-| Public artifact                    | clean committed source, pinned source commit and Node runtime, verified manifest/payload/archive SHA-256, deterministic rebuild           |
+| Boundary                           | Release evidence                                                                                                                                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Contract and mode separation       | PrivateIngress accepted/rejected vectors; strict Gateway v1/v2 and loopback/direct union tests                                                                               |
+| Listener and source admission      | exact private bind lifecycle; wildcard/public/IPv6 rejection; denied actual TLS sockets never dispatch HTTP or WSS                                                           |
+| Host, Origin, and identity headers | exact authority and unsafe-Origin tests; forwarding/assertion/capability spoof rejection and upstream sanitization                                                           |
+| Authentication and bounded work    | Passkey/session/CSRF/WS tests; source/global authentication rate limits; header/body/message/queue/timeout limits                                                            |
+| TLS material lifecycle             | canonical path/owner/mode/SAN/key-pair/expiry validation; valid rotation, rejected rotation, last-known-good expiry and recovery                                             |
+| HTTP and WSS chain                 | authenticated direct TLS HTTP/WSS integration and Gateway-to-Naru signed-principal proxy integration                                                                         |
+| Actual PTY continuity              | isolated Gateway and Naru restart acceptance retains one Host `sessionId`, `runtimeId`, increasing terminal sequence, and live WSS output                                    |
+| Distribution transaction           | private intent/config/artifact/state digest, stale approval rejection, terminal legacy v1 request reconciliation, owner-only receipt, redacted status/doctor, v1/v2 rollback |
+| Public exposure and ownership      | public DNS answer rejection, direct candidate with no Funnel route, no public/wildcard bind, and no package authority for port forwarding                                    |
+| Public artifact                    | clean committed source, pinned source commit and Node runtime, verified manifest/payload/archive SHA-256, deterministic rebuild                                              |
 
 An abnormal WebSocket close code from either side must be normalized to a valid proxy failure code.
 Service restart must not raise an uncaught close-frame error or terminate the Host runtime.
