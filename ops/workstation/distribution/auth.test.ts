@@ -52,7 +52,7 @@ describe("T14 local Workstation auth CLI transport", () => {
               version: 1,
               intent: {
                 intentId: "22222222-2222-4222-8222-222222222222",
-                kind: operation,
+                kind: operation === "recover" ? "recovery" : "bootstrap",
                 code: "fixtureBootstrapCode_1234567890",
                 origin: fixture.intent.canonicalBrowserOrigin,
                 expiresAt: Date.now() + 5 * 60_000,
@@ -91,6 +91,33 @@ describe("T14 local Workstation auth CLI transport", () => {
 
     await expect(createWorkstationAuthIntent(fixture.intent, "bootstrap")).rejects.toThrow(/0600/);
     expect(requests).toBe(0);
+  });
+
+  it("rejects a recovery response using the CLI spelling instead of the Gateway protocol kind", async () => {
+    const fixture = createDistributionFixture();
+    const socketPath = gatewayAdminSocketPath(fixture.intent);
+    createPrivateRuntimeRoot(createInstanceShortRuntimeRoot(fixture.intent));
+    const server = createServer((_request, response) => {
+      response.statusCode = 201;
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          version: 1,
+          intent: {
+            intentId: "22222222-2222-4222-8222-222222222222",
+            kind: "recover",
+            code: "fixtureBootstrapCode_1234567890",
+            origin: fixture.intent.canonicalBrowserOrigin,
+            expiresAt: Date.now() + 5 * 60_000,
+          },
+        }),
+      );
+    });
+    await listen(server, socketPath);
+
+    await expect(createWorkstationAuthIntent(fixture.intent, "recover")).rejects.toThrow(
+      /Gateway auth intent does not match/,
+    );
   });
 });
 

@@ -126,12 +126,13 @@ function parseGatewayAuthIntent(
     throw new Error("Gateway auth response envelope is invalid.");
   }
   const intent = value.intent;
+  const expectedKind = expectedOperation === "recover" ? "recovery" : "bootstrap";
   if (
     !isRecord(intent) ||
     !hasExactKeys(intent, ["intentId", "kind", "code", "origin", "expiresAt"]) ||
     typeof intent.intentId !== "string" ||
     !INTENT_ID_PATTERN.test(intent.intentId) ||
-    intent.kind !== expectedOperation ||
+    intent.kind !== expectedKind ||
     typeof intent.code !== "string" ||
     !BOOTSTRAP_CODE_PATTERN.test(intent.code) ||
     intent.origin !== expectedIntent.canonicalBrowserOrigin ||

@@ -198,3 +198,16 @@
   maintenance worker 실행은 계속 `listenerPreflight`를 필수로 요구한다.
 - migration: 기존 request/result를 직접 수정·삭제하지 않는다. RC1은 거부하고 이 compatibility와
   regression을 포함한 새 deterministic candidate를 전체 PI-06 gate로 다시 검증한다.
+
+## PI-D019. Gateway recovery kind와 Workstation CLI operation을 구분한다
+
+- 상태: accepted
+- 배경: PI-07의 새 Origin에서 기존 test instance Passkey를 인수할 때 local `auth recover` 요청은
+  Gateway에 도달했지만, Gateway가 반환한 protocol kind `recovery`를 CLI operation `recover`와
+  직접 비교해 일회용 code를 사용자에게 반환하기 전에 거부했다.
+- 결정: CLI의 외부 operation은 `recover`로 유지하고 Gateway 응답 검증에서만 이를 `recovery`에
+  대응시킨다. `bootstrap`은 그대로 일치시킨다. 다른 kind, Origin, TTL, code 형식과 private UDS
+  검증은 계속 fail-closed로 거부한다.
+- migration: 이미 발급됐지만 반환되지 않은 code는 사용하지 않고 만료시킨다. 설치된 artifact를
+  직접 수정하지 않으며 이 regression을 포함한 새 pinned candidate를 PI-06 전체 gate로 검증한 뒤
+  PI-07에서 별도 승인된 immutable upgrade로 교체한다.
