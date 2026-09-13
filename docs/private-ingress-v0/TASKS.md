@@ -4,7 +4,8 @@
 
 - Workstation v0: 완료·동결
 - PrivateIngress: PI-07 임시 private Origin 실기기 인수 완료
-- 다음 대기 작업: `PI-08` canonical production cutover. Fresh 승인 전에는 준비·검토만 수행한다.
+- `PI-08` canonical production cutover와 실제 기기 인수 완료. Legacy service는 정지했고
+  repository·data·service definition은 rollback을 위해 보존한다. 다음 작업은 별도 승인 후 `PI-09`다.
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -236,11 +237,31 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-08. canonical WireGuard production cutover
 
-- [ ] **범위**: active PTY와 backup을 확인하고 legacy listener를 중지한 뒤 새 Gateway direct TLS
+- [x] **범위**: active PTY와 backup을 확인하고 legacy listener를 중지한 뒤 새 Gateway direct TLS
       listener를 canonical port로 reconfigure한다. 실패하면 legacy를 복구한다.
-- **선행 조건**: PI-07 사용자 인수, fresh cutover 승인, public repository의 pinned commit을 exact
-  canonical source로 인정하도록 production operator admission을 별도 승인·갱신·검증
+- **선행 조건**: PI-07 사용자 인수, fresh cutover 승인, PI-D020의 local-only pinned artifact와
+  exact source target을 owner-only production operator admission으로 승인·갱신·검증
 - **산출물**: backup, one-time cutover receipt, device smoke, tested rollback result
+- **진행(2026-09-13)**: 독립 Mac mini 세션에서 candidate에 legacy Project 허용 root를 추가하고
+  Host·Gateway·Naru doctor를 통과했다. 양쪽 SQLite 무결성·백업을 확인한 뒤 legacy의 9개
+  Project·8개 group·9개 workspace·45개 Pane을 candidate의 기존 1개 Project·3개 Pane을
+  보존하면서 단 한 번 이관했다. 9개 Project에 걸친 재개 가능 Codex session ID 30개와
+  실제 session file 존재, 32개 전체 resume launch 인자를 검증했다. ID가 없는 Codex Pane
+  3개는 자동 resume 대상이 아니다. Legacy listener·service·data는 여전히 보존·가동 중이다.
+  이후 legacy에 새 ID 없는 Codex Pane 1개와 workspace layout 변경이 생겨 final sync가 필요하다.
+  2026-09-13 사용자 승인으로 PI-D020의 local-only source admission과 이 final sync를 포함한
+  canonical cutover를 진행한다. Remote push는 하지 않는다.
+- **전환 결과(2026-09-13)**: 첫 legacy stop 직후 SQLite WAL의 read-only 검사에 제한된 실행
+  환경 접근 오류가 발생했다. 데이터 변경 없이 legacy listener를 즉시 복구해 readiness를 확인하고
+  Discord 실패 알림을 전송했다. 독립 권한에서 동일 plan을 재검증한 재시도에서는 양쪽 DB를 다시
+  백업하고 누락된 Codex Pane 1개·workspace 1개만 반영했다. Local-only admission의 source·
+  artifact·Gateway digest가 fresh plan과 일치한 뒤 새 Gateway를 canonical port로 reconfigure했다.
+  새 Host·Gateway·Naru status/doctor와 exact listener는 정상이며 legacy service는 정지된 채
+  service definition·repository·data를 보존한다. 최종 DB 10 Project·49 Pane, legacy 9 Project의
+  재개 가능 Codex session ID 30개, 원래 candidate의 Project·Pane과 양쪽 전후 백업을 검증했다.
+  실제 기기의 Passkey·Codex resume·PWA/Push 인수는 사용자 확인 대기 중이었다. 사용자가
+  canonical Origin의 PWA 접속 및 알림 재등록 후 전달 정상 동작을 확인했다. 이어서 이관된
+  Codex session의 실제 재개와 Naru PTY 복귀 후 Passkey 로그인도 확인해 실제 기기 인수를 완료했다.
 - **완료 조건**:
   - current session이 Naru-hosted이면 main service를 직접 중지하지 않는다.
   - personal deployment admission이 새 source를 거부하면 manual stop/activate/bootstrap으로 우회하지

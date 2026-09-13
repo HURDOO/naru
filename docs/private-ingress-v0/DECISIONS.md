@@ -211,3 +211,19 @@
 - migration: 이미 발급됐지만 반환되지 않은 code는 사용하지 않고 만료시킨다. 설치된 artifact를
   직접 수정하지 않으며 이 regression을 포함한 새 pinned candidate를 PI-06 전체 gate로 검증한 뒤
   PI-07에서 별도 승인된 immutable upgrade로 교체한다.
+
+## PI-D020. PI-08의 로컬 전용 source admission은 remote push를 요구하지 않는다
+
+- 상태: accepted (2026-09-13 사용자 승인)
+- 배경: PI-D017의 public repository identity 전환은 remote publication을 전제로 서술되었지만,
+  이 PI-08 instance는 Mac mini의 로컬 사용만 목표로 한다. Remote push는 별도 승인 경계이며
+  canonical port 전환의 필요 조건이 아니다.
+- 결정: operator는 canonical local repository의 `realpath`와 pinned source commit, 검증된
+  immutable artifact manifest/payload digest 및 새 Gateway configuration digest를 owner-only
+  admission record에 결합한다. 해당 commit이 로컬 Git object로 존재하고 artifact source와 정확히
+  일치해야 한다. Distribution plan의 exact target과 admission record가 다르면 전환을 중단한다.
+- 호환성: public distribution/sourceTransition contract나 이미 완료된 PI-D017/PI-05를 바꾸지
+  않는다. Public remote를 운영 source로 채택하는 경우에는 PI-D017의 별도 승인이 여전히 필요하다.
+- migration: 이번 local-only cutover에서만 private admission을 만들고 검증한다. 실제 repository
+  path, Origin, listener, source address와 TLS reference는 source·fixture·로그에 기록하지 않는다.
+  Remote 추가·push, DNS·VPN·certificate 변경과 legacy 정리는 수행하지 않는다.
