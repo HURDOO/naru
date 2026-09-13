@@ -22,6 +22,7 @@ import {
   type MobileTerminalKey,
   mobileTerminalKeySequence,
 } from "./mobile-terminal-input";
+import { isAndroidTouchInput, MobileTerminalImeBridge } from "./mobile-terminal-ime";
 import {
   codexShiftEnterSequence,
   ctrlSequenceForKeyboardEvent,
@@ -132,9 +133,11 @@ export function TerminalPane({
   const surfaceControllerRef = useRef(mutationAllowed);
   const controlAllowedRef = useRef(false);
   const attachmentRef = useRef<TerminalAttachment | null>(null);
+  const connectionRef = useRef(connection);
   const ctrlArmedRef = useRef(false);
   const clipboardBusyRef = useRef(false);
   const composeInputRef = useRef<HTMLTextAreaElement>(null);
+  const mobileImeRef = useRef<MobileTerminalImeBridge | null>(null);
   const keyboardHelpId = `${pane.id}-terminal-keyboard-help`;
   const composeInputId = `${pane.id}-terminal-compose-input`;
   const [runtimeStatus, setRuntimeStatus] = useState<PaneStatus>(pane.status);
@@ -167,6 +170,10 @@ export function TerminalPane({
   const terminalSubscriptionAllowed =
     connectionStatus.state === "active" &&
     (connectionStatus.surfaceRole !== "observer" || (active && documentVisible));
+
+  useLayoutEffect(() => {
+    connectionRef.current = connection;
+  }, [connection]);
 
   useEffect(() => {
     surfaceControllerRef.current = mutationAllowed;
@@ -239,6 +246,35 @@ export function TerminalPane({
     const host = hostRef.current;
     if (!host) return;
     let disposed = false;
+    const mobileIme = isAndroidTouchInput()
+      ? new MobileTerminalImeBridge({
+          textarea: () => terminalRef.current?.textarea,
+          composing: () => composingRef.current,
+          canResetTextarea: () => !screenReaderModeRef.current,
+          fence: () => {
+            const currentConnection = connectionRef.current;
+            const status = currentConnection?.status();
+            const control = currentConnection?.paneControl(pane.id);
+            return {
+              attachment: attachmentRef.current,
+              terminal: terminalRef.current,
+              runtimeId: runtimeIdRef.current,
+              leaseGeneration: status?.generation,
+              controlGeneration: control?.controllerGeneration,
+              allowed:
+                controlAllowedRef.current &&
+                status?.state === "active" &&
+                status.surfaceRole === "controller" &&
+                control?.role === "controller" &&
+                attachmentRef.current !== null &&
+                runtimeIdRef.current !== null,
+            };
+          },
+          send: sendTerminalData,
+        })
+      : null;
+    mobileImeRef.current = mobileIme;
+    const detachMobileIme = mobileIme?.attach(host);
     let viewportReportingSuppressions = 0;
     let loadedTerminalFontState: "true" | "fallback" | null = areTerminalFontsReady()
       ? "true"
@@ -297,9 +333,25 @@ export function TerminalPane({
     };
     const handlePaste = (event: Event): void => {
       if (!(event instanceof ClipboardEvent)) return;
+      if (
+        !(event.target instanceof Node) ||
+        (!host.contains(event.target) && event.target !== composeInputRef.current)
+      ) {
+        return;
+      }
       updateCtrlArmed(false);
       const image = clipboardImageFrom(event.clipboardData);
-      if (!image) return;
+      if (!image) {
+        if (pane.kind === "codex" && clipboardAdvertisesImage(event.clipboardData)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          setClipboardNotice({
+            kind: "error",
+            message: "브라우저가 이미지 데이터를 제공하지 않았습니다. 이미지 복사를 확인해 주세요.",
+          });
+        }
+        return;
+      }
       if (pane.kind !== "codex" && event.clipboardData?.getData("text/plain")) return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -318,6 +370,22 @@ export function TerminalPane({
         });
         return;
       }
+      const connectionAtPaste = connectionRef.current;
+      const statusAtPaste = connectionAtPaste?.status();
+      const controlAtPaste = connectionAtPaste?.paneControl(pane.id);
+      if (
+        !connectionAtPaste ||
+        !controlAllowedRef.current ||
+        statusAtPaste?.state !== "active" ||
+        statusAtPaste.surfaceRole !== "controller" ||
+        controlAtPaste?.role !== "controller"
+      ) {
+        setClipboardNotice({
+          kind: "error",
+          message: "현재 화면은 이 Codex Pane을 제어할 수 없습니다.",
+        });
+        return;
+      }
       if (clipboardBusyRef.current) {
         setClipboardNotice({
           kind: "error",
@@ -325,13 +393,38 @@ export function TerminalPane({
         });
         return;
       }
+      const runtimeAtPaste = runtimeIdRef.current;
+      const terminalAtPaste = terminalRef.current;
+      const generationAtPaste = statusAtPaste.generation;
+      const paneControlGenerationAtPaste = controlAtPaste.controllerGeneration;
       clipboardBusyRef.current = true;
       setClipboardNotice({ kind: "status", message: "이미지를 Codex에 붙여넣는 중…" });
       void prepareClipboardPng(image)
-        .then((bytes) => attachment.pasteImage(bytes))
+        .then((bytes) => {
+          if (
+            disposed ||
+            !controlAllowedRef.current ||
+            attachmentRef.current !== attachment ||
+            runtimeIdRef.current !== runtimeAtPaste ||
+            terminalRef.current !== terminalAtPaste ||
+            connectionRef.current !== connectionAtPaste ||
+            connectionAtPaste.status().state !== "active" ||
+            connectionAtPaste.status().surfaceRole !== "controller" ||
+            connectionAtPaste.status().generation !== generationAtPaste ||
+            connectionAtPaste.paneControl(pane.id)?.role !== "controller" ||
+            connectionAtPaste.paneControl(pane.id)?.controllerGeneration !==
+              paneControlGenerationAtPaste
+          ) {
+            throw new Error("제어권이나 Codex 연결이 바뀌어 이미지 붙여넣기를 중단했습니다.");
+          }
+          return attachment.pasteImage(bytes);
+        })
         .then(() => {
           if (!disposed) {
-            setClipboardNotice({ kind: "status", message: "이미지를 Codex에 붙였습니다." });
+            setClipboardNotice({
+              kind: "status",
+              message: "Codex에 이미지 붙여넣기 요청을 보냈습니다.",
+            });
           }
         })
         .catch((error: unknown) => {
@@ -421,7 +514,9 @@ export function TerminalPane({
       const detachTouchScroll = terminalScreen
         ? attachTerminalTouchScroll(terminalScreen, terminal)
         : () => undefined;
-      const onData = terminal.onData(sendTerminalData);
+      const onData = terminal.onData((data) => {
+        if (!mobileIme || mobileIme.allowNativeData(data)) sendTerminalData(data);
+      });
       const onScroll = terminal.onScroll(() => reportViewport(terminal));
       let rendererDisposed = false;
       let resizeAnchorTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -644,6 +739,7 @@ export function TerminalPane({
       if (frame.type === "pane.control.state") {
         const controlsNow = surfaceControllerRef.current && frame.role === "controller";
         controlAllowedRef.current = controlsNow;
+        if (!controlsNow) mobileIme?.cancelPending();
         host.dataset.controlRole = controlsNow ? "controller" : "observer";
         if (controlsNow) {
           mountedRendererRef.current?.scheduleFit(true);
@@ -662,6 +758,7 @@ export function TerminalPane({
         return;
       }
       if (frame.type === "pane.snapshot") {
+        if (runtimeIdRef.current !== frame.runtimeId) mobileIme?.cancelPending();
         disposeCandidate();
         restoreIdRef.current = null;
         previewAnchorRef.current = null;
@@ -694,6 +791,7 @@ export function TerminalPane({
         disposeCandidate();
         const preservesMountedRuntime =
           runtimeIdRef.current === frame.runtimeId && frame.sequence <= latestSequenceRef.current;
+        if (!preservesMountedRuntime) mobileIme?.cancelPending();
         restoreIdRef.current = frame.restoreId;
         latestSequenceRef.current = frame.sequence;
         desiredBottomOffsetRef.current = frame.bottomOffset;
@@ -865,7 +963,8 @@ export function TerminalPane({
     host.addEventListener("keydown", leaveTerminalWithShiftTab, true);
     host.addEventListener("keyup", leaveTerminalWithShiftTab, true);
     host.addEventListener("input", handleLatchedInput, true);
-    host.addEventListener("paste", handlePaste, true);
+    const paneSurface = host.closest<HTMLElement>(".pane-surface");
+    paneSurface?.addEventListener("paste", handlePaste, true);
     const initialRenderer = createTerminalRenderer(screenReaderModeRef.current);
     mountedRendererRef.current = mountRenderer(initialRenderer);
     setTerminalInstanceId(initialRenderer.instanceId);
@@ -891,12 +990,15 @@ export function TerminalPane({
 
     return () => {
       disposed = true;
+      detachMobileIme?.();
+      mobileIme?.cancelPending();
+      if (mobileImeRef.current === mobileIme) mobileImeRef.current = null;
       paneFrameHandlerRef.current = null;
       promoteRestoreRef.current = () => undefined;
       host.removeEventListener("keydown", leaveTerminalWithShiftTab, true);
       host.removeEventListener("keyup", leaveTerminalWithShiftTab, true);
       host.removeEventListener("input", handleLatchedInput, true);
-      host.removeEventListener("paste", handlePaste, true);
+      paneSurface?.removeEventListener("paste", handlePaste, true);
       clipboardBusyRef.current = false;
       disposeCandidate();
       mountedRendererRef.current?.dispose();
@@ -911,7 +1013,15 @@ export function TerminalPane({
       delete host.dataset.terminalFontsReady;
       delete host.dataset.terminalRestoreReady;
     };
-  }, [keyboardHelpId, pane.kind, pane.title, returnToLiveTail, sendTerminalData, updateCtrlArmed]);
+  }, [
+    keyboardHelpId,
+    pane.id,
+    pane.kind,
+    pane.title,
+    returnToLiveTail,
+    sendTerminalData,
+    updateCtrlArmed,
+  ]);
 
   useEffect(() => {
     if (!clipboardNotice || clipboardNotice.message.endsWith("중…")) return;
@@ -964,6 +1074,7 @@ export function TerminalPane({
         attachment.viewport(currentRuntimeId, desiredBottomOffsetRef.current);
       }
       attachment.dispose();
+      mobileImeRef.current?.cancelPending();
       if (attachmentRef.current === attachment) attachmentRef.current = null;
     };
   }, [connection, pane.id, runtimeStatus, terminalSubscriptionAllowed]);
@@ -975,6 +1086,7 @@ export function TerminalPane({
     if (restoreCandidateRef.current) {
       restoreCandidateRef.current.terminal.options.disableStdin = inputDisabled;
     }
+    if (inputDisabled) mobileImeRef.current?.cancelPending();
   }, [inputDisabled]);
 
   const restart = async (): Promise<void> => {
@@ -1560,7 +1672,20 @@ function clipboardImageFrom(clipboard: DataTransfer | null): File | null {
       if (image) return image;
     }
   }
+  for (const file of clipboard.files) {
+    if (file.type.startsWith("image/")) return file;
+  }
   return null;
+}
+
+function clipboardAdvertisesImage(clipboard: DataTransfer | null): boolean {
+  if (!clipboard) return false;
+  return (
+    Array.from(clipboard.types).some((type) => type.startsWith("image/")) ||
+    Array.from(clipboard.items).some(
+      (item) => item.kind === "file" && item.type.startsWith("image/"),
+    )
+  );
 }
 
 async function prepareClipboardPng(image: Blob): Promise<Uint8Array> {

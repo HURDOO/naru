@@ -407,7 +407,7 @@ test("login, manage projects, run a terminal, and restore the selected context",
     );
   });
   await expect(mainCodexSurface.locator(".terminal-clipboard-notice")).toContainText(
-    "이미지를 Codex에 붙였습니다.",
+    "Codex에 이미지 붙여넣기 요청을 보냈습니다.",
   );
   const clipboardFrames = await page.evaluate(() => {
     const state = window as unknown as {
