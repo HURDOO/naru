@@ -3,8 +3,8 @@
 ## 상태
 
 - Workstation v0: 완료·동결
-- PrivateIngress: PI-06 자동·격리 acceptance와 public release candidate 완료
-- 다음 작업: `PI-07` production 외부 변경 승인과 실기기 인수
+- PrivateIngress: PI-07 임시 private Origin 실기기 인수 완료
+- 다음 대기 작업: `PI-08` canonical production cutover. Fresh 승인 전에는 준비·검토만 수행한다.
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -211,8 +211,8 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-07. WireGuard/LAN 임시 Origin 실기기 인수
 
-- [-] **범위**: 기존 production을 유지한 채 같은 private hostname의 승인된 임시 port에서 새 pinned
-  stack을 설치하고 실제 기기 인수를 수행한다.
+- [x] **범위**: 기존 production을 유지한 채 같은 private hostname의 승인된 임시 port에서 새 pinned
+      stack을 설치하고 실제 기기 인수를 수행한다.
 - **선행 조건**: PI-06, production 외부 변경의 fresh 사용자 승인
 - **산출물**: Mac/Windows/Android acceptance, Passkey/PWA/Push, restart/reboot/rollback evidence
 - **완료 조건**:
@@ -220,6 +220,18 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
   - actual Codex PTY, multi-device handoff, Gateway/Naru restart와 Mac reboot 복구를 확인한다.
   - port reconfigure에 따른 PWA/worker/push와 Passkey 경계를 확인한다.
   - 기존 production service/data/listener는 변경하지 않는다.
+- **완료 증거 (2026-09-13)**: pinned release candidate를 분리된 private TLS listener에 설치하고
+  Mac/Windows/Android의 Passkey 접근, actual Codex PTY와 controller handoff를 확인했다. Verified TLS,
+  approved source policy, 잘못된 Host·Origin·Forwarded 거부와 무인증 거부를 확인했고 installed doctor는
+  29/29를 통과했다. 후보 Gateway/Naru 재시작에서도 Host session/runtime과 실제 Codex 왕복이 유지됐다.
+  Mac 보안 업데이트 재부팅 후 후보와 legacy listener가 복구됐고, 이전 Host PTY는 정직하게 stopped가 된
+  뒤 새 Codex 세션에서 실제 왕복을 확인했다. Port-only reconfigure에서 Android PWA/worker와 Push를
+  재설치·재구독해 전달을 확인하고 기존 Passkey로 새 Origin 로그인을 확인했다. 이전 immutable 후보
+  receipt로 rollback한 뒤 Host PTY 연속성, 브라우저 재연결, PWA/Push 재구독과 전달을 다시 확인했다.
+  무효화된 Push endpoint의 410 응답에 따른 자동 제거를 확인했지만, 브라우저 측 무효화 원인은
+  특정하지 못했다. 초기 Android Push 등록 실패는 PWA 재시작 후 해소됐으며 원인은 미확정이다.
+  Router port forwarding 부재는 operator가 확인했고, legacy service/data/listener와 사용자 소유
+  DNS·VPN·certificate, remote repository는 변경하지 않았다. Canonical cutover는 PI-08의 별도 승인이다.
 - **freeze**: PI-08 종료까지 release candidate에 다른 feature merge/deploy를 금지한다.
 
 ## PI-08. canonical WireGuard production cutover
