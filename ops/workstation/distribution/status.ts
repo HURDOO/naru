@@ -15,7 +15,7 @@ import {
   type WorkstationInstallationIntent,
 } from "./model.js";
 import { readPrivateJson } from "./security.js";
-import { readCurrentReceiptForIntent } from "./transaction.js";
+import { readCurrentReceiptForIntent, verifyReceiptRuntimeReleases } from "./transaction.js";
 import type { ServiceRuntimeState, WorkstationRuntimeController } from "./runtime.js";
 
 export interface WorkstationStatusReport {
@@ -31,6 +31,7 @@ export interface WorkstationStatusReport {
     readonly operation: string;
     readonly buildId: string;
     readonly planDigest: string;
+    readonly runtimeBuilds: Readonly<Record<"host" | "gateway" | "naru", string>>;
   };
   readonly ingress: unknown;
   readonly services: Readonly<
@@ -61,6 +62,13 @@ export async function statusDistribution(
   }
   if (activeArtifactSummary === undefined) throw new Error("Artifact identity is unavailable.");
   const layout = createInstanceLayout(receipt?.intent ?? intent, activeArtifactSummary);
+  if (receipt !== undefined) {
+    try {
+      verifyReceiptRuntimeReleases(receipt, layout);
+    } catch {
+      artifactHealthy = false;
+    }
+  }
   const activeIntent = receipt?.intent ?? intent;
   const receiptIntegrity =
     receipt === undefined || !isPrivateIngressInstallationIntent(receipt.intent)
@@ -101,6 +109,11 @@ export async function statusDistribution(
             operation: receipt.operation,
             buildId: receipt.artifact.buildId,
             planDigest: receipt.planDigest,
+            runtimeBuilds: {
+              host: receipt.runtimeReleases?.host.buildId ?? receipt.artifact.buildId,
+              gateway: receipt.runtimeReleases?.gateway.buildId ?? receipt.artifact.buildId,
+              naru: receipt.runtimeReleases?.naru.buildId ?? receipt.artifact.buildId,
+            },
           },
         }),
     ingress: isPrivateIngressInstallationIntent(activeIntent)

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { parseEnv } from "node:util";
 import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { verifyDistributionArtifact } from "./artifact.js";
-import { createInstanceConfiguration } from "./configuration.js";
+import { createRuntimeConfiguration } from "./configuration.js";
 import { WORKSTATION_PACKAGE_ID } from "./constants.js";
 import {
   createInstanceLayout,
@@ -35,6 +35,7 @@ import {
 import { parseVerifierKeys, type WorkstationRuntimeController } from "./runtime.js";
 import {
   readCurrentReceiptForIntent,
+  verifyReceiptRuntimeReleases,
   type DistributionCheck,
   type InstallationReceiptV1,
 } from "./transaction.js";
@@ -97,7 +98,14 @@ export async function doctorDistribution(
   }
   const installedArtifact = verifyDistributionArtifact(current.artifact.root);
   const layout = createInstanceLayout(current.intent, installedArtifact.summary);
-  const expected = createInstanceConfiguration(current.intent, installedArtifact.summary, layout);
+  const runtimeReleases = verifyReceiptRuntimeReleases(current, layout);
+  const expected = createRuntimeConfiguration(
+    current.intent,
+    installedArtifact.summary,
+    layout,
+    runtimeReleases,
+  );
+  const hostLayout = createInstanceLayout(current.intent, runtimeReleases.host);
   if (isPrivateIngressInstallationIntent(current.intent)) {
     const preflight = await inspectPrivateIngressPreflight(
       current.intent,
@@ -181,7 +189,13 @@ export async function doctorDistribution(
 
   try {
     inspectTargetEnvironment(current.intent, installedArtifact.summary.nodeRuntime);
-    inspectNativeRuntime(layout.runtime.nodeExecutable, layout.releaseRoot);
+    const inspected = new Set<string>();
+    for (const release of [runtimeReleases.host, runtimeReleases.gateway, runtimeReleases.naru]) {
+      if (inspected.has(release.manifestDigest)) continue;
+      inspected.add(release.manifestDigest);
+      const releaseLayout = createInstanceLayout(current.intent, release);
+      inspectNativeRuntime(releaseLayout.runtime.nodeExecutable, releaseLayout.releaseRoot);
+    }
     checks.push({
       id: "runtime.node-native",
       status: "ok",
@@ -192,7 +206,7 @@ export async function doctorDistribution(
   } catch (error) {
     checks.push(blockedCheck("runtime.node-native", safeError(error), "user"));
   }
-  checks.push(localSessionCliArtifactCheck(layout, expected.localSessionCli !== undefined));
+  checks.push(localSessionCliArtifactCheck(hostLayout, expected.localSessionCli !== undefined));
 
   checks.push(verifierFileCheck(layout.files.gatewayVerifierKeys, layout.uid));
   for (const service of ["host", "gateway", "naru"] as const) {

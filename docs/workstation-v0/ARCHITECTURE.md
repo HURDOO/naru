@@ -27,6 +27,12 @@ mode, executable, Origin과 release digest를 고정한다.
 Gateway와 Naru는 재시작해도 Host Session을 다시 attach한다. Host restart는 PTY continuity를 보장하지
 않으며 persisted metadata를 stopped로 복구한다.
 
+WV0-D007 이후 upgrade plan은 artifact manifest의 runtime 의존 파일과 현재 receipt의 서비스별
+release pin을 비교한다. Web-only upgrade는 Naru만 새 release로 옮기고 Host/Gateway는 이전
+immutable release의 실행 설정과 launchd definition을 유지한다. Additive receipt pin이 없는
+기존 installation은 세 서비스가 receipt의 단일 artifact를 사용한 것으로 해석한다. Doctor는
+혼합 pin의 각 artifact와 실제 설정 파일을 검증하며, 실패 복구는 영향을 받은 서비스만 되돌린다.
+
 ## Web release
 
 Canonical browser Origin은 instance intent에서 결정론적으로 렌더한다. Manifest, service worker, Passkey

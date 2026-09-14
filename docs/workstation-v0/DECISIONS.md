@@ -26,3 +26,19 @@ Gateway, WebAuthn, Naru, PWA와 Push는 하나의 configured canonical HTTPS Ori
 
 Source build, package verification 또는 public repository 준비를 service install, network apply, deploy나
 remote push 승인으로 해석하지 않는다.
+
+## WV0-D007. Upgrade는 변경된 runtime만 새 불변 릴리스로 옮긴다
+
+- 상태: accepted (T57)
+- 결정: verified artifact의 서비스별 의존 payload를 이전 runtime pin과 비교한다. 새 web release를
+  사용하는 Naru는 upgrade에서 재시작한다. Host payload·packaged Node·Host가 실행하는 Codex
+  integration/CLI payload가 바뀌면 Host부터 세 runtime을 재시작하고, Gateway payload만 바뀌면
+  Gateway와 Naru를 재시작한다. 웹만 바뀌면 Naru만 재시작한다.
+- 유지: 바뀌지 않은 Host/Gateway의 launchd definition과 실행 configuration은 이전 immutable
+  release를 계속 가리킨다. Receipt의 additive `runtimeReleases`는 실제 서비스별 pin을 기록하며,
+  없는 기존 receipt는 세 서비스가 단일 `artifact`를 사용한 것으로 읽는다. Plan digest는 재시작
+  범위와 pin을 결합하고 doctor/status는 모든 pin을 검증한다.
+- 호환성·migration: 기존 receipt와 설치에는 변환 작업이 없다. 첫 selective upgrade가 새 receipt에
+  혼합 pin을 기록한다. 이전 release는 참조되는 동안 보존한다. Reconfigure와 rollback은 새 plan에
+  표시되는 영향 서비스만 재시작하되 rollback은 대상 receipt의 pin을 복원한다. 실패 복구는 중지한
+  서비스만 이전 definition으로 되돌린다.

@@ -178,6 +178,7 @@ export function createArtifactFixture(
   options: {
     readonly packagedNodeRuntime?: boolean;
     readonly localSessionCliFeature?: boolean;
+    readonly fileOverrides?: Readonly<Record<string, string>>;
   } = {},
 ): string {
   const artifactRoot = join(parent, buildId);
@@ -279,7 +280,7 @@ export function createArtifactFixture(
   for (const file of files) {
     const target = join(artifactRoot, file.path);
     mkdirSync(dirname(target), { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-    writeFileSync(target, file.contents, {
+    writeFileSync(target, options.fileOverrides?.[file.path] ?? file.contents, {
       mode: file.executable === true ? PRIVATE_EXECUTABLE_MODE : PRIVATE_FILE_MODE,
     });
     chmodSync(target, file.executable === true ? PRIVATE_EXECUTABLE_MODE : PRIVATE_FILE_MODE);

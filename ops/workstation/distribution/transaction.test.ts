@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { describe, expect, it } from "vitest";
 import { verifyDistributionArtifact } from "./artifact.js";
+import { doctorDistribution } from "./doctor.js";
 import { createInstanceLayout, parseInstallationIntent } from "./model.js";
+import { statusDistribution } from "./status.js";
 import {
   executeMaintenanceRequest,
   planDistribution,
@@ -348,6 +350,222 @@ describe("T14 deterministic maintenance transactions", () => {
     const upgradeCheck = plan.checks.find((check) => check.id === "transaction.upgrade");
     expect(upgradeCheck).toMatchObject({ status: "ok" });
     expect(upgradeCheck?.actual).toContain("approved settings unchanged");
+  });
+
+  it("keeps Host PTYs and Gateway running through a web-only upgrade and pins their releases", async () => {
+    const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+    const runtime = new FakeWorkstationRuntime();
+    const install = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(install, install.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    const first = readCurrentReceipt(install.layout);
+    if (first === undefined) throw new Error("Fixture install receipt is missing.");
+    const webIndex = readFileSync(join(fixture.artifactRoot, "web-base", "index.html"), "utf8");
+    const artifactRoot = createArtifactFixture(fixture.root, "fixture-web-only-0002", {
+      packagedNodeRuntime: true,
+      fileOverrides: { "web-base/index.html": `${webIndex}<!-- web-only change -->\n` },
+    });
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot,
+      nodeExecutable: join(artifactRoot, "runtime", "node", "bin", "node"),
+    });
+    const plan = await planDistribution(intent, "upgrade", runtime, { probePorts: false });
+    expect(plan.restartServices).toEqual(["naru"]);
+    expect(plan.runtimeReleases.host.buildId).toBe(first.artifact.buildId);
+    expect(plan.runtimeReleases.gateway.buildId).toBe(first.artifact.buildId);
+    expect(plan.runtimeReleases.naru.buildId).toBe("fixture-web-only-0002");
+
+    const before = runtime.operations.length;
+    const request = stageMaintenanceHandoff(plan, plan.planDigest, runtime);
+    const workerPlan = await planDistribution(request.intent, "upgrade", runtime, {
+      probePorts: false,
+    });
+    expect(workerPlan.planDigest).toBe(plan.planDigest);
+    const result = await executeMaintenanceRequest(request, runtime, { inspectNative: () => [] });
+    expect(result.status).toBe("completed");
+    const operations = runtime.operations.slice(before);
+    expect(operations).toContain(`bootout:${plan.layout.labels.naru}`);
+    expect(operations).toContain(`kickstart:${plan.layout.labels.naru}`);
+    for (const service of ["host", "gateway"] as const) {
+      expect(operations).not.toContain(`bootout:${plan.layout.labels[service]}`);
+      expect(operations).not.toContain(`kickstart:${plan.layout.labels[service]}`);
+      expect(readFileSync(plan.layout.launchAgentFiles[service], "utf8")).toContain(
+        createInstanceLayout(first.intent, first.artifact).runtime.nodeExecutable,
+      );
+    }
+    const receipt = readCurrentReceipt(plan.layout);
+    expect(receipt?.runtimeReleases).toMatchObject({
+      host: { buildId: first.artifact.buildId },
+      gateway: { buildId: first.artifact.buildId },
+      naru: { buildId: "fixture-web-only-0002" },
+    });
+    const doctor = await doctorDistribution(intent, runtime, {
+      codexDoctorReport: {
+        checks: {
+          installation: { status: "ok" },
+          "auth.credentials": { status: "ok" },
+          "config.load": { status: "ok" },
+        },
+      },
+    });
+    expect(doctor.status).toBe("healthy");
+    const status = await statusDistribution(intent, runtime);
+    expect(status.status).toBe("healthy");
+    expect(status.receipt?.runtimeBuilds).toEqual({
+      host: first.artifact.buildId,
+      gateway: first.artifact.buildId,
+      naru: "fixture-web-only-0002",
+    });
+    writeFileSync(join(first.artifact.root, "components", "host", "dist", "main.js"), "tampered\n");
+    expect((await statusDistribution(intent, runtime)).status).toBe("degraded");
+    await expect(doctorDistribution(intent, runtime)).rejects.toThrow(/manifest/);
+  });
+
+  it("promotes Gateway and then Host only when their verified runtime payload changes", async () => {
+    const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+    const runtime = new FakeWorkstationRuntime();
+    const install = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(install, install.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    const first = readCurrentReceipt(install.layout);
+    if (first === undefined) throw new Error("Fixture install receipt is missing.");
+    const gatewayRoot = createArtifactFixture(fixture.root, "fixture-gateway-0002", {
+      packagedNodeRuntime: true,
+      fileOverrides: { "components/gateway/dist/main.js": "export const changed = true;\n" },
+    });
+    const gatewayIntent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot: gatewayRoot,
+      nodeExecutable: join(gatewayRoot, "runtime", "node", "bin", "node"),
+    });
+    const gatewayPlan = await planDistribution(gatewayIntent, "upgrade", runtime, {
+      probePorts: false,
+    });
+    expect(gatewayPlan.restartServices).toEqual(["gateway", "naru"]);
+    const beforeGateway = runtime.operations.length;
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(gatewayPlan, gatewayPlan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(runtime.operations.slice(beforeGateway)).not.toContain(
+      `bootout:${gatewayPlan.layout.labels.host}`,
+    );
+    expect(readCurrentReceipt(gatewayPlan.layout)?.runtimeReleases?.host.buildId).toBe(
+      first.artifact.buildId,
+    );
+    const gatewayReceipt = readCurrentReceipt(gatewayPlan.layout);
+    if (gatewayReceipt === undefined) throw new Error("Gateway upgrade receipt is missing.");
+
+    const hostRoot = createArtifactFixture(fixture.root, "fixture-host-0003", {
+      packagedNodeRuntime: true,
+      fileOverrides: { "components/host/dist/main.js": "export const changed = true;\n" },
+    });
+    const hostIntent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot: hostRoot,
+      nodeExecutable: join(hostRoot, "runtime", "node", "bin", "node"),
+    });
+    const hostPlan = await planDistribution(hostIntent, "upgrade", runtime, {
+      probePorts: false,
+    });
+    expect(hostPlan.restartServices).toEqual(["host", "gateway", "naru"]);
+    const beforeHost = runtime.operations.length;
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(hostPlan, hostPlan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(runtime.operations.slice(beforeHost)).toContain(
+      `bootout:${hostPlan.layout.labels.host}`,
+    );
+    expect(readCurrentReceipt(hostPlan.layout)?.runtimeReleases).toBeUndefined();
+
+    const rollback = await planDistribution(hostIntent, "rollback", runtime, {
+      targetReceiptId: gatewayReceipt.receiptId,
+      probePorts: false,
+    });
+    expect(rollback.restartServices).toEqual(["host", "gateway", "naru"]);
+    expect(rollback.runtimeReleases.host.buildId).toBe(first.artifact.buildId);
+    expect(rollback.runtimeReleases.gateway.buildId).toBe("fixture-gateway-0002");
+    const result = await executeMaintenanceRequest(
+      stageMaintenanceHandoff(rollback, rollback.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(result.status).toBe("completed");
+    expect(readCurrentReceipt(rollback.layout)?.runtimeReleases).toMatchObject({
+      host: { buildId: first.artifact.buildId },
+      gateway: { buildId: "fixture-gateway-0002" },
+      naru: { buildId: "fixture-gateway-0002" },
+    });
+    expect(
+      (
+        await doctorDistribution(gatewayIntent, runtime, {
+          codexDoctorReport: {
+            checks: {
+              installation: { status: "ok" },
+              "auth.credentials": { status: "ok" },
+              "config.load": { status: "ok" },
+            },
+          },
+        })
+      ).status,
+    ).toBe("healthy");
+  });
+
+  it("restores a web-only upgrade failure without restarting the unaffected Host or Gateway", async () => {
+    const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+    const runtime = new RecoveringFailureRuntime();
+    const install = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(install, install.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    const first = readCurrentReceipt(install.layout);
+    if (first === undefined) throw new Error("Fixture install receipt is missing.");
+    const artifactRoot = createArtifactFixture(fixture.root, "fixture-web-fail-0002", {
+      packagedNodeRuntime: true,
+    });
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot,
+      nodeExecutable: join(artifactRoot, "runtime", "node", "bin", "node"),
+    });
+    const plan = await planDistribution(intent, "upgrade", runtime, { probePorts: false });
+    expect(plan.restartServices).toEqual(["naru"]);
+    runtime.failNextNaruReadiness();
+    const before = runtime.operations.length;
+    const result = await executeMaintenanceRequest(
+      stageMaintenanceHandoff(plan, plan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(result).toMatchObject({ status: "failed", recovery: "restored-previous" });
+    expect(readCurrentReceipt(plan.layout)?.receiptId).toBe(first.receiptId);
+    for (const service of ["host", "gateway"] as const) {
+      expect(runtime.operations.slice(before)).not.toContain(
+        `bootout:${plan.layout.labels[service]}`,
+      );
+      expect(runtime.operations.slice(before)).not.toContain(
+        `kickstart:${plan.layout.labels[service]}`,
+      );
+    }
+    expect(runtime.operations.slice(before)).toContain(`kickstart:${plan.layout.labels.naru}`);
   });
 
   it("permits only a settings-preserving legacy external-to-packaged runtime upgrade", async () => {

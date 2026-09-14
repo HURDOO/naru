@@ -130,6 +130,27 @@ ownership과 integration gate를 지킨다.
   재사용하되 그 통과를 실기기 인수로 간주하지 않는다.
 - lane: Mobile UI
 
+### T57. Workstation upgrade의 서비스별 재시작
+
+- [x] 새 artifact에서 실제로 바뀐 runtime과 설정만 재시작한다. 웹 자산만 바뀐 upgrade에서는
+      Naru만 재시작하고 Host PTY와 Gateway 연결을 유지한다.
+- 완료 조건: plan이 정확한 재시작 범위와 유지할 서비스별 불변 릴리스를 승인 digest에 묶는다.
+  maintenance·receipt·doctor·status·실패 복구가 혼합 릴리스 상태를 일관되게 다루고, 기존
+  receipt는 기존 단일 릴리스 의미로 계속 읽는다. Host/Gateway/Naru 변경 및 후속 upgrade·rollback
+  fixture에서 재시작 범위와 단일 controller reconnect를 확인한다.
+- 선행 조건: Workstation v0 distribution과 T52 병합. 운영 upgrade는 새 artifact와 fresh plan의
+  별도 승인 뒤 수행한다.
+- lane: Distribution
+- 검증(2026-09-15, Node 24·격리 fixture): 웹-only upgrade의 `restartServices=[naru]`, 이전
+  Host/Gateway release pin·launchd definition·PTY 보존, Gateway payload 변경 시 Gateway/Naru,
+  Host payload 변경 시 세 runtime 재시작을 확인했다. 혼합 pin receipt의 후속 upgrade·rollback,
+  status/doctor와 Naru readiness 실패 복구에서 Host/Gateway 무재시작을 검증했다. 전체 단위
+  728건(5건 건너뜀), distribution 67건, operations 64건, production smoke 1건과 제어권
+  전환·Host 요청 E2E 2건, format·lint·typecheck·build가 통과했다. 현재 운영 릴리스와 T52
+  artifact의 read-only 비교에서도 web payload만 달랐고 새 계획 코드는 Naru만 재시작하도록
+  선택했다. 기존 운영 계획 digest는 무효이며, 실제 배포는 새 committed artifact와 fresh plan의
+  승인 경계에 남긴다.
+
 ### 기타 backlog
 
 - [x] T29 모바일 prompt·image input 완성

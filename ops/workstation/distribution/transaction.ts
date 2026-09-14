@@ -28,11 +28,14 @@ import {
 import {
   installVerifiedArtifact,
   verifyDistributionArtifact,
+  type DistributionArtifactManifestV1,
   type VerifiedDistributionArtifact,
 } from "./artifact.js";
 import {
   createInstanceConfiguration,
+  createRuntimeConfiguration,
   type GeneratedInstanceConfiguration,
+  type RuntimeReleaseSelection,
 } from "./configuration.js";
 import { installOrUpdateInstanceCredentials } from "./credentials.js";
 import {
@@ -123,6 +126,8 @@ export interface InstallationReceiptV1 {
   readonly supersedesReceiptId?: string;
   readonly appliedAt: string;
   readonly artifact: DistributionArtifactSummary;
+  /** Absent on older receipts: all three services use `artifact`. */
+  readonly runtimeReleases?: RuntimeReleaseSelection;
   readonly intent: WorkstationInstallationIntent;
   readonly privateIngressIntentDigest?: string;
   readonly sourceCommit?: string;
@@ -149,6 +154,8 @@ export interface DistributionPlan {
   readonly privateIngressIntentDigest?: string;
   readonly sourceTransition?: OperatorSourceTransitionPlan;
   readonly artifact: DistributionArtifactSummary;
+  readonly runtimeReleases: RuntimeReleaseSelection;
+  readonly restartServices: readonly RuntimeServiceName[];
   readonly layout: WorkstationInstanceLayout;
   readonly currentReceipt?: InstallationReceiptV1;
   readonly rollbackReceipt?: InstallationReceiptV1;
@@ -246,12 +253,30 @@ export async function planDistribution(
   if (layout.namespace !== requestedLayout.namespace) {
     throw new Error("Rollback receipt escaped the requested Workstation instance namespace.");
   }
-  const configuration = createInstanceConfiguration(targetIntent, artifact.summary, layout);
+  const runtimeReleases = selectRuntimeReleases(
+    operation,
+    currentReceipt,
+    rollbackReceipt,
+    artifact,
+    layout,
+  );
+  const configuration = createRuntimeConfiguration(
+    targetIntent,
+    artifact.summary,
+    layout,
+    runtimeReleases,
+  );
   const configurationDigests = configurationDigest(
     targetIntent,
     artifact.summary,
     layout,
     configuration,
+  );
+  const restartServices = changedRuntimeServices(
+    operation,
+    currentReceipt,
+    configurationDigests,
+    runtimeReleases,
   );
   const privateIngressIntentDigest = isPrivateIngressInstallationIntent(targetIntent)
     ? await digestPrivateIngressIntentV0(targetIntent.ingress)
@@ -382,6 +407,13 @@ export async function planDistribution(
 
   checks.push(operationCheck(operation, currentReceipt, rollbackReceipt, artifact, targetIntent));
   checks.push({
+    id: "runtime.restart-scope",
+    status: "ok",
+    expected: "restart only services selected from verified runtime releases and configuration",
+    actual: restartServices.join(","),
+    owner: "package",
+  });
+  checks.push({
     id: "origin.single-source",
     status: "ok",
     expected: "one exact HTTPS Origin for Gateway, RP ID, Naru, ingress, PWA and Push",
@@ -409,12 +441,18 @@ export async function planDistribution(
     privateIngressPreflight?.stateFingerprint,
     listenerStateFingerprint,
   );
-  const actions = createActions(operation, layout, targetIntent, originTransition);
+  const actions = createActions(operation, layout, targetIntent, originTransition, restartServices);
   const approvalBoundaries = [
     "This plan does not approve launchd install/start; the mutation command requires this exact digest.",
     "Tailscale Serve/listener apply is a separate approved transaction after local readiness.",
     "Owner passkey bootstrap, notification permission, and Codex hook trust stay user-controlled.",
     "Current com.naru.agent/com.naru.maintenance and production data are outside this package boundary.",
+    ...(runtimeReleases.host.manifestDigest !== artifact.summary.manifestDigest ||
+    runtimeReleases.gateway.manifestDigest !== artifact.summary.manifestDigest
+      ? [
+          "Unchanged Host/Gateway services stay pinned to their previous verified immutable releases; preserve those releases until a later approved plan promotes them.",
+        ]
+      : []),
   ];
   const status: DistributionPlanStatus = checks.some(
     (check) => check.status === "blocked" || check.status === "unavailable",
@@ -439,6 +477,8 @@ export async function planDistribution(
     ...(privateIngressIntentDigest === undefined ? {} : { privateIngressIntentDigest }),
     ...(sourceTransition === undefined ? {} : { sourceTransition }),
     artifact: artifact.summary,
+    runtimeReleases,
+    restartServices,
     layout,
     ...(currentReceipt === undefined ? {} : { currentReceipt }),
     ...(rollbackReceipt === undefined ? {} : { rollbackReceipt }),
@@ -469,6 +509,17 @@ function approvalDigest(core: Omit<DistributionPlan, "planDigest">): string {
     requestedIntent: canonicalIntent(core.targetIntent),
     targetIntent: canonicalIntent(core.targetIntent),
     artifact: { ...core.artifact, root: "<verified-artifact-transport>" },
+    runtimeReleases: Object.fromEntries(
+      RUNTIME_SERVICE_NAMES.map((service) => {
+        const release = core.runtimeReleases[service];
+        return [
+          service,
+          release.manifestDigest === core.artifact.manifestDigest
+            ? { ...release, root: "<verified-artifact-transport>" }
+            : release,
+        ];
+      }),
+    ),
     checks: core.checks.map((check) => ({
       id: check.id,
       status: check.status,
@@ -590,6 +641,7 @@ export async function executeMaintenanceRequest(
   let plan: DistributionPlan | undefined;
   let snapshots: readonly FileSnapshot[] = [];
   let runtimeConfigurationWritten = false;
+  let runtimeRestartStarted = false;
   try {
     plan = await planDistribution(normalized.intent, normalized.operation, runtime, {
       ...(normalized.targetReceiptId === undefined
@@ -633,10 +685,11 @@ export async function executeMaintenanceRequest(
     });
 
     currentResult = updateStage(plan.layout, currentResult, "write-private-configuration");
-    const configuration = createInstanceConfiguration(
+    const configuration = createRuntimeConfiguration(
       plan.targetIntent,
       installedArtifact.summary,
       plan.layout,
+      plan.runtimeReleases,
     );
     installOrUpdateInstanceCredentials(plan.layout, configuration.naruEnvironment, {
       localSessionCli: configuration.localSessionCli !== undefined,
@@ -645,9 +698,10 @@ export async function executeMaintenanceRequest(
     runtimeConfigurationWritten = true;
 
     currentResult = updateStage(plan.layout, currentResult, "restart-runtime-topology");
-    const services = changedRuntimeServices(plan);
+    const services = plan.restartServices;
     const activeLayout = plan.layout;
     if (plan.currentReceipt !== undefined) {
+      runtimeRestartStarted = true;
       stopRuntimeTopology(runtime, activeLayout, [...services].reverse());
     }
     await startRuntimeTopology(
@@ -698,9 +752,14 @@ export async function executeMaintenanceRequest(
           plan.currentReceipt.intent,
           plan.currentReceipt.artifact,
         );
-        await startRuntimeTopology(runtime, previousLayout, (keys) =>
-          writeVerifierKeys(previousLayout, keys),
-        );
+        if (runtimeRestartStarted) {
+          await startRuntimeTopology(
+            runtime,
+            previousLayout,
+            (keys) => writeVerifierKeys(previousLayout, keys),
+            plan.restartServices,
+          );
+        }
         recovery = "restored-previous";
       } catch {
         recovery = "manual-required";
@@ -834,6 +893,10 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
     throw new Error("Private ingress receipt source commit is invalid.");
   }
   const artifact = parseArtifactSummary(value.artifact);
+  const runtimeReleases =
+    value.runtimeReleases === undefined
+      ? undefined
+      : parseRuntimeReleaseSelection(value.runtimeReleases);
   const configurationDigests = parseConfigurationDigests(value.configurationDigests);
   const webRelease = parseWebReceiptShape(value.webRelease);
   const labels = parseLabels(value.labels);
@@ -854,6 +917,7 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
       : {}),
     appliedAt: value.appliedAt,
     artifact,
+    ...(runtimeReleases === undefined ? {} : { runtimeReleases }),
     intent,
     ...(isPrivateIngressInstallationIntent(intent)
       ? { privateIngressIntentDigest: value.privateIngressIntentDigest as string }
@@ -1039,6 +1103,7 @@ function createActions(
   layout: WorkstationInstanceLayout,
   intent: WorkstationInstallationIntent,
   transition: OriginTransition,
+  restartServices: readonly RuntimeServiceName[],
 ): readonly DistributionAction[] {
   return [
     {
@@ -1074,8 +1139,8 @@ function createActions(
       id: "services.runtime",
       phase: "service",
       mutation: "service",
-      target: `${layout.labels.host}, ${layout.labels.gateway}, ${layout.labels.naru}`,
-      rollback: "bootout exact package labels and restart the previous immutable receipt",
+      target: restartServices.map((service) => layout.labels[service]).join(", "),
+      rollback: "restart only the affected labels from the previous immutable receipt",
     },
     {
       id: "network.separate-approval",
@@ -1150,33 +1215,152 @@ function serviceStateMap(
   ) as unknown as Readonly<Record<ServiceName, ServiceRuntimeState>>;
 }
 
-function changedRuntimeServices(plan: DistributionPlan): readonly RuntimeServiceName[] {
-  const current = plan.currentReceipt;
-  if (current === undefined || plan.operation === "upgrade") return [...RUNTIME_SERVICE_NAMES];
+function changedRuntimeServices(
+  operation: DistributionOperation,
+  current: InstallationReceiptV1 | undefined,
+  configurationDigests: DistributionConfigurationDigests,
+  runtimeReleases: RuntimeReleaseSelection,
+): readonly RuntimeServiceName[] {
+  if (current === undefined || operation === "rollback") return [...RUNTIME_SERVICE_NAMES];
+  if (operation === "upgrade") {
+    const previous = receiptRuntimeReleases(current);
+    if (previous.host.manifestDigest !== runtimeReleases.host.manifestDigest) {
+      return [...RUNTIME_SERVICE_NAMES];
+    }
+    if (previous.gateway.manifestDigest !== runtimeReleases.gateway.manifestDigest) {
+      return ["gateway", "naru"];
+    }
+    // Every upgrade renders a new immutable web release and changes NARU_WEB_DIST.
+    return ["naru"];
+  }
   const services = new Set<RuntimeServiceName>();
   if (
-    current.configurationDigests.host !== plan.configurationDigests.host ||
-    current.configurationDigests.launchAgents.host !== plan.configurationDigests.launchAgents.host
+    current.configurationDigests.host !== configurationDigests.host ||
+    current.configurationDigests.launchAgents.host !== configurationDigests.launchAgents.host
   ) {
     services.add("host");
   }
   if (
-    current.configurationDigests.gateway !== plan.configurationDigests.gateway ||
-    current.configurationDigests.launchAgents.gateway !==
-      plan.configurationDigests.launchAgents.gateway
+    current.configurationDigests.gateway !== configurationDigests.gateway ||
+    current.configurationDigests.launchAgents.gateway !== configurationDigests.launchAgents.gateway
   ) {
     services.add("gateway");
   }
   if (
-    current.configurationDigests.naruEnvironment !== plan.configurationDigests.naruEnvironment ||
-    current.configurationDigests.webIdentity !== plan.configurationDigests.webIdentity ||
-    current.configurationDigests.launchAgents.naru !== plan.configurationDigests.launchAgents.naru
+    current.configurationDigests.naruEnvironment !== configurationDigests.naruEnvironment ||
+    current.configurationDigests.webIdentity !== configurationDigests.webIdentity ||
+    current.configurationDigests.launchAgents.naru !== configurationDigests.launchAgents.naru
   ) {
     services.add("naru");
   }
   if (services.has("host")) return [...RUNTIME_SERVICE_NAMES];
   if (services.has("gateway")) services.add("naru");
   return RUNTIME_SERVICE_NAMES.filter((service) => services.has(service));
+}
+
+function selectRuntimeReleases(
+  operation: DistributionOperation,
+  current: InstallationReceiptV1 | undefined,
+  rollback: InstallationReceiptV1 | undefined,
+  candidate: VerifiedDistributionArtifact,
+  layout: WorkstationInstanceLayout,
+): RuntimeReleaseSelection {
+  if (rollback !== undefined) return verifyReceiptRuntimeReleases(rollback, layout);
+  const allCandidate = {
+    host: candidate.summary,
+    gateway: candidate.summary,
+    naru: candidate.summary,
+  };
+  if (operation !== "upgrade" || current === undefined) return allCandidate;
+  const previous = verifyReceiptRuntimeReleases(current, layout);
+  const hostManifest = verifyDistributionArtifact(previous.host.root).manifest;
+  const gatewayManifest = verifyDistributionArtifact(previous.gateway.root).manifest;
+  const hostChanged =
+    stableJson(previous.host.features) !== stableJson(candidate.summary.features) ||
+    artifactFilesChanged(hostManifest, candidate.manifest, [
+      "runtime/node/",
+      "components/host/",
+      "components/cli/",
+      // Host-owned Codex processes execute the Naru-packaged integration payload.
+      "components/naru/",
+    ]) ||
+    artifactHasUnclassifiedChanges(hostManifest, candidate.manifest);
+  const gatewayChanged = artifactFilesChanged(gatewayManifest, candidate.manifest, [
+    "runtime/node/",
+    "components/gateway/",
+  ]);
+  return {
+    host: hostChanged ? candidate.summary : previous.host,
+    gateway: hostChanged || gatewayChanged ? candidate.summary : previous.gateway,
+    naru: candidate.summary,
+  };
+}
+
+function artifactHasUnclassifiedChanges(
+  previous: DistributionArtifactManifestV1,
+  candidate: DistributionArtifactManifestV1,
+): boolean {
+  const previousFiles = new Map(previous.files.map((file) => [file.path, file]));
+  const candidateFiles = new Map(candidate.files.map((file) => [file.path, file]));
+  const knownPrefixes = [
+    "runtime/node/",
+    "components/host/",
+    "components/gateway/",
+    "components/naru/",
+    "components/cli/",
+    "web-base/",
+    "bin/",
+  ];
+  const knownRootFiles = new Set(["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]);
+  for (const path of new Set([...previousFiles.keys(), ...candidateFiles.keys()])) {
+    if (stableJson(previousFiles.get(path)) === stableJson(candidateFiles.get(path))) continue;
+    if (knownRootFiles.has(path) || knownPrefixes.some((prefix) => path.startsWith(prefix))) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function artifactFilesChanged(
+  previous: DistributionArtifactManifestV1,
+  candidate: DistributionArtifactManifestV1,
+  prefixes: readonly string[],
+): boolean {
+  const selected = (manifest: DistributionArtifactManifestV1): string =>
+    stableJson(
+      manifest.files.filter((file) => prefixes.some((prefix) => file.path.startsWith(prefix))),
+    );
+  return selected(previous) !== selected(candidate);
+}
+
+function receiptRuntimeReleases(receipt: InstallationReceiptV1): RuntimeReleaseSelection {
+  return (
+    receipt.runtimeReleases ?? {
+      host: receipt.artifact,
+      gateway: receipt.artifact,
+      naru: receipt.artifact,
+    }
+  );
+}
+
+export function verifyReceiptRuntimeReleases(
+  receipt: InstallationReceiptV1,
+  layout: WorkstationInstanceLayout,
+): RuntimeReleaseSelection {
+  const releases = receiptRuntimeReleases(receipt);
+  for (const service of RUNTIME_SERVICE_NAMES) {
+    const pinned = releases[service];
+    if (pinned.root !== join(layout.directories.releases, pinned.buildId)) {
+      throw new Error("Runtime release pin escaped the managed immutable release directory.");
+    }
+    const verified = verifyDistributionArtifact(pinned.root);
+    assertApprovedArtifactIdentity(pinned, verified.summary);
+  }
+  if (releases.naru.manifestDigest !== receipt.artifact.manifestDigest) {
+    throw new Error("Naru runtime release pin does not match the ownership receipt artifact.");
+  }
+  return releases;
 }
 
 function writeGeneratedConfiguration(
@@ -1229,6 +1413,19 @@ function writeInstallationReceipt(
   now: Date,
 ): InstallationReceiptV1 {
   const current = plan.currentReceipt;
+  const installedArtifact = { ...artifact, root: plan.layout.releaseRoot };
+  const runtimeReleases = Object.fromEntries(
+    RUNTIME_SERVICE_NAMES.map((service) => {
+      const release = plan.runtimeReleases[service];
+      return [
+        service,
+        release.manifestDigest === artifact.manifestDigest ? installedArtifact : release,
+      ];
+    }),
+  ) as unknown as RuntimeReleaseSelection;
+  const mixedRuntime =
+    runtimeReleases.host.manifestDigest !== artifact.manifestDigest ||
+    runtimeReleases.gateway.manifestDigest !== artifact.manifestDigest;
   const receipt: InstallationReceiptV1 = {
     version: plan.targetIntent.version,
     taskId: distributionDocumentTaskId(plan.targetIntent),
@@ -1243,7 +1440,8 @@ function writeInstallationReceipt(
     stateFingerprint: plan.stateFingerprint,
     ...(current === undefined ? {} : { supersedesReceiptId: current.receiptId }),
     appliedAt: now.toISOString(),
-    artifact: { ...artifact, root: plan.layout.releaseRoot },
+    artifact: installedArtifact,
+    ...(mixedRuntime ? { runtimeReleases } : {}),
     intent: {
       ...plan.targetIntent,
       artifactRoot: plan.layout.releaseRoot,
@@ -1512,6 +1710,23 @@ function parseArtifactSummary(value: Record<string, unknown>): DistributionArtif
     ...(value.nodeRuntime === undefined
       ? {}
       : { nodeRuntime: parsePackagedNodeRuntime(value.nodeRuntime) }),
+  };
+}
+
+function parseRuntimeReleaseSelection(value: unknown): RuntimeReleaseSelection {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).sort().join(",") !== [...RUNTIME_SERVICE_NAMES].sort().join(",") ||
+    !isRecord(value.host) ||
+    !isRecord(value.gateway) ||
+    !isRecord(value.naru)
+  ) {
+    throw new Error("Receipt runtime release pins are invalid.");
+  }
+  return {
+    host: parseArtifactSummary(value.host),
+    gateway: parseArtifactSummary(value.gateway),
+    naru: parseArtifactSummary(value.naru),
   };
 }
 

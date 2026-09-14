@@ -20,6 +20,12 @@ export function redactDistributionPlan(plan: DistributionPlan): unknown {
       manifestDigest: plan.artifact.manifestDigest,
       payloadDigest: plan.artifact.payloadDigest,
     },
+    restartServices: plan.restartServices,
+    runtimeBuilds: {
+      host: plan.runtimeReleases.host.buildId,
+      gateway: plan.runtimeReleases.gateway.buildId,
+      naru: plan.runtimeReleases.naru.buildId,
+    },
     ingress: isPrivateIngressInstallationIntent(plan.targetIntent)
       ? redactPrivateIngressV0(plan.targetIntent.ingress)
       : { kind: plan.targetIntent.ingress.kind, profileId: "[redacted-profile]" },

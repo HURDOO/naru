@@ -151,8 +151,14 @@ destination, 설정과 actual state를 고정한다. receipt가 없으면 stage�
 
 start order는 Host readiness, Gateway readiness와 public verifier-key file, Naru readiness 순서다.
 reconfigure는 바뀐 downstream만 restart하되 Host 설정이 바뀌면 세 runtime 모두 다시 시작한다.
+upgrade plan은 `restartServices`와 `runtimeBuilds`를 redacted 출력에 포함한다. 검증된 web payload만
+바뀐 upgrade는 Naru만 재시작하며, Host/Gateway는 이전 immutable release와 그 configuration 및
+launchd definition을 유지한다. Host가 실행하는 Codex integration payload는 Host 의존성에 포함한다.
+Gateway가 바뀌면 Gateway·Naru, Host가 바뀌면 세 runtime을 재시작한다. Additive receipt
+`runtimeReleases`가 혼합 release pin을 기록하고, 이 필드가 없는 기존 receipt는 단일 artifact pin으로
+읽는다. 이후 plan·doctor·status는 모든 pin을 검증하며, rollback은 대상 receipt의 pin을 복원한다.
 최초 설치 readiness 실패는 새 runtime과 RunAtLoad plist를 제거하고, 기존 installation의 실패는
-mutable 설정을 복원한 뒤 이전 receipt topology를 다시 시작한다.
+mutable 설정을 복원한 뒤 실제 중지한 서비스만 이전 receipt topology로 다시 시작한다.
 
 실제 second-user/PWA/Push/private-ingress 인수는 production과 분리된 instance에서 수행한다. 최소한
 artifact/receipt digest, exact component readiness, browser-to-PTY chain, restart/rollback, PWA update와

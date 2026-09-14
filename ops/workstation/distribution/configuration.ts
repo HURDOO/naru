@@ -9,7 +9,7 @@ import type {
   WorkstationInstallationIntent,
   WorkstationInstanceLayout,
 } from "./model.js";
-import { isPrivateIngressInstallationIntent } from "./model.js";
+import { createInstanceLayout, isPrivateIngressInstallationIntent } from "./model.js";
 import { stableJson } from "./model.js";
 
 const NARU_APP_CAPABILITIES = [
@@ -50,6 +50,56 @@ export interface GeneratedInstanceConfiguration {
   readonly naruEnvironment: Readonly<Record<string, string>>;
   readonly localSessionCli?: LocalSessionCliConfiguration;
   readonly launchAgents: Readonly<Record<ServiceName, string>>;
+}
+
+export interface RuntimeReleaseSelection {
+  readonly host: DistributionArtifactSummary;
+  readonly gateway: DistributionArtifactSummary;
+  readonly naru: DistributionArtifactSummary;
+}
+
+export function createRuntimeConfiguration(
+  intent: WorkstationInstallationIntent,
+  artifact: DistributionArtifactSummary,
+  layout: WorkstationInstanceLayout,
+  releases: RuntimeReleaseSelection,
+): GeneratedInstanceConfiguration {
+  const current = createInstanceConfiguration(intent, artifact, layout);
+  if (
+    releases.host.manifestDigest === artifact.manifestDigest &&
+    releases.gateway.manifestDigest === artifact.manifestDigest
+  ) {
+    return current;
+  }
+  const hostLayout = createInstanceLayout(intent, releases.host);
+  const gatewayLayout = createInstanceLayout(intent, releases.gateway);
+  const host = createInstanceConfiguration(intent, releases.host, hostLayout);
+  const gateway = createInstanceConfiguration(intent, releases.gateway, gatewayLayout);
+  const baseInstance = { ...current.instance };
+  delete baseInstance.localSessionCli;
+  return {
+    host: host.host,
+    gateway: gateway.gateway,
+    naruEnvironment: current.naruEnvironment,
+    instance: {
+      ...baseInstance,
+      runtimeServices: {
+        host: { buildId: releases.host.buildId, nodeExecutable: hostLayout.runtime.nodeExecutable },
+        gateway: {
+          buildId: releases.gateway.buildId,
+          nodeExecutable: gatewayLayout.runtime.nodeExecutable,
+        },
+        naru: { buildId: artifact.buildId, nodeExecutable: layout.runtime.nodeExecutable },
+      },
+      ...(host.localSessionCli === undefined ? {} : { localSessionCli: host.localSessionCli }),
+    },
+    ...(host.localSessionCli === undefined ? {} : { localSessionCli: host.localSessionCli }),
+    launchAgents: {
+      ...current.launchAgents,
+      host: host.launchAgents.host,
+      gateway: gateway.launchAgents.gateway,
+    },
+  };
 }
 
 export function createInstanceConfiguration(
