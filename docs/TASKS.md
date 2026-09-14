@@ -196,6 +196,26 @@ ownership과 integration gate를 지킨다.
     동작에 영향을 주는 별도 설계·실기기 검증이 필요하다.
   - 선행 조건: PI-01, 다른 Mobile UI lane 작업과 직렬
 - [ ] T40 Docs/Tasks view state 보존
-- [ ] T44 모바일 output 선택·복사
+- [-] T44 모바일 output 선택·복사
+  - 모바일의 Codex·shell Pane에서 출력 텍스트를 길게 눌러 선택하고 범위를 조정해 명시적인
+    복사 동작으로 일반 텍스트를 clipboard에 쓴다. 긴 누르기를 가로채는 브라우저를 위해
+    선택 도구 진입점도 제공한다. 입력에 초점이 있을 때의 긴 누르기는 기존 붙여넣기에
+    남겨두고 선택 도구를 사용한다. 보기 전용 화면에서도 선택·복사할 수 있다.
+  - 빈 선택과 clipboard 거부를 분명히 알리고, 선택 내용은 저장·로그·Host 전송하지 않는다.
+    기존 스크롤·스크롤바·한글 IME·이미지 붙여넣기·focus·reconnect·controller handoff를
+    보존한다. renderer 교체나 column reflow 뒤에는 무효 선택을 복사하지 않는다.
+  - 완료 조건: Node 24의 unit·터치 E2E에서 정상·빈 상태·오류, 1440px·768px·360px와 동적
+    viewport를 확인한다. Samsung Internet 실기기 브라우저/PWA 인수는 fixture 결과와
+    구분해 기록한다. 선행 조건 PI-01; 다른 Mobile UI lane 작업과 직렬.
+  - 로컬 검증(2026-09-15, Node 24.19.0·격리 Chrome fixture): 길게 누르기 단어 선택,
+    핸들·키보드 범위 조정, 명시적 선택 도구, Codex·shell·observer 복사와 빈 선택·clipboard
+    거부를 확인했다. 입력 focus 중 긴 누르기와 기존 스크롤·이미지 붙여넣기·한글 IME,
+    1440px·768px·360px, 동적 viewport, reconnect·제어권 전환 회귀를 통과했다. 전체 unit
+    731건 통과·5건 건너뜀, E2E 22건 통과, format·lint·typecheck·build와 공개 scan
+    495 files·665 objects·0 findings. 로컬 shell에 상속된 실제 hook 환경은 검증 명령에서
+    제거했다. 기존 작업 트리의 변경을 보존하려고 별도 worktree에서 수행했다.
+  - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
+    붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
+    실기기 인수로 간주하지 않는다. main integration gate와 운영 반영도 별도다.
 - [ ] T46/T48 모바일 helper focus·draft lifecycle
 - [ ] T47/T37/T38/T39는 Private Ingress cutover 뒤 재검토

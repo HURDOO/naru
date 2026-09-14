@@ -1,4 +1,7 @@
+import type { TerminalTouchSelectionController } from "./terminal-touch-selection";
+
 const TOUCH_SCROLL_ACTIVATION_PX = 8;
+const TOUCH_SELECTION_HOLD_MS = 500;
 
 export interface TerminalTouchScrollGesture {
   pointerId: number;
@@ -126,10 +129,18 @@ export function lineForTerminalScrollbarTouchDrag(
 export function attachTerminalTouchScroll(
   screen: HTMLElement,
   terminal: ScrollableTerminal,
+  selection?: TerminalTouchSelectionController,
 ): () => void {
   let gesture: TerminalTouchScrollGesture | null = null;
+  let selecting = false;
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   screen.classList.add("naru-touch-scroll");
   const detachScrollbarTouchDrag = attachTerminalScrollbarTouchDrag(screen, terminal);
+
+  const clearLongPress = (): void => {
+    if (longPressTimer !== null) clearTimeout(longPressTimer);
+    longPressTimer = null;
+  };
 
   const releasePointer = (pointerId: number): void => {
     try {
@@ -148,6 +159,18 @@ export function attachTerminalTouchScroll(
       return;
     }
     gesture = beginTerminalTouchScroll(event.pointerId, event.clientX, event.clientY);
+    selecting = selection?.active ?? false;
+    if (selecting) {
+      selection?.begin(event.clientX, event.clientY);
+    } else if (selection?.canLongPress()) {
+      clearLongPress();
+      longPressTimer = setTimeout(() => {
+        if (!gesture || gesture.pointerId !== event.pointerId || gesture.axis !== "pending") return;
+        longPressTimer = null;
+        selecting = true;
+        selection.begin(gesture.startX, gesture.startY, true);
+      }, TOUCH_SELECTION_HOLD_MS);
+    }
     try {
       screen.setPointerCapture(event.pointerId);
     } catch {
@@ -156,7 +179,13 @@ export function attachTerminalTouchScroll(
   };
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (!gesture) return;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (selecting) {
+      if (event.cancelable) event.preventDefault();
+      event.stopPropagation();
+      selection?.move(event.clientX, event.clientY);
+      return;
+    }
     const lineHeight = screen.getBoundingClientRect().height / Math.max(terminal.rows, 1);
     const update = updateTerminalTouchScroll(
       gesture,
@@ -166,6 +195,7 @@ export function attachTerminalTouchScroll(
       lineHeight,
     );
     gesture = update.gesture;
+    if (gesture.axis !== "pending") clearLongPress();
     if (!update.scrolling) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
@@ -174,9 +204,18 @@ export function attachTerminalTouchScroll(
 
   const finishPointer = (event: PointerEvent, canceled: boolean): void => {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
+    clearLongPress();
     const wasScrolling = gesture.axis === "vertical";
+    const wasSelecting = selecting;
     releasePointer(event.pointerId);
     gesture = null;
+    selecting = false;
+    if (wasSelecting) {
+      selection?.finish();
+      if (event.cancelable) event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (wasScrolling) {
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
@@ -188,7 +227,12 @@ export function attachTerminalTouchScroll(
   const onPointerUp = (event: PointerEvent): void => finishPointer(event, false);
   const onPointerCancel = (event: PointerEvent): void => finishPointer(event, true);
   const onLostPointerCapture = (event: PointerEvent): void => {
-    if (gesture?.pointerId === event.pointerId) gesture = null;
+    if (gesture?.pointerId === event.pointerId) {
+      clearLongPress();
+      if (selecting) selection?.finish();
+      gesture = null;
+      selecting = false;
+    }
   };
 
   screen.addEventListener("pointerdown", onPointerDown);
@@ -198,6 +242,7 @@ export function attachTerminalTouchScroll(
   screen.addEventListener("lostpointercapture", onLostPointerCapture);
 
   return () => {
+    clearLongPress();
     detachScrollbarTouchDrag();
     if (gesture) releasePointer(gesture.pointerId);
     gesture = null;

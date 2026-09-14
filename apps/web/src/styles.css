@@ -1721,6 +1721,43 @@ button:disabled {
   touch-action: pan-x pinch-zoom;
 }
 
+.terminal-host .xterm-screen.naru-touch-select {
+  touch-action: none;
+}
+
+.terminal-selection-handles {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  pointer-events: none;
+}
+
+.terminal-selection-handles[hidden],
+.terminal-selection-handle[hidden] {
+  display: none;
+}
+
+.terminal-selection-handle {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  transform: translate(-50%, -15%);
+  border: 2px solid #e9f5fc;
+  border-radius: 50%;
+  background: #3483a5;
+  box-shadow: 0 2px 8px #000a;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.terminal-selection-handle:focus-visible {
+  outline: 2px solid #f28a55;
+  outline-offset: 3px;
+}
+
 .terminal-host .xterm-scrollable-element > .scrollbar.vertical > .slider {
   border-radius: 999px;
   background: #4a565d;

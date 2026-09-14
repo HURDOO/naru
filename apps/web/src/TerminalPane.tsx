@@ -50,6 +50,10 @@ import {
   type TerminalResizeScheduler,
 } from "./terminal-resize";
 import { attachTerminalTouchScroll } from "./terminal-touch-scroll";
+import {
+  attachTerminalTouchSelection,
+  type TerminalTouchSelectionController,
+} from "./terminal-touch-selection";
 import { KEYBOARD_HEIGHT_DROP_PX, KEYBOARD_WIDTH_JITTER_PX } from "./workspace-view";
 
 interface TerminalPaneProps {
@@ -142,6 +146,7 @@ export function TerminalPane({
   const connectionRef = useRef(connection);
   const ctrlArmedRef = useRef(false);
   const clipboardBusyRef = useRef(false);
+  const touchSelectionRef = useRef<TerminalTouchSelectionController | null>(null);
   const composeInputRef = useRef<HTMLTextAreaElement>(null);
   const mobileImeRef = useRef<MobileTerminalImeBridge | null>(null);
   const keyboardHelpId = `${pane.id}-terminal-keyboard-help`;
@@ -159,6 +164,7 @@ export function TerminalPane({
     kind: "status" | "error";
     message: string;
   } | null>(null);
+  const [touchSelectionActive, setTouchSelectionActive] = useState(false);
   const [paneControlSource, setPaneControlSource] = useState<{
     connection: TerminalConnection | null;
     paneId: string;
@@ -235,6 +241,44 @@ export function TerminalPane({
       if (next) composeInputRef.current?.focus();
       else terminalRef.current?.focus();
     });
+  };
+
+  const copySelectedOutput = (): void => {
+    const selection = touchSelectionRef.current;
+    const value = selection?.getSelection() ?? "";
+    if (!selection || !value) {
+      setClipboardNotice({ kind: "error", message: "복사할 터미널 출력을 먼저 선택해 주세요." });
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setClipboardNotice({
+        kind: "error",
+        message: "이 브라우저에서 클립보드 쓰기를 사용할 수 없습니다.",
+      });
+      return;
+    }
+    try {
+      void navigator.clipboard.writeText(value).then(
+        () => {
+          if (touchSelectionRef.current !== selection) return;
+          selection.cancel();
+          setClipboardNotice({ kind: "status", message: "선택한 출력을 복사했습니다." });
+        },
+        () => {
+          if (touchSelectionRef.current === selection) {
+            setClipboardNotice({
+              kind: "error",
+              message: "클립보드에 복사하지 못했습니다. 브라우저 권한을 확인해 주세요.",
+            });
+          }
+        },
+      );
+    } catch {
+      setClipboardNotice({
+        kind: "error",
+        message: "클립보드에 복사하지 못했습니다. 브라우저 권한을 확인해 주세요.",
+      });
+    }
   };
 
   const submitComposedText = (event: FormEvent<HTMLFormElement>): void => {
@@ -517,8 +561,16 @@ export function TerminalPane({
       });
 
       const terminalScreen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
+      const touchSelection = terminalScreen
+        ? attachTerminalTouchSelection(terminalScreen, terminal, (active) => {
+            if (!disposed && touchSelectionRef.current === touchSelection) {
+              setTouchSelectionActive(active);
+            }
+          })
+        : null;
+      touchSelectionRef.current = touchSelection;
       const detachTouchScroll = terminalScreen
-        ? attachTerminalTouchScroll(terminalScreen, terminal)
+        ? attachTerminalTouchScroll(terminalScreen, terminal, touchSelection ?? undefined)
         : () => undefined;
       const onData = terminal.onData((data) => {
         if (!mobileIme || mobileIme.allowNativeData(data)) sendTerminalData(data);
@@ -571,6 +623,7 @@ export function TerminalPane({
           resolution.keyboardSession || (leavingKeyboardSession && !columnsChanged);
         const freezeThisResize = columnsChanged || !keyboardBoundary;
         if (!columnsChanged && !rowsChanged && !refresh) return;
+        if (columnsChanged) touchSelection?.cancel();
 
         // Preserve the authoritative full-buffer viewport instead of sampling xterm while its
         // host changes size. A compact restore preview is the exception: its small local buffer
@@ -678,6 +731,11 @@ export function TerminalPane({
           onScroll.dispose();
           onRender.dispose();
           detachTouchScroll();
+          touchSelection?.dispose();
+          if (touchSelectionRef.current === touchSelection) {
+            touchSelectionRef.current = null;
+            if (!disposed) setTouchSelectionActive(false);
+          }
           terminal.dispose();
           if (terminalRef.current === terminal) terminalRef.current = null;
         },
@@ -779,6 +837,7 @@ export function TerminalPane({
         return;
       }
       if (frame.type === "pane.snapshot") {
+        touchSelectionRef.current?.cancel();
         if (runtimeIdRef.current !== frame.runtimeId) mobileIme?.cancelPending();
         disposeCandidate();
         preservedRestoreRef.current = null;
@@ -814,6 +873,7 @@ export function TerminalPane({
         const displayedSequence = latestSequenceRef.current;
         const sameRuntime = runtimeIdRef.current === frame.runtimeId;
         const preservesMountedRuntime = sameRuntime && frame.sequence <= displayedSequence;
+        if (!preservesMountedRuntime) touchSelectionRef.current?.cancel();
         if (!preservesMountedRuntime) mobileIme?.cancelPending();
         preservedRestoreRef.current = preservesMountedRuntime
           ? {
@@ -1000,6 +1060,7 @@ export function TerminalPane({
       }
 
       disposeCandidate();
+      touchSelectionRef.current?.cancel();
       preservedRestoreRef.current = null;
       restoreIdRef.current = null;
       previewAnchorRef.current = null;
@@ -1136,6 +1197,10 @@ export function TerminalPane({
     if (inputDisabled) mobileImeRef.current?.cancelPending();
   }, [inputDisabled]);
 
+  useEffect(() => {
+    if (!active) touchSelectionRef.current?.cancel();
+  }, [active]);
+
   const restart = async (): Promise<void> => {
     setBusy(true);
     try {
@@ -1255,7 +1320,8 @@ export function TerminalPane({
       </header>
       <p id={keyboardHelpId} className="sr-only">
         터미널에서 Shift+Tab을 누르면 Pane 도구 모음으로 초점을 이동합니다. 모바일에서는 아래 특수키
-        도구와 한글 보조 입력을 사용할 수 있습니다.
+        도구와 한글 보조 입력을 사용할 수 있습니다. 출력을 길게 누르거나 선택 도구로 범위를 지정한
+        뒤 복사할 수 있습니다.
       </p>
       <div
         className={`terminal-host ${controlsPane ? "is-controller" : "is-observer"}`}
@@ -1312,6 +1378,43 @@ export function TerminalPane({
         role="toolbar"
         aria-label={`${pane.title} 모바일 터미널 키`}
       >
+        <button
+          type="button"
+          className={touchSelectionActive ? "is-active" : ""}
+          aria-pressed={touchSelectionActive}
+          aria-label={`${pane.title} 출력 선택`}
+          onClick={() => {
+            if (touchSelectionActive) touchSelectionRef.current?.cancel();
+            else touchSelectionRef.current?.enter();
+          }}
+        >
+          선택
+        </button>
+        {touchSelectionActive && (
+          <>
+            <button
+              type="button"
+              aria-label={`${pane.title} 출력 전체 선택`}
+              onClick={() => touchSelectionRef.current?.selectAll()}
+            >
+              전체
+            </button>
+            <button
+              type="button"
+              aria-label={`${pane.title} 선택한 출력 복사`}
+              onClick={copySelectedOutput}
+            >
+              복사
+            </button>
+            <button
+              type="button"
+              aria-label={`${pane.title} 출력 선택 취소`}
+              onClick={() => touchSelectionRef.current?.cancel()}
+            >
+              취소
+            </button>
+          </>
+        )}
         <button
           type="button"
           className={ctrlArmed ? "is-active" : ""}

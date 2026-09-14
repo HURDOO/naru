@@ -1,0 +1,64 @@
+import type { Terminal } from "@xterm/xterm";
+import { describe, expect, it } from "vitest";
+import { touchBufferPoint, touchSelectionSpan, touchWordSpan } from "./terminal-touch-selection";
+
+describe("terminal touch selection", () => {
+  it("maps a touch to the visible absolute buffer cell and clamps screen edges", () => {
+    const bounds = { left: 10, top: 20, width: 100, height: 60 };
+
+    expect(touchBufferPoint(65, 65, bounds, 10, 3, 40)).toEqual({ column: 5, row: 42 });
+    expect(touchBufferPoint(-10, 0, bounds, 10, 3, 40)).toEqual({ column: 0, row: 40 });
+    expect(touchBufferPoint(500, 500, bounds, 10, 3, 40)).toEqual({ column: 9, row: 42 });
+  });
+
+  it("extends a seed across wrapped rows in either direction", () => {
+    const seed = { start: 43, end: 47 };
+
+    expect(touchSelectionSpan(seed, { column: 2, row: 6 }, 10)).toEqual({
+      start: 43,
+      end: 63,
+    });
+    expect(touchSelectionSpan(seed, { column: 8, row: 2 }, 10)).toEqual({
+      start: 28,
+      end: 47,
+    });
+    expect(touchSelectionSpan(seed, { column: 4, row: 4 }, 10)).toEqual(seed);
+  });
+
+  it("selects a Korean word by cell width and keeps an emoji intact", () => {
+    const cells = [
+      { chars: " ", width: 1 },
+      { chars: "한", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "글", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "_", width: 1 },
+      { chars: "A", width: 1 },
+      { chars: "😀", width: 2 },
+      { chars: "", width: 0 },
+      { chars: " ", width: 1 },
+    ];
+    const terminal = {
+      cols: 10,
+      buffer: {
+        active: {
+          getLine: (row: number) =>
+            row === 2
+              ? {
+                  getCell: (column: number) => {
+                    const cell = cells[column];
+                    return cell
+                      ? { getChars: () => cell.chars, getWidth: () => cell.width }
+                      : undefined;
+                  },
+                }
+              : undefined,
+        },
+      },
+    } as unknown as Pick<Terminal, "buffer" | "cols">;
+
+    expect(touchWordSpan(terminal, { column: 2, row: 2 })).toEqual({ start: 21, end: 27 });
+    expect(touchWordSpan(terminal, { column: 7, row: 2 })).toEqual({ start: 27, end: 29 });
+    expect(touchWordSpan(terminal, { column: 0, row: 2 })).toBeNull();
+  });
+});
