@@ -19,12 +19,37 @@ ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 
-### T52. 모바일 keyboard resize의 다중 freeze blink 제거
+### T52. Pane resize·로딩·유휴 상태의 blink와 입력 focus 유실 개선
 
-- [ ] T50의 style-preserving freeze를 유지하면서 한 keyboard session의 freeze/live 경계를 한 번 이하로
-      줄인다.
+- [>] 다음 우선 작업. 모바일 keyboard resize에 한정했던 범위를 일반 Pane resize, 초기 로딩과
+  유휴·연속 입력 상태까지 확장한다. 가장 먼저 반복 blink와 focus 유실로 입력이 끊기는 문제를
+  재현·해결하고, resize 시 blank/stun 체감 시간과 로딩 중 blink·간헐적 waterfall을 개선한다.
+- 사용자 보고(2026-09-14, T29·T53 배포 후): Pane resize 시 화면이 비거나 멈춘 듯한 blank/stun
+  상태가 너무 오래 지속된다. 로딩 중 blink가 많으며 waterfall도 간헐적으로 나타난다. 아무 조작을
+  하지 않아도 체감상 짧은 간격으로 Pane이 반복해서 깜빡이고 현재 입력 focus가 해제되어,
+  키보드 입력 중 다시 focus를 확인·복구해야 한다. 정확한 주기, 발생 기기·브라우저와 trigger는
+  아직 계측하지 않았고, T29·T53과의 인과관계나 각 증상의 공통 원인은 확인되지 않았다.
+- 조사·계측: idle, 연속 입력·한글 조합, 최초 로딩, Pane/split resize, keyboard 열기·닫기와
+  동적 viewport 전환을 나눠 재현한다. focus/blur, renderer 생성·교체, attach/restore,
+  reconnect·control generation, resize와 freeze/live 전환의 시점을 비교해 반복 trigger를 찾는다.
+  blank/stun 지속 시간, blink·waterfall 횟수와 focus 유실 횟수를 동일 조건의 수정 전후로 남기고,
+  성능 목표와 관찰 시간을 구현 전 정한다. 진단에는 terminal·입력 원문을 남기지 않는다.
+- 완료 조건:
+  - 안정된 연결·제어권에서 사용자 조작 없이 주기적 blink·renderer 교체·입력 focus 유실이
+    발생하지 않는다. 재현 주기보다 충분히 긴 유휴 관찰과 연속 입력에서 이를 확인한다.
+  - resize·로딩 때문에 화면이 불필요하게 비거나 입력이 끊기지 않으며, blank/stun 시간과
+    반복 blink가 정한 목표를 충족한다. 간헐적 waterfall도 반복 resize·로딩에서 검증한다.
+  - T50의 style-preserving freeze를 유지하고 한 keyboard session의 freeze/live 경계를 한 번
+    이하로 줄인다. font·color·terminal tail과 scroll 위치를 보존한다.
+  - 현재 입력 focus와 한글 조합·확정 흐름을 보존하되, 사용자가 다른 UI로 옮긴 focus를 빼앗지
+    않는다. reconnect와 단일 controller handoff의 generation fencing·observer 제한을 유지한다.
+  - 1440px·768px·360px, 동적 viewport와 keyboard/focus 회귀를 자동화하고, 사용자가 증상을
+    겪은 실제 기기에서도 idle·입력·resize·로딩을 확인한다. 짧은 단일 실행 통과만으로 완료하지 않는다.
 - 선행 조건: PI-00, T20, T27, T50
 - lane: Mobile UI
+- 연계: T29의 한글·이미지 입력 회귀를 보존한다. T46/T48은 helper focus·draft lifecycle의 별도
+  backlog이며, 이번에 보고된 일반 Pane focus 유실은 T52에서 추적한다. 같은 terminal surface를
+  변경하는 작업과 직렬로 진행한다.
 
 ### T53. Codex interaction 후 Pane activity 상태 동기화
 
