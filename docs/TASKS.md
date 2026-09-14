@@ -214,8 +214,12 @@ ownership과 integration gate를 지킨다.
     731건 통과·5건 건너뜀, E2E 22건 통과, format·lint·typecheck·build와 공개 scan
     495 files·665 objects·0 findings. 로컬 shell에 상속된 실제 hook 환경은 검증 명령에서
     제거했다. 기존 작업 트리의 변경을 보존하려고 별도 worktree에서 수행했다.
+  - main 통합 검증(2026-09-15): format·lint·typecheck·test·build, 공개 scan
+    498 files·673 objects·0 findings, 전체 E2E 22/22 통과. 첫 E2E 실행의 기존 폴더블
+    키보드 닫기 시 column 유지 검사는 한 차례 실패했지만, 단독 실행과 전체 재실행에서는
+    재현되지 않았다.
   - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
     붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
-    실기기 인수로 간주하지 않는다. main integration gate와 운영 반영도 별도다.
+    실기기 인수로 간주하지 않는다. 운영 반영은 별도다.
 - [ ] T46/T48 모바일 helper focus·draft lifecycle
 - [ ] T47/T37/T38/T39는 Private Ingress cutover 뒤 재검토
