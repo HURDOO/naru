@@ -819,7 +819,6 @@ async function startTerminalVisualProbe(
           probe.actionStartedAtMs !== null &&
           probe.rafDone &&
           probe.resizeAppliedAtMs.length > 0 &&
-          probe.freezeStartedAtMs.length > 0 &&
           probe.freezeSettledAtMs.length >= probe.freezeStartedAtMs.length &&
           !probe.freezeActive
         ) {
@@ -1127,13 +1126,14 @@ function liveResizeMeasurement(
   after: { observerEvents: number; resizeApplications: number; columnReflows: number },
   samples: TerminalVisualProbeResult,
 ): LiveResizeMeasurement {
-  const finalFreezeSettledAtMs = samples.freezeSettledAtMs.at(-1);
-  const completionMs =
-    samples.actionStartedAtMs === null || finalFreezeSettledAtMs === undefined
-      ? null
-      : finalFreezeSettledAtMs - samples.actionStartedAtMs;
-  const inputCompletedAtMs = samples.inputCompletedAtMs;
   const finalResizeAppliedAtMs = samples.resizeAppliedAtMs.at(-1);
+  const finalFreezeSettledAtMs = samples.freezeSettledAtMs.at(-1);
+  const completedAtMs = finalFreezeSettledAtMs ?? finalResizeAppliedAtMs;
+  const completionMs =
+    samples.actionStartedAtMs === null || completedAtMs === undefined
+      ? null
+      : completedAtMs - samples.actionStartedAtMs;
+  const inputCompletedAtMs = samples.inputCompletedAtMs;
   const elapsedAfterInput = (endedAtMs: number | undefined): number | null =>
     inputCompletedAtMs === null || endedAtMs === undefined
       ? null
@@ -1185,7 +1185,11 @@ function assertLiveResizeMeasurement(measurement: LiveResizeMeasurement): void {
 
   expect(measurement.pageTimestampsMs.actionStarted).not.toBeNull();
   expect(measurement.pageTimestampsMs.resizeApplied.length).toBeGreaterThan(0);
-  expect(measurement.pageTimestampsMs.freezeStarted.length).toBeGreaterThan(0);
+  if (measurement.scenario === "keyboard") {
+    expect(measurement.pageTimestampsMs.freezeStarted).toHaveLength(0);
+  } else {
+    expect(measurement.pageTimestampsMs.freezeStarted.length).toBeGreaterThan(0);
+  }
   expect(measurement.pageTimestampsMs.freezeSettled).toHaveLength(
     measurement.pageTimestampsMs.freezeStarted.length,
   );
@@ -1455,6 +1459,16 @@ async function measureTakeover(
       timeout: FULL_HYDRATION_CEILING_MS,
     });
     const fullHydrationMs = performance.now() - started;
+    await expect
+      .poll(() =>
+        takeoverPage.evaluate(() => {
+          const store = globalThis as typeof globalThis & {
+            __naruRestoreFontProbe?: { visibleFrames: number };
+          };
+          return store.__naruRestoreFontProbe?.visibleFrames ?? 0;
+        }),
+      )
+      .toBeGreaterThan(0);
     const fontProbe = await takeoverPage.evaluate(() => {
       const store = globalThis as typeof globalThis & {
         __naruRestoreFontProbe?: {

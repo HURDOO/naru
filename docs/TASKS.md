@@ -31,6 +31,8 @@ ownership과 integration gate를 지킨다.
   Internet PWA에서 모두 발생한다고 보고했으며, 다른 브라우저에서도 비슷하게 느껴진다고 한다.
   정확한 주기·trigger는 아직 계측하지 않았고, T29·T53과의 인과관계나 각 증상의 공통 원인은
   확인되지 않았다.
+- 추가 보고(2026-09-14, Android Samsung Internet PWA): 모바일 키보드가 열리며 화면이 위로
+  움직일 때 터미널이 검게 비거나 채팅이 위로 말려 올라간 듯 보이고, 다시 입력하면 돌아온다.
 - 조사·계측: idle, 연속 입력·한글 조합, 최초 로딩, Pane/split resize, keyboard 열기·닫기와
   동적 viewport 전환을 나눠 재현한다. focus/blur, renderer 생성·교체, attach/restore,
   reconnect·control generation, resize와 freeze/live 전환의 시점을 비교해 반복 trigger를 찾는다.
@@ -54,10 +56,14 @@ ownership과 integration gate를 지킨다.
   변경하는 작업과 직렬로 진행한다.
 - 로컬 검증(2026-09-14, Node 24·격리 Chrome fixture): 유휴 120초와 연속 입력 120초에서
   focus 유실·renderer 교체·숨김·freeze·연결/visibility 변화가 모두 0건이었다. 같은 runtime
-  reconnect는 renderer와 focus를 보존하고, 다른 UI로 이동한 focus를 되찾지 않는다. keyboard
-  session의 freeze 시작은 1회였다. 전체 E2E 18건, 단위 테스트 725건(5건 건너뜀), format·lint·
-  typecheck·build가 통과했다. 20회 resize의 완료 p95 185.1ms·최대 185.2ms, 빈 프레임 0건;
-  20회 reload의 첫 정상 화면 p95 970.26ms·전체 복원 p95 977.34ms, 중간 화면 노출 0건이다.
+  reconnect는 renderer와 focus를 보존하고, 다른 UI로 이동한 focus를 되찾지 않는다. 키보드
+  session에서 freeze 시작은 기존 1회, 수정 후 0회였다. 가상 visual viewport 높이·위치 전환에서
+  수정 전 하단 줄 가림이 연속 최대 10프레임, 수정 후 최대 1프레임(각 축소 단계의 observer 전
+  샘플)이었고, 안정된 각 단계의 가림·scroll offset 변화·focus 유실은 0건이었다. 단위 테스트
+  725건(5건 건너뜀), 전체 E2E 19건, format·lint·typecheck·build가 통과했다. 20회 resize의 완료 p95
+  167.4ms·최대 167.7ms, 빈 프레임 0건; 20회 reload의 첫 정상 화면 p95 458.68ms·전체 복원
+  p95 463.18ms, 중간 화면 노출 0건이다. Android UA를 사용한 Chrome fixture 결과이며 실제
+  Samsung Internet PWA 재현·개선 여부와 동일시하지 않는다.
 - 남은 인수: 로컬 fixture에서는 사용자 보고의 주기적 유휴 blink가 수정 전에도 재현되지 않았다.
   Windows Edge PWA와 Android Samsung Internet PWA에 적용한 뒤 유휴·입력·resize·로딩을
   각각 관찰하고 실제 focus 유실과 반복 blink가 사라졌는지 확인해야 한다. 이 확인 전에는

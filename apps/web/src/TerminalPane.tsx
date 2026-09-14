@@ -50,6 +50,7 @@ import {
   type TerminalResizeScheduler,
 } from "./terminal-resize";
 import { attachTerminalTouchScroll } from "./terminal-touch-scroll";
+import { KEYBOARD_HEIGHT_DROP_PX, KEYBOARD_WIDTH_JITTER_PX } from "./workspace-view";
 
 interface TerminalPaneProps {
   pane: Pane;
@@ -541,7 +542,6 @@ export function TerminalPane({
         terminalHostGeometry(host),
         terminalDimensions(terminal),
       );
-      let keyboardFreezeUsed = false;
       const resizeFreeze = createTerminalResizeFreeze(host, terminal);
       const onRender = terminal.onRender(() => resizeFreeze.rendered());
       const fitScheduler = createTerminalResizeScheduler(({ refresh }) => {
@@ -561,7 +561,6 @@ export function TerminalPane({
         const nextRows = Math.max(resolution.dimensions.rows, 1);
         const leavingKeyboardSession = keyboardSessionWasActive && !resolution.keyboardSession;
         if (!controlAllowedRef.current) {
-          if (leavingKeyboardSession) keyboardFreezeUsed = false;
           if (refresh && terminal.rows > 0) terminal.refresh(0, terminal.rows - 1);
           publishTerminalDimensions(host, terminal);
           return;
@@ -570,12 +569,8 @@ export function TerminalPane({
         const rowsChanged = terminal.rows !== nextRows;
         const keyboardBoundary =
           resolution.keyboardSession || (leavingKeyboardSession && !columnsChanged);
-        const freezeThisResize = columnsChanged || !keyboardBoundary || !keyboardFreezeUsed;
-        if (leavingKeyboardSession) keyboardFreezeUsed = false;
+        const freezeThisResize = columnsChanged || !keyboardBoundary;
         if (!columnsChanged && !rowsChanged && !refresh) return;
-        if (keyboardBoundary && freezeThisResize && resolution.keyboardSession) {
-          keyboardFreezeUsed = true;
-        }
 
         // Preserve the authoritative full-buffer viewport instead of sampling xterm while its
         // host changes size. A compact restore preview is the exception: its small local buffer
@@ -650,6 +645,17 @@ export function TerminalPane({
       const resizeObserver = new ResizeObserver(() => {
         incrementDatasetCount(host, "resizeObserverCount");
         scheduleFit();
+        const geometry = terminalHostGeometry(host);
+        const anchor = resizeState.keyboardSession ?? resizeState.stable;
+        if (
+          anchor !== null &&
+          isTerminalInputFocused(terminal, composeInputRef.current) &&
+          Math.abs(geometry.width - anchor.width) <= KEYBOARD_WIDTH_JITTER_PX &&
+          (resizeState.keyboardSession !== null ||
+            geometry.height < anchor.height - KEYBOARD_HEIGHT_DROP_PX)
+        ) {
+          fitScheduler.flush();
+        }
       });
       resizeObserver.observe(host);
       scheduleFit();
