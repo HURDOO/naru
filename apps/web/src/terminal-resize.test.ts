@@ -71,9 +71,9 @@ describe("terminal resize scheduler", () => {
     const scheduler = createTerminalResizeScheduler(apply);
 
     scheduler.request();
-    vi.advanceTimersByTime(40);
+    vi.advanceTimersByTime(20);
     scheduler.request(true);
-    vi.advanceTimersByTime(79);
+    vi.advanceTimersByTime(39);
     expect(apply).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(apply).toHaveBeenCalledOnce();

@@ -11,6 +11,7 @@ const PREVIEW_TO_FULL_VISUAL_GAP_CEILING_MS = 100;
 const LIVE_RESIZE_CEILING_MS = 750;
 
 test("keeps authenticated startup and terminal rendering responsive", async ({ page, browser }) => {
+  test.setTimeout(180_000);
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
@@ -192,6 +193,91 @@ test("keeps authenticated startup and terminal rendering responsive", async ({ p
   await runTerminalCommand(page, ":");
   await expect(terminalSurface).toHaveAttribute("data-scroll-bottom-offset", "0");
   await expect(rows).toContainText(uiTailMarker);
+  const repeatedResizeMeasurements: LiveResizeMeasurement[] = [];
+  for (let index = 0; index < 20; index += 1) {
+    const focusedInput = terminalSurface.locator(".xterm-helper-textarea");
+    await focusedInput.focus();
+    repeatedResizeMeasurements.push(
+      await measureLiveResizeAction(
+        page,
+        terminalSurface,
+        "viewport",
+        2_000,
+        uiTailMarker,
+        () => page.setViewportSize({ width: index % 2 === 0 ? 1_280 : 1_440, height: 900 }),
+        focusedInput,
+      ),
+    );
+  }
+  const repeatedResizeDurations = repeatedResizeMeasurements.map(
+    (measurement) => measurement.completionMs ?? Number.POSITIVE_INFINITY,
+  );
+  const repeatedResizeP95 = percentile(repeatedResizeDurations, 0.95);
+  const repeatedResizeMax = Math.max(...repeatedResizeDurations);
+  expect(repeatedResizeP95).toBeLessThanOrEqual(300);
+  expect(repeatedResizeMax).toBeLessThanOrEqual(500);
+
+  await page.addInitScript(() => {
+    const store = globalThis as typeof globalThis & {
+      __naruReloadProbe?: { visibleIntermediateFrames: number };
+    };
+    const probe = { visibleIntermediateFrames: 0 };
+    store.__naruReloadProbe = probe;
+    const sample = (): void => {
+      const host = document.querySelector<HTMLElement>(
+        '[aria-label="Dev Terminal 터미널"] .terminal-host',
+      );
+      const xterm = host?.querySelector<HTMLElement>(".xterm:not(.terminal-resize-freeze)");
+      if (host && xterm) {
+        const style = getComputedStyle(xterm);
+        if (style.visibility === "visible" && host.dataset.terminalRestoreReady !== "true") {
+          probe.visibleIntermediateFrames += 1;
+        }
+      }
+      if (host?.dataset.terminalRestoreReady !== "true") requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  const repeatedRestoreMeasurements: Array<{
+    firstCorrectViewportMs: number;
+    fullHydrationMs: number;
+    visibleIntermediateFrames: number;
+  }> = [];
+  for (let index = 0; index < 20; index += 1) {
+    const started = performance.now();
+    await page.reload();
+    await expect(rows).toContainText(uiTailMarker);
+    const firstCorrectViewportMs = performance.now() - started;
+    await expect(terminalSurface).toHaveAttribute("data-restore-phase", "ready");
+    const fullHydrationMs = performance.now() - started;
+    const visibleIntermediateFrames = await page.evaluate(() => {
+      const store = globalThis as typeof globalThis & {
+        __naruReloadProbe?: { visibleIntermediateFrames: number };
+      };
+      return store.__naruReloadProbe?.visibleIntermediateFrames ?? 0;
+    });
+    repeatedRestoreMeasurements.push({
+      firstCorrectViewportMs,
+      fullHydrationMs,
+      visibleIntermediateFrames,
+    });
+  }
+  const repeatedFirstCorrectP95 = percentile(
+    repeatedRestoreMeasurements.map((measurement) => measurement.firstCorrectViewportMs),
+    0.95,
+  );
+  const repeatedFullHydrationP95 = percentile(
+    repeatedRestoreMeasurements.map((measurement) => measurement.fullHydrationMs),
+    0.95,
+  );
+  expect(repeatedFirstCorrectP95).toBeLessThanOrEqual(1_000);
+  expect(repeatedFullHydrationP95).toBeLessThanOrEqual(1_500);
+  expect(
+    repeatedRestoreMeasurements.reduce(
+      (sum, measurement) => sum + measurement.visibleIntermediateFrames,
+      0,
+    ),
+  ).toBe(0);
   const takeover = await measureTakeover(browser, page, uiTailMarker);
 
   const inputLatencyP95 = percentile(latencySamples, 0.95);
@@ -231,6 +317,24 @@ test("keeps authenticated startup and terminal rendering responsive", async ({ p
     viewportResizeMeasurements: viewportResizeMeasurements.map(roundLiveResizeMeasurement),
     rotationResizeMeasurements: rotationResizeMeasurements.map(roundLiveResizeMeasurement),
     keyboardResizeMeasurements: keyboardResizeMeasurements.map(roundLiveResizeMeasurement),
+    repeatedResize: {
+      samples: repeatedResizeMeasurements.length,
+      p95Ms: round(repeatedResizeP95),
+      maxMs: round(repeatedResizeMax),
+      markerMissingFrames: repeatedResizeMeasurements.reduce(
+        (sum, measurement) => sum + measurement.markerMissingFrames,
+        0,
+      ),
+    },
+    repeatedRestore: {
+      samples: repeatedRestoreMeasurements.length,
+      firstCorrectViewportP95Ms: round(repeatedFirstCorrectP95),
+      fullHydrationP95Ms: round(repeatedFullHydrationP95),
+      visibleIntermediateFrames: repeatedRestoreMeasurements.reduce(
+        (sum, measurement) => sum + measurement.visibleIntermediateFrames,
+        0,
+      ),
+    },
     takeover: {
       firstCorrectViewportMs: round(takeover.firstCorrectViewportMs),
       fullHydrationMs: round(takeover.fullHydrationMs),
@@ -715,7 +819,6 @@ async function startTerminalVisualProbe(
           probe.actionStartedAtMs !== null &&
           probe.rafDone &&
           probe.resizeAppliedAtMs.length > 0 &&
-          probe.freezeStartedAtMs.length > 0 &&
           probe.freezeSettledAtMs.length >= probe.freezeStartedAtMs.length &&
           !probe.freezeActive
         ) {
@@ -1023,13 +1126,14 @@ function liveResizeMeasurement(
   after: { observerEvents: number; resizeApplications: number; columnReflows: number },
   samples: TerminalVisualProbeResult,
 ): LiveResizeMeasurement {
-  const finalFreezeSettledAtMs = samples.freezeSettledAtMs.at(-1);
-  const completionMs =
-    samples.actionStartedAtMs === null || finalFreezeSettledAtMs === undefined
-      ? null
-      : finalFreezeSettledAtMs - samples.actionStartedAtMs;
-  const inputCompletedAtMs = samples.inputCompletedAtMs;
   const finalResizeAppliedAtMs = samples.resizeAppliedAtMs.at(-1);
+  const finalFreezeSettledAtMs = samples.freezeSettledAtMs.at(-1);
+  const completedAtMs = finalFreezeSettledAtMs ?? finalResizeAppliedAtMs;
+  const completionMs =
+    samples.actionStartedAtMs === null || completedAtMs === undefined
+      ? null
+      : completedAtMs - samples.actionStartedAtMs;
+  const inputCompletedAtMs = samples.inputCompletedAtMs;
   const elapsedAfterInput = (endedAtMs: number | undefined): number | null =>
     inputCompletedAtMs === null || endedAtMs === undefined
       ? null
@@ -1081,7 +1185,11 @@ function assertLiveResizeMeasurement(measurement: LiveResizeMeasurement): void {
 
   expect(measurement.pageTimestampsMs.actionStarted).not.toBeNull();
   expect(measurement.pageTimestampsMs.resizeApplied.length).toBeGreaterThan(0);
-  expect(measurement.pageTimestampsMs.freezeStarted.length).toBeGreaterThan(0);
+  if (measurement.scenario === "keyboard") {
+    expect(measurement.pageTimestampsMs.freezeStarted).toHaveLength(0);
+  } else {
+    expect(measurement.pageTimestampsMs.freezeStarted.length).toBeGreaterThan(0);
+  }
   expect(measurement.pageTimestampsMs.freezeSettled).toHaveLength(
     measurement.pageTimestampsMs.freezeStarted.length,
   );
@@ -1351,6 +1459,16 @@ async function measureTakeover(
       timeout: FULL_HYDRATION_CEILING_MS,
     });
     const fullHydrationMs = performance.now() - started;
+    await expect
+      .poll(() =>
+        takeoverPage.evaluate(() => {
+          const store = globalThis as typeof globalThis & {
+            __naruRestoreFontProbe?: { visibleFrames: number };
+          };
+          return store.__naruRestoreFontProbe?.visibleFrames ?? 0;
+        }),
+      )
+      .toBeGreaterThan(0);
     const fontProbe = await takeoverPage.evaluate(() => {
       const store = globalThis as typeof globalThis & {
         __naruRestoreFontProbe?: {

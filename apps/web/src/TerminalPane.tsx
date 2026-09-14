@@ -50,6 +50,7 @@ import {
   type TerminalResizeScheduler,
 } from "./terminal-resize";
 import { attachTerminalTouchScroll } from "./terminal-touch-scroll";
+import { KEYBOARD_HEIGHT_DROP_PX, KEYBOARD_WIDTH_JITTER_PX } from "./workspace-view";
 
 interface TerminalPaneProps {
   pane: Pane;
@@ -120,6 +121,11 @@ export function TerminalPane({
   const terminalRef = useRef<Terminal | null>(null);
   const mountedRendererRef = useRef<MountedTerminalRenderer | null>(null);
   const restoreCandidateRef = useRef<RestoreCandidate | null>(null);
+  const preservedRestoreRef = useRef<{
+    restoreId: string;
+    runtimeId: string;
+    sequence: number;
+  } | null>(null);
   const previewAnchorRef = useRef<PreviewAnchor | null>(null);
   const paneFrameHandlerRef = useRef<((frame: PaneFrame) => void) | null>(null);
   const promoteRestoreRef = useRef<() => void>(() => undefined);
@@ -543,6 +549,7 @@ export function TerminalPane({
         incrementDatasetCount(host, "resizeApplyCount");
         const proposed = fit.proposeDimensions();
         if (!proposed) return;
+        const keyboardSessionWasActive = resizeState.keyboardSession !== null;
         const resolution = resolveTerminalResize(resizeState, {
           host: terminalHostGeometry(host),
           proposed,
@@ -552,6 +559,7 @@ export function TerminalPane({
         host.dataset.resizeKeyboardSession = String(resolution.keyboardSession);
         const nextCols = Math.max(resolution.dimensions.cols, 2);
         const nextRows = Math.max(resolution.dimensions.rows, 1);
+        const leavingKeyboardSession = keyboardSessionWasActive && !resolution.keyboardSession;
         if (!controlAllowedRef.current) {
           if (refresh && terminal.rows > 0) terminal.refresh(0, terminal.rows - 1);
           publishTerminalDimensions(host, terminal);
@@ -559,6 +567,9 @@ export function TerminalPane({
         }
         const columnsChanged = terminal.cols !== nextCols;
         const rowsChanged = terminal.rows !== nextRows;
+        const keyboardBoundary =
+          resolution.keyboardSession || (leavingKeyboardSession && !columnsChanged);
+        const freezeThisResize = columnsChanged || !keyboardBoundary;
         if (!columnsChanged && !rowsChanged && !refresh) return;
 
         // Preserve the authoritative full-buffer viewport instead of sampling xterm while its
@@ -582,7 +593,7 @@ export function TerminalPane({
         const releaseViewportReporting = suppressViewportReporting();
         resizeViewportAnchorRef.current = bottomOffset;
         if (resizeAnchorTimeout !== null) clearTimeout(resizeAnchorTimeout);
-        resizeFreeze.begin();
+        if (freezeThisResize) resizeFreeze.begin();
         try {
           if (columnsChanged || rowsChanged) {
             terminal.resize(nextCols, nextRows);
@@ -602,7 +613,6 @@ export function TerminalPane({
         } finally {
           publishTerminalDimensions(host, terminal);
           host.dataset.resizeLastDurationMs = (performance.now() - started).toFixed(2);
-          resizeFreeze.rendered();
         }
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -635,6 +645,17 @@ export function TerminalPane({
       const resizeObserver = new ResizeObserver(() => {
         incrementDatasetCount(host, "resizeObserverCount");
         scheduleFit();
+        const geometry = terminalHostGeometry(host);
+        const anchor = resizeState.keyboardSession ?? resizeState.stable;
+        if (
+          anchor !== null &&
+          isTerminalInputFocused(terminal, composeInputRef.current) &&
+          Math.abs(geometry.width - anchor.width) <= KEYBOARD_WIDTH_JITTER_PX &&
+          (resizeState.keyboardSession !== null ||
+            geometry.height < anchor.height - KEYBOARD_HEIGHT_DROP_PX)
+        ) {
+          fitScheduler.flush();
+        }
       });
       resizeObserver.observe(host);
       scheduleFit();
@@ -760,6 +781,7 @@ export function TerminalPane({
       if (frame.type === "pane.snapshot") {
         if (runtimeIdRef.current !== frame.runtimeId) mobileIme?.cancelPending();
         disposeCandidate();
+        preservedRestoreRef.current = null;
         restoreIdRef.current = null;
         previewAnchorRef.current = null;
         latestSequenceRef.current = frame.sequence;
@@ -789,11 +811,21 @@ export function TerminalPane({
 
       if (frame.type === "pane.restore.preview") {
         disposeCandidate();
-        const preservesMountedRuntime =
-          runtimeIdRef.current === frame.runtimeId && frame.sequence <= latestSequenceRef.current;
+        const displayedSequence = latestSequenceRef.current;
+        const sameRuntime = runtimeIdRef.current === frame.runtimeId;
+        const preservesMountedRuntime = sameRuntime && frame.sequence <= displayedSequence;
         if (!preservesMountedRuntime) mobileIme?.cancelPending();
+        preservedRestoreRef.current = preservesMountedRuntime
+          ? {
+              restoreId: frame.restoreId,
+              runtimeId: frame.runtimeId,
+              sequence: displayedSequence,
+            }
+          : null;
         restoreIdRef.current = frame.restoreId;
-        latestSequenceRef.current = frame.sequence;
+        latestSequenceRef.current = sameRuntime
+          ? Math.max(displayedSequence, frame.sequence)
+          : frame.sequence;
         desiredBottomOffsetRef.current = frame.bottomOffset;
         setScrollBottomOffset(frame.bottomOffset);
         runtimeIdRef.current = frame.runtimeId;
@@ -851,6 +883,18 @@ export function TerminalPane({
 
       if (frame.type === "pane.restore.full") {
         if (frame.restoreId !== restoreIdRef.current || frame.runtimeId !== runtimeIdRef.current) {
+          return;
+        }
+        const preserved = preservedRestoreRef.current;
+        preservedRestoreRef.current = null;
+        if (
+          preserved?.restoreId === frame.restoreId &&
+          preserved.runtimeId === frame.runtimeId &&
+          frame.sequence <= preserved.sequence
+        ) {
+          setRestorePhase("ready");
+          revealTerminalFonts();
+          revealTerminalRestore();
           return;
         }
         disposeCandidate();
@@ -927,6 +971,7 @@ export function TerminalPane({
       }
 
       if (frame.type === "terminal.output") {
+        if (frame.sequence <= latestSequenceRef.current) return;
         latestSequenceRef.current = frame.sequence;
         const displayedTerminal = terminalRef.current;
         const followLiveTail = desiredBottomOffsetRef.current === 0;
@@ -955,6 +1000,7 @@ export function TerminalPane({
       }
 
       disposeCandidate();
+      preservedRestoreRef.current = null;
       restoreIdRef.current = null;
       previewAnchorRef.current = null;
       setRuntimeStatus("exited");
@@ -1001,6 +1047,7 @@ export function TerminalPane({
       paneSurface?.removeEventListener("paste", handlePaste, true);
       clipboardBusyRef.current = false;
       disposeCandidate();
+      preservedRestoreRef.current = null;
       mountedRendererRef.current?.dispose();
       mountedRendererRef.current = null;
       attachmentRef.current?.dispose();
@@ -1446,7 +1493,7 @@ function createTerminalResizeFreeze(
   const rendered = (): void => {
     if (!overlay) return;
     if (settleTimeout !== null) clearTimeout(settleTimeout);
-    settleTimeout = setTimeout(clear, 120);
+    settleTimeout = setTimeout(clear, 96);
   };
 
   return {
@@ -1481,8 +1528,7 @@ function createTerminalResizeFreeze(
       });
       host.appendChild(overlay);
       host.dataset.resizeFrozen = "true";
-      maximumTimeout = setTimeout(clear, 2_500);
-      rendered();
+      maximumTimeout = setTimeout(clear, 500);
     },
     rendered,
     dispose: clear,
@@ -1523,6 +1569,7 @@ function scrollToBottomOffset(terminal: Terminal, bottomOffset: number): void {
   const buffer = terminal.buffer.active;
   if (buffer.type === "alternate") return;
   const targetOffset = Math.min(buffer.baseY, clampRestoreBottomOffset(bottomOffset));
+  if (targetOffset === 0 && buffer.baseY === buffer.viewportY) return;
   if (targetOffset === 0) {
     terminal.scrollToBottom();
     return;
