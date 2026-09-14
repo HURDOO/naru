@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CodexHookEventSchema } from "./events.js";
+import { CodexHookEventSchema, CodexInteractionSnapshotSchema } from "./events.js";
 
 const BootstrapSchema = z
   .string()
@@ -17,6 +17,12 @@ export const CodexIntegrationRequestSchema = z.discriminatedUnion("type", [
     type: z.literal("hook"),
     bootstrap: BootstrapSchema,
     event: CodexHookEventSchema,
+  }),
+  z.strictObject({
+    version: z.literal(1),
+    type: z.literal("interaction"),
+    bootstrap: BootstrapSchema,
+    snapshot: CodexInteractionSnapshotSchema,
   }),
 ]);
 export type CodexIntegrationRequest = z.infer<typeof CodexIntegrationRequestSchema>;
@@ -37,6 +43,11 @@ export const CodexIntegrationReplySchema = z.union([
     version: z.literal(1),
     ok: z.literal(true),
     type: z.literal("hook"),
+  }),
+  z.strictObject({
+    version: z.literal(1),
+    ok: z.literal(true),
+    type: z.literal("interaction"),
   }),
   z.strictObject({
     version: z.literal(1),

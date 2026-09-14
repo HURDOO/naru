@@ -13,7 +13,7 @@ import type { IntegrationDescriptor } from "@naru/contracts/durable-session/v0";
 import { describe, expect, it } from "vitest";
 import { sendCodexHookEvent } from "../src/codex-session-hook-client.js";
 import { requestCodexIntegration } from "../src/integrations/codex/client.js";
-import type { CodexHookEvent } from "../src/integrations/codex/events.js";
+import type { CodexHookEvent, CodexInteractionSnapshot } from "../src/integrations/codex/events.js";
 import type { CodexLaunchPlan, NaruCodexIntegrationPort } from "../src/integrations/codex/port.js";
 import { CodexIntegrationServer } from "../src/integrations/codex/server.js";
 
@@ -60,6 +60,28 @@ describe("private Naru Codex integration transport", () => {
       ).toBe(true);
       expect(port.launches).toEqual([BOOTSTRAP]);
       expect(port.hooks).toHaveLength(1);
+      const snapshot: CodexInteractionSnapshot = {
+        streamId: "22222222-2222-4222-8222-222222222222",
+        sequence: 1,
+        cwd: "/fixture/project",
+        sessionId: SESSION_ID,
+        identity: "bound",
+        turnId: "turn-1",
+        phase: "running",
+        pending: [{ requestId: 7, turnId: "turn-1", kind: "user-input" }],
+      };
+      expect(
+        await bounded(
+          requestCodexIntegration(server.socketPath, {
+            version: 1,
+            type: "interaction",
+            bootstrap: BOOTSTRAP,
+            snapshot,
+          }),
+          "interaction snapshot",
+        ),
+      ).toEqual({ version: 1, ok: true, type: "interaction" });
+      expect(port.interactions).toEqual([snapshot]);
 
       const contender = new CodexIntegrationServer(dataDirectory, new FakeCodexPort());
       await expect(bounded(contender.start(), "active socket rejection")).rejects.toThrow(
@@ -114,6 +136,7 @@ describe("private Naru Codex integration transport", () => {
 class FakeCodexPort implements NaruCodexIntegrationPort {
   readonly launches: string[] = [];
   readonly hooks: CodexHookEvent[] = [];
+  readonly interactions: CodexInteractionSnapshot[] = [];
 
   descriptor(bindingId: string): IntegrationDescriptor {
     return { kind: "codex", config: { policyRef: "fixture", bindingId } };
@@ -129,6 +152,12 @@ class FakeCodexPort implements NaruCodexIntegrationPort {
   acceptHook(bootstrap: string, event: CodexHookEvent): boolean {
     if (bootstrap !== BOOTSTRAP) return false;
     this.hooks.push(event);
+    return true;
+  }
+
+  acceptInteraction(bootstrap: string, snapshot: CodexInteractionSnapshot): boolean {
+    if (bootstrap !== BOOTSTRAP) return false;
+    this.interactions.push(snapshot);
     return true;
   }
 

@@ -31,7 +31,7 @@ import { ApiFailure, NaruApi } from "./api";
 import { ActivityStatus } from "./ActivityStatus";
 import { activityLabel } from "./activity-presentation";
 import { passkeyMessageFrom } from "./auth-presentation";
-import { applyCodexIdentity, applyPaneActivity } from "./pane-runtime";
+import { applyCodexIdentity, PaneActivityFrameFence } from "./pane-runtime";
 import { resolveProjectGroupEntry } from "./project-navigation";
 import {
   browserSupportsPushNotifications,
@@ -114,6 +114,7 @@ export default function App(): React.JSX.Element {
   const pushReturnFocusRef = useRef<HTMLElement | null>(null);
   const routingNotificationRef = useRef(false);
   const acknowledgingActivityRef = useRef(new Set<string>());
+  const activityFrameFenceRef = useRef(new PaneActivityFrameFence());
   const projectToggleRef = useRef<HTMLButtonElement>(null);
   const workspaceTitleRef = useRef<HTMLHeadingElement>(null);
   const {
@@ -140,15 +141,29 @@ export default function App(): React.JSX.Element {
   const projects = useMemo(() => connectedProjects(projectGroups), [projectGroups]);
 
   const refreshProjects = useCallback(async (): Promise<Project[]> => {
+    const before = activityFrameFenceRef.current.version;
     const next = await api.projectGroups();
-    setProjectGroups(next);
-    return connectedProjects(next);
+    const merged = activityFrameFenceRef.current
+      .projectUpdatesAfter(before)
+      .reduce(
+        (groups, update) => updateProjectGroupActivity(groups, update.projectId, update.activity),
+        next,
+      );
+    setProjectGroups(merged);
+    return connectedProjects(merged);
   }, [api]);
 
   const reconcileProjectGroups = useCallback(async (): Promise<Project[]> => {
+    const before = activityFrameFenceRef.current.version;
     const next = await api.refreshProjectGroups();
-    setProjectGroups(next);
-    return connectedProjects(next);
+    const merged = activityFrameFenceRef.current
+      .projectUpdatesAfter(before)
+      .reduce(
+        (groups, update) => updateProjectGroupActivity(groups, update.projectId, update.activity),
+        next,
+      );
+    setProjectGroups(merged);
+    return connectedProjects(merged);
   }, [api]);
 
   const requireAuthentication = useCallback(
@@ -161,6 +176,7 @@ export default function App(): React.JSX.Element {
       });
       setConnectionStatus({ state: "authentication-required", message });
       setProjectGroups([]);
+      activityFrameFenceRef.current.clear();
       setSelectedProjectId(null);
       clearWorkspace();
       setNotice(null);
@@ -226,17 +242,19 @@ export default function App(): React.JSX.Element {
     if (!connection) return;
     return connection.onActivity((frame) => {
       const current = currentWorkspace();
-      if (current?.projectId === frame.projectId) {
-        const pane = current.panes.find((candidate) => candidate.id === frame.paneId);
-        if (pane) {
-          const nextPane = applyPaneActivity(pane, frame.activity);
-          if (!nextPane) return;
-          updatePane(nextPane);
-        }
+      const pane =
+        current?.projectId === frame.projectId
+          ? (current.panes.find((candidate) => candidate.id === frame.paneId) ?? null)
+          : null;
+      const accepted = activityFrameFenceRef.current.accept(frame, pane);
+      if (accepted === null) return;
+      if (accepted.pane !== null) updatePane(accepted.pane);
+      const projectActivity = accepted.projectActivity;
+      if (projectActivity !== null) {
+        setProjectGroups((groups) =>
+          updateProjectGroupActivity(groups, frame.projectId, projectActivity),
+        );
       }
-      setProjectGroups((current) =>
-        updateProjectGroupActivity(current, frame.projectId, frame.projectActivity),
-      );
     });
   }, [connection, currentWorkspace, updatePane]);
 
@@ -408,6 +426,7 @@ export default function App(): React.JSX.Element {
       authStateRef.current = "signed-out";
       setAuthState("signed-out");
       setProjectGroups([]);
+      activityFrameFenceRef.current.clear();
       clearWorkspace();
       rememberProject(null);
     }

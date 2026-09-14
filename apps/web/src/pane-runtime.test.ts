@@ -5,6 +5,7 @@ import {
   applyPaneActivity,
   mergePaneRuntimeSnapshot,
   mergeWorkspaceRuntimeSnapshot,
+  PaneActivityFrameFence,
 } from "./pane-runtime";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -71,6 +72,87 @@ describe("Pane runtime snapshot ordering", () => {
     const withRunning = applyPaneActivity(pane, running);
     expect(withRunning?.activity).toEqual(running);
     expect(applyPaneActivity(withRunning as Pane, failed)?.activity).toEqual(failed);
+  });
+
+  it("keeps a submitted response running across stale pending frames and reconnect snapshots", () => {
+    const initial = paneAt(10, "running", CURRENT_RUNTIME_ID, "running");
+    const pending = activityAt(11, "interaction-required", CURRENT_RUNTIME_ID);
+    const resolved = activityAt(12, "running", CURRENT_RUNTIME_ID);
+    const withPending = applyPaneActivity(initial, pending) as Pane;
+    const withResolved = applyPaneActivity(withPending, resolved) as Pane;
+
+    expect(withPending.activity.state).toBe("interaction-required");
+    expect(withResolved.activity.state).toBe("running");
+    expect(applyPaneActivity(withResolved, pending)).toBeNull();
+    expect(
+      mergeWorkspaceRuntimeSnapshot(
+        workspaceWith(withResolved, 6),
+        workspaceWith(paneAt(11, "interaction-required", CURRENT_RUNTIME_ID, "running"), 7),
+      ).panes[0]?.activity,
+    ).toEqual(resolved);
+  });
+
+  it("fences background Project frames and preserves updates arriving during a refresh", () => {
+    const fence = new PaneActivityFrameFence();
+    const pending = activityFrame(10, "interaction-required");
+    const resolved = activityFrame(11, "running");
+    expect(fence.accept(pending, null)).toMatchObject({
+      pane: null,
+      projectActivity: { state: "interaction-required" },
+    });
+    const beforeRefresh = fence.version;
+    expect(fence.accept(resolved, null)).toMatchObject({
+      pane: null,
+      projectActivity: { state: "running" },
+    });
+    expect(fence.accept(pending, null)).toBeNull();
+    expect(fence.accept(resolved, null)).toBeNull();
+    expect(fence.projectUpdatesAfter(beforeRefresh)).toEqual([
+      {
+        projectId: PROJECT_ID,
+        activity: resolved.projectActivity,
+      },
+    ]);
+
+    // A delayed event from another Pane can advance its own revision without
+    // replacing the later Project aggregate from the resolved request.
+    const olderOtherPane = {
+      ...activityFrame(9, "interaction-required"),
+      paneId: "66666666-6666-4666-8666-666666666666",
+    };
+    expect(fence.accept(olderOtherPane, null)).toMatchObject({ projectActivity: null });
+    expect(fence.projectUpdatesAfter(beforeRefresh)).toEqual([
+      {
+        projectId: PROJECT_ID,
+        activity: resolved.projectActivity,
+      },
+    ]);
+
+    const current = paneAt(12, "running", CURRENT_RUNTIME_ID, "running");
+    expect(fence.accept(activityFrame(11, "interaction-required"), current)).toBeNull();
+    expect(
+      fence.accept(activityFrame(13, "interaction-required"), current)?.pane?.activity.state,
+    ).toBe("interaction-required");
+    fence.clear();
+    expect(fence.version).toBe(0);
+  });
+
+  it("uses the first matching WS frame to repair a stale Project aggregate after HTTP Pane load", () => {
+    const fence = new PaneActivityFrameFence();
+    const current = paneAt(12, "running", CURRENT_RUNTIME_ID, "running");
+    const matching = activityFrame(12, "running");
+    expect(fence.accept(matching, current)).toMatchObject({
+      pane: null,
+      projectActivity: { state: "running" },
+    });
+    expect(fence.accept(matching, current)).toBeNull();
+
+    const laterSamePane = activityFrame(13, "interaction-required");
+    laterSamePane.activity.updatedAt = "2026-08-20T23:59:00.000Z";
+    expect(fence.accept(laterSamePane, current)).toMatchObject({
+      pane: { activity: { revision: 13 } },
+      projectActivity: { state: "interaction-required" },
+    });
   });
 
   it("keeps newer runtime metadata when a cached workspace resolves late", () => {
@@ -155,6 +237,22 @@ function activityAt(
     runtimeId,
     revision,
     updatedAt: `2026-08-21T00:00:${String(revision).padStart(2, "0")}.000Z`,
+  };
+}
+
+function activityFrame(revision: number, state: PaneActivityState) {
+  const activity = activityAt(revision, state, CURRENT_RUNTIME_ID);
+  return {
+    type: "activity.changed" as const,
+    eventId: activity.eventId as string,
+    projectId: PROJECT_ID,
+    paneId: PANE_ID,
+    activity,
+    projectActivity: {
+      state,
+      interactionRequiredCount: state === "interaction-required" ? 1 : 0,
+      updatedAt: activity.updatedAt,
+    },
   };
 }
 

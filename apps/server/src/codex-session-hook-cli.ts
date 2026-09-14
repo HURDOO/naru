@@ -26,6 +26,7 @@ if (
   failureCode === null &&
   event !== null &&
   environment !== null &&
+  process.env.NARU_CODEX_INTERACTION_RELAY !== "1" &&
   !(await sendCodexHookEvent(event, environment))
 ) {
   // Durable Host-owned Codex must keep working while Naru is restarting. This
