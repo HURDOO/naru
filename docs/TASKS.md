@@ -33,6 +33,9 @@ ownership과 integration gate를 지킨다.
   확인되지 않았다.
 - 추가 보고(2026-09-14, Android Samsung Internet PWA): 모바일 키보드가 열리며 화면이 위로
   움직일 때 터미널이 검게 비거나 채팅이 위로 말려 올라간 듯 보이고, 다시 입력하면 돌아온다.
+  9443 테스트 서버의 수정본에서도 재현됐다. 화면 캡처에서는 앱 전체가 아닌 특정 Terminal
+  Pane의 본문만 비어 있으며, 해당 Pane에 한 번 입력한 후에는 focus를 여러 번 옮겨도 정상적으로
+  보인다. 캡처에는 브라우저 주소 표시줄이 있어 이 재현의 PWA 설치 모드는 확인되지 않았다.
 - 조사·계측: idle, 연속 입력·한글 조합, 최초 로딩, Pane/split resize, keyboard 열기·닫기와
   동적 viewport 전환을 나눠 재현한다. focus/blur, renderer 생성·교체, attach/restore,
   reconnect·control generation, resize와 freeze/live 전환의 시점을 비교해 반복 trigger를 찾는다.
@@ -53,7 +56,8 @@ ownership과 integration gate를 지킨다.
 - lane: Mobile UI
 - 연계: T29의 한글·이미지 입력 회귀를 보존한다. T46/T48은 helper focus·draft lifecycle의 별도
   backlog이며, 이번에 보고된 일반 Pane focus 유실은 T52에서 추적한다. 같은 terminal surface를
-  변경하는 작업과 직렬로 진행한다.
+  변경하는 작업과 직렬로 진행한다. 첫 입력 전 특정 Pane의 본문이 비는 실기기 증상은 T56으로
+  분리하며, T52의 keyboard viewport 자동화 통과가 그 증상의 해결을 뜻하지는 않는다.
 - 로컬 검증(2026-09-14, Node 24·격리 Chrome fixture): 유휴 120초와 연속 입력 120초에서
   focus 유실·renderer 교체·숨김·freeze·연결/visibility 변화가 모두 0건이었다. 같은 runtime
   reconnect는 renderer와 focus를 보존하고, 다른 UI로 이동한 focus를 되찾지 않는다. 키보드
@@ -63,7 +67,8 @@ ownership과 integration gate를 지킨다.
   725건(5건 건너뜀), 전체 E2E 19건, format·lint·typecheck·build가 통과했다. 20회 resize의 완료 p95
   167.4ms·최대 167.7ms, 빈 프레임 0건; 20회 reload의 첫 정상 화면 p95 458.68ms·전체 복원
   p95 463.18ms, 중간 화면 노출 0건이다. Android UA를 사용한 Chrome fixture 결과이며 실제
-  Samsung Internet PWA 재현·개선 여부와 동일시하지 않는다.
+  Samsung Internet PWA 재현·개선 여부와 동일시하지 않는다. 9443 실기기 재확인에서 T56의
+  Pane 본문 공백은 그대로 관찰되어, 앞선 viewport 가림 개선으로 해당 증상이 해결되지는 않았다.
 - 남은 인수: 로컬 fixture에서는 사용자 보고의 주기적 유휴 blink가 수정 전에도 재현되지 않았다.
   Windows Edge PWA와 Android Samsung Internet PWA에 적용한 뒤 유휴·입력·resize·로딩을
   각각 관찰하고 실제 focus 유실과 반복 blink가 사라졌는지 확인해야 한다. 이 확인 전에는
@@ -108,6 +113,20 @@ ownership과 integration gate를 지킨다.
 - [ ] 승인된 Codex CLI update 뒤 active turn과 session을 보존하며 Pane을 순차 refresh한다.
 - 선행 조건: T53, `private-ingress-v0/PI-05`
 - lane: Activity/Distribution integration
+
+### T56. 모바일 키보드 첫 입력 전 Terminal Pane 본문 공백
+
+- [ ] Android Samsung Internet에서 키보드를 연 상태로 여러 Terminal Pane을 오갈 때 특정
+      Pane의 본문만 비어 보이고, 그 Pane에 한 번 입력하면 이후 focus 전환에서도 정상으로 유지되는
+      증상을 재현·해결한다. T52의 viewport 가림 개선을 적용한 9443 테스트 서버에서도 재현됐다.
+      캡처는 브라우저 주소 표시줄이 보이는 상태였으므로 브라우저 탭과 설치 PWA를 구분해 확인한다.
+- 조사: 첫 focus·키보드 열기 전후의 각 Pane 크기, xterm buffer와 렌더된 행, renderer lifecycle,
+  ResizeObserver·visual viewport 이벤트를 비교한다. 입력 원문과 실제 instance 식별자는 남기지 않는다.
+- 완료 조건: 입력이나 강제 재시작 없이 첫 focus에서 기존 본문이 보이고, Pane 왕복·키보드
+  열기/닫기·reconnect 뒤에도 유지된다. 360px·768px·동적 viewport 자동화와 실제 Samsung
+  Internet 브라우저 탭·설치 PWA를 구분한 재현 조건에서 확인한다.
+- 선행 조건: T52의 terminal renderer 변경과 직렬로 진행
+- lane: Mobile UI
 
 ### 기타 backlog
 
