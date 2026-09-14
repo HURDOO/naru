@@ -26,6 +26,15 @@ program은 Private Ingress v0다.
 - gateway-managed mode는 Gateway passkey/session과 signed app assertion을 사용한다. standalone
   app-managed mode는 별도 compatibility 경계다.
 - terminal/Codex 원문은 영구 저장하지 않는다. bounded terminal state와 live draft는 메모리 전용이다.
+- 새 DurableSession Codex runtime의 Pane과 Project 입력 필요 표시는 현재 Host runtime의 실제 미해소
+  승인·질문 요청이 하나 이상일 때 유지한다. 응답한 요청은 도구 실행 종료를 기다리지 않고 해소하며,
+  다른 미해소 요청은 그대로 남긴다. 비차단 질문도 backend가 해소·취소하거나 runtime이 종료되기
+  전까지 turn 완료 뒤에 남아 있으면 표시한다. 기존 hook-only runtime은 D009 migration 경계를 따른다.
+- 새 runtime은 Codex prompt 제출 직후 running 상태와 기존 interaction-required 알림 경로를 유지한다.
+  답변 선택지를 열거나 이동·작성하는 단계는 해소가 아니며 Codex app-server의 요청 해소 이벤트를
+  기준으로 한다.
+- 자동 승인 심사 중이거나 hook이 승인을 자체 처리한 경우에는 사용자 입력 필요를 표시하지 않고
+  running을 유지한다. 명시적인 사용자 승인 request가 실제로 발행된 경우에만 입력 필요로 전환한다.
 
 ## 보안 불변조건
 

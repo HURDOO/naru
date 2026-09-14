@@ -1,6 +1,97 @@
-import type { Pane, PaneActivity, ServerWsFrame, Workspace } from "@naru/contracts";
+import type {
+  Pane,
+  PaneActivity,
+  ProjectActivity,
+  ServerWsFrame,
+  Workspace,
+} from "@naru/contracts";
 
 type CodexIdentityFrame = Extract<ServerWsFrame, { type: "codex.session.changed" }>;
+type ActivityFrame = Extract<ServerWsFrame, { type: "activity.changed" }>;
+
+/** Fences activity frames even when their Project is not the open Workspace. */
+export class PaneActivityFrameFence {
+  readonly #panes = new Map<string, PaneActivity>();
+  readonly #projects = new Map<
+    string,
+    {
+      activity: ProjectActivity;
+      occurredAt: string;
+      paneId: string;
+      paneRevision: number;
+      version: number;
+    }
+  >();
+  #version = 0;
+
+  get version(): number {
+    return this.#version;
+  }
+
+  clear(): void {
+    this.#panes.clear();
+    this.#projects.clear();
+    this.#version = 0;
+  }
+
+  accept(
+    frame: ActivityFrame,
+    currentPane: Pane | null,
+  ): {
+    pane: Pane | null;
+    projectActivity: ProjectActivity | null;
+  } | null {
+    const cached = this.#panes.get(frame.paneId);
+    const baseline =
+      currentPane !== null &&
+      (cached === undefined || currentPane.activity.revision > cached.revision)
+        ? currentPane.activity
+        : cached;
+    if (cached !== undefined && frame.activity.revision <= cached.revision) return null;
+    if (baseline !== undefined && frame.activity.revision < baseline.revision) return null;
+    const alreadyInPane = baseline !== undefined && frame.activity.revision === baseline.revision;
+    if (alreadyInPane && !sameActivity(baseline, frame.activity)) return null;
+    const pane =
+      currentPane === null || alreadyInPane ? null : applyPaneActivity(currentPane, frame.activity);
+    if (currentPane !== null && !alreadyInPane && pane === null) return null;
+    this.#panes.set(frame.paneId, frame.activity);
+    this.#version += 1;
+    const previous = this.#projects.get(frame.projectId);
+    if (
+      previous !== undefined &&
+      previous.occurredAt > frame.activity.updatedAt &&
+      !(previous.paneId === frame.paneId && frame.activity.revision > previous.paneRevision)
+    ) {
+      return { pane, projectActivity: null };
+    }
+    this.#projects.set(frame.projectId, {
+      activity: frame.projectActivity,
+      occurredAt: frame.activity.updatedAt,
+      paneId: frame.paneId,
+      paneRevision: frame.activity.revision,
+      version: this.#version,
+    });
+    return { pane, projectActivity: frame.projectActivity };
+  }
+
+  projectUpdatesAfter(version: number): Array<{ projectId: string; activity: ProjectActivity }> {
+    const updates: Array<{ projectId: string; activity: ProjectActivity }> = [];
+    for (const [projectId, current] of this.#projects) {
+      if (current.version > version) updates.push({ projectId, activity: current.activity });
+    }
+    return updates;
+  }
+}
+
+function sameActivity(left: PaneActivity, right: PaneActivity): boolean {
+  return (
+    left.revision === right.revision &&
+    left.eventId === right.eventId &&
+    left.runtimeId === right.runtimeId &&
+    left.state === right.state &&
+    left.updatedAt === right.updatedAt
+  );
+}
 
 export function applyPaneActivity(pane: Pane, activity: PaneActivity): Pane | null {
   if (activity.revision < pane.activity.revision) return null;

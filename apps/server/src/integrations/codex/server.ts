@@ -146,6 +146,11 @@ export class CodexIntegrationServer {
           plan: { executable: plan.executable, args: [...plan.args] },
         };
       }
+      if (parsed.data.type === "interaction") {
+        return this.integration.acceptInteraction(parsed.data.bootstrap, parsed.data.snapshot)
+          ? { version: 1, ok: true, type: "interaction" }
+          : { version: 1, ok: false, code: "DENIED" };
+      }
       return this.integration.acceptHook(parsed.data.bootstrap, parsed.data.event)
         ? { version: 1, ok: true, type: "hook" }
         : { version: 1, ok: false, code: "DENIED" };

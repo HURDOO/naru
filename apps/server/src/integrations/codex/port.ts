@@ -9,7 +9,11 @@ import { readPrivateCredentialFile } from "@naru/durable-session-client/node";
 import type { NaruRepository, PaneActivityChange, PaneContext } from "../../database.js";
 import type { DurableHostConfig } from "../../durable-session-host-client.js";
 import type { PaneLaunchResolver } from "../../launch-profiles.js";
-import type { CodexHookEvent, CodexIntegrationEventV1 } from "./events.js";
+import type {
+  CodexHookEvent,
+  CodexIntegrationEventV1,
+  CodexInteractionSnapshot,
+} from "./events.js";
 import { CodexRuntimeSemantics } from "./semantics.js";
 
 export const NARU_CODEX_INTEGRATION_POLICY_REF = "naru-codex-v0" as const;
@@ -33,7 +37,9 @@ interface VerifiedCodexRuntime {
 interface CodexRuntimeState extends VerifiedCodexRuntime {
   readonly semantics: CodexRuntimeSemantics;
   active: boolean;
+  terminated: boolean;
   pendingEvents: CodexHookEvent[];
+  pendingInteraction: CodexInteractionSnapshot | null;
 }
 
 export interface CodexLaunchPlan {
@@ -46,6 +52,7 @@ export interface NaruCodexIntegrationPort {
   preflight(paneId: string): void;
   launch(bootstrap: string): CodexLaunchPlan;
   acceptHook(bootstrap: string, event: CodexHookEvent): boolean;
+  acceptInteraction(bootstrap: string, snapshot: CodexInteractionSnapshot): boolean;
   bindRuntime(paneId: string, session: SessionView): void;
   observeInput(paneId: string, runtimeId: string, data: string): void;
   observeOutput(paneId: string, runtimeId: string, data: string): void;
@@ -126,7 +133,8 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
       if (
         state.hostSessionId !== verified.hostSessionId ||
         state.runtimeId !== verified.runtimeId ||
-        state.bindingId !== verified.bindingId
+        state.bindingId !== verified.bindingId ||
+        state.terminated
       ) {
         return false;
       }
@@ -138,6 +146,34 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
       }
       this.#applyHook(state, event);
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  acceptInteraction(bootstrap: string, snapshot: CodexInteractionSnapshot): boolean {
+    try {
+      const verified = this.#verify(bootstrap, "hook");
+      if (snapshot.cwd !== verified.projectPath) return false;
+      const state = this.#runtimes.get(verified.paneId) ?? this.#state(verified);
+      if (
+        state.hostSessionId !== verified.hostSessionId ||
+        state.runtimeId !== verified.runtimeId ||
+        state.bindingId !== verified.bindingId ||
+        state.terminated
+      ) {
+        return false;
+      }
+      this.#runtimes.set(verified.paneId, state);
+      if (!state.active) {
+        const pending = state.pendingInteraction;
+        if (pending !== null && pending.streamId !== snapshot.streamId) return false;
+        if (pending === null || snapshot.sequence > pending.sequence) {
+          state.pendingInteraction = snapshot;
+        }
+        return true;
+      }
+      return state.semantics.acceptInteraction(snapshot);
     } catch {
       return false;
     }
@@ -180,6 +216,9 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
     const wasActive = state.active;
     state.active = true;
     if (!wasActive) this.#emitEvent(state, { eventKind: "runtime.bound" });
+    const interaction = state.pendingInteraction;
+    state.pendingInteraction = null;
+    if (interaction !== null) state.semantics.acceptInteraction(interaction);
     const pending = state.pendingEvents.splice(0);
     for (const event of pending) this.#applyHook(state, event);
   }
@@ -199,6 +238,7 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
     if (state === null) return;
     state.semantics.observeExit(exitCode);
     state.active = false;
+    state.terminated = true;
   }
 
   markStopping(paneId: string, runtimeId: string): void {
@@ -331,7 +371,9 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
       ...verified,
       semantics,
       active: false,
+      terminated: false,
       pendingEvents: [],
+      pendingInteraction: null,
     };
     stateReference.current = state;
     return state;
@@ -362,7 +404,7 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
       | {
           readonly eventKind: "session.identified";
           readonly codexSessionId: string;
-          readonly source: "startup" | "resume" | "clear" | "status" | "exit-hint";
+          readonly source: "startup" | "resume" | "clear" | "status" | "exit-hint" | "relay";
           readonly resumable: boolean;
         }
       | {

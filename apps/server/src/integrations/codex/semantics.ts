@@ -1,11 +1,11 @@
 import type { PaneActivityState } from "@naru/contracts";
 import type { NaruRepository, PaneActivityChange } from "../../database.js";
 import { CodexSessionTracker } from "../../codex-session-tracker.js";
-import type { CodexHookEvent, CodexSessionHookSource } from "./events.js";
+import type { CodexHookEvent, CodexInteractionSnapshot, CodexSessionHookSource } from "./events.js";
 
 const CODEX_INTERRUPT_EXIT_WINDOW_MS = 2_000;
 
-export type CodexSessionIdentitySource = CodexSessionHookSource | "status" | "exit-hint";
+export type CodexSessionIdentitySource = CodexSessionHookSource | "status" | "exit-hint" | "relay";
 export type CodexSessionIdentityChange =
   | {
       readonly sessionId: string;
@@ -49,6 +49,9 @@ export class CodexRuntimeSemantics {
   #lastCompletedTurnId: string | null = null;
   #lastCanceledTurnId: string | null = null;
   #interruptRequestedAt: number | null = null;
+  #interactionStreamId: string | null = null;
+  #interactionSequence = -1;
+  #interactionPending = 0;
   #stopping = false;
 
   constructor(options: CodexRuntimeSemanticsOptions) {
@@ -75,6 +78,7 @@ export class CodexRuntimeSemantics {
   }
 
   observeInput(data: string): void {
+    if (this.#interactionStreamId !== null) return;
     const interruptedTurn =
       this.#activeTurnId !== null && isCodexInterruptInput(data) ? this.#activeTurnId : null;
     if (this.#tracker.observeInput(data) && this.#sessionId !== null) {
@@ -93,12 +97,14 @@ export class CodexRuntimeSemantics {
   }
 
   observeOutput(data: string, currentScreen?: () => string): void {
+    if (this.#interactionStreamId !== null) return;
     const sessionId = this.#tracker.observeOutput(data, currentScreen);
     if (sessionId !== null) this.#setSession(sessionId, false, "status");
   }
 
   observeExit(exitCode: number | null): void {
-    const sessionId = this.#tracker.observeExit();
+    this.#interactionPending = 0;
+    const sessionId = this.#interactionStreamId === null ? this.#tracker.observeExit() : null;
     if (sessionId !== null) this.#setSession(sessionId, true, "exit-hint");
     const latest = this.#repository.getPaneContext(this.#paneId)?.pane.activity.state;
     const recentInterrupt =
@@ -117,6 +123,9 @@ export class CodexRuntimeSemantics {
 
   acceptHook(event: CodexHookEvent): void {
     if (this.#stopping) return;
+    // The relay sees actual app-server requests and resolutions. Hook ordering
+    // is insufficient to settle a pending approval or nonblocking question.
+    if (this.#interactionStreamId !== null) return;
     if (event.type === "session-start") {
       this.#setSession(event.sessionId, true, event.source);
       this.#activeTurnId = null;
@@ -153,6 +162,45 @@ export class CodexRuntimeSemantics {
         this.#transition("completed");
         return;
     }
+  }
+
+  acceptInteraction(snapshot: CodexInteractionSnapshot): boolean {
+    if (this.#stopping) return false;
+    if (this.#interactionStreamId !== null && this.#interactionStreamId !== snapshot.streamId) {
+      return false;
+    }
+    if (snapshot.sequence <= this.#interactionSequence) return true;
+    this.#interactionStreamId = snapshot.streamId;
+    this.#interactionSequence = snapshot.sequence;
+    this.#interactionPending = snapshot.pending.length;
+
+    if (snapshot.identity === "cleared") {
+      this.#clearSession();
+      this.#activeTurnId = null;
+      this.#lastCompletedTurnId = null;
+      this.#lastCanceledTurnId = null;
+    } else if (snapshot.sessionId !== null) {
+      if (snapshot.sessionId !== this.#sessionId) {
+        this.#lastCompletedTurnId = null;
+        this.#lastCanceledTurnId = null;
+      }
+      this.#setSession(snapshot.sessionId, true, "relay");
+    }
+
+    const phase = snapshot.phase;
+    if (phase === "running") {
+      this.#activeTurnId = snapshot.turnId;
+      this.#interruptRequestedAt = null;
+    } else {
+      this.#activeTurnId = null;
+      if (phase === "completed") this.#lastCompletedTurnId = snapshot.turnId;
+      if (phase === "canceled") {
+        this.#lastCanceledTurnId = snapshot.turnId;
+        this.#interruptRequestedAt = this.#now();
+      }
+    }
+    this.#transition(phase);
+    return true;
   }
 
   markStopping(): void {
@@ -196,11 +244,32 @@ export class CodexRuntimeSemantics {
     this.#onSession?.({ sessionId, resumable, source });
   }
 
+  #clearSession(): void {
+    if (this.#sessionId === null) return;
+    if (!this.#repository.setCodexSessionForRuntime(this.#paneId, this.#runtimeId, null, false)) {
+      return;
+    }
+    this.#sessionId = null;
+    this.#sessionResumable = false;
+    this.#onSession?.({ sessionId: null, resumable: false, source: "transition" });
+  }
+
   #transition(state: PaneActivityState): void {
-    const change = this.#repository.setPaneActivityForRuntime(this.#paneId, this.#runtimeId, state);
+    const projected =
+      this.#interactionPending > 0 &&
+      state !== "failed" &&
+      state !== "server-stopped" &&
+      state !== "canceled"
+        ? "interaction-required"
+        : state;
+    const change = this.#repository.setPaneActivityForRuntime(
+      this.#paneId,
+      this.#runtimeId,
+      projected,
+    );
     if (change === null) return;
     this.#emitActivity(change);
-    this.#onActivity?.(state);
+    this.#onActivity?.(projected);
   }
 }
 

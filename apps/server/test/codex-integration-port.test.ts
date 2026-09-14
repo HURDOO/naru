@@ -9,6 +9,8 @@ import {
 } from "@naru/durable-session-integration";
 import { describe, expect, it } from "vitest";
 import { NaruRepository } from "../src/database.js";
+import { CodexInteractionState } from "../src/codex-interaction-state.js";
+import type { CodexInteractionSnapshot } from "../src/integrations/codex/events.js";
 import type { DurableHostConfig } from "../src/durable-session-host-client.js";
 import type { PaneLaunchResolver } from "../src/launch-profiles.js";
 import {
@@ -340,6 +342,267 @@ describe("Naru-owned Codex integration port", () => {
     expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
       "completed",
     );
+    fixture.repository.close();
+  });
+
+  it("keeps each actual pending request until its own resolution, even after turn completion", () => {
+    const fixture = integrationFixture();
+    const bindingId = randomUUID();
+    const create = fixture.repository.preparePaneSessionOperation(
+      fixture.paneId,
+      "create",
+      null,
+      bindingId,
+    );
+    const session = sessionView();
+    const bootstrap = fixture.bootstrap(bindingId, session);
+    fixture.integration.launch(bootstrap);
+    fixture.repository.completePaneSessionOperation(
+      fixture.paneId,
+      "create",
+      create.operationKey as string,
+      session,
+    );
+    fixture.integration.bindRuntime(fixture.paneId, session);
+    fixture.repository.setCodexSessionForRuntime(
+      fixture.paneId,
+      session.runtimeId as string,
+      CODEX_SESSION_ID,
+      false,
+    );
+
+    const streamId = randomUUID();
+    const base: CodexInteractionSnapshot = {
+      streamId,
+      sequence: 1,
+      cwd: "/safe/project",
+      sessionId: CODEX_SESSION_ID,
+      identity: "bound",
+      turnId: "turn-1",
+      phase: "running",
+      pending: [],
+    };
+    expect(fixture.integration.acceptInteraction(bootstrap, base)).toBe(true);
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe("running");
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.codexSessionResumable).toBe(
+      true,
+    );
+
+    const first = { requestId: "approval-a", turnId: "turn-1", kind: "permissions" } as const;
+    const second = { requestId: 17, turnId: "turn-1", kind: "user-input" } as const;
+    expect(
+      fixture.integration.acceptInteraction(bootstrap, {
+        ...base,
+        sequence: 2,
+        pending: [first, second],
+      }),
+    ).toBe(true);
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
+      "interaction-required",
+    );
+
+    // A key used to close a picker does not cancel the active turn or answer a request.
+    fixture.integration.observeInput(fixture.paneId, session.runtimeId as string, "\u001b");
+    fixture.integration.acceptHook(bootstrap, {
+      type: "turn-running",
+      sessionId: CODEX_SESSION_ID,
+      cwd: "/safe/project",
+      turnId: "turn-1",
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
+      "interaction-required",
+    );
+
+    fixture.integration.acceptInteraction(bootstrap, {
+      ...base,
+      sequence: 3,
+      pending: [second],
+    });
+    fixture.integration.acceptInteraction(bootstrap, {
+      ...base,
+      sequence: 4,
+      phase: "completed",
+      pending: [second],
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
+      "interaction-required",
+    );
+    fixture.integration.acceptInteraction(bootstrap, {
+      ...base,
+      sequence: 5,
+      phase: "completed",
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
+      "completed",
+    );
+
+    fixture.integration.acceptInteraction(bootstrap, { ...base, sequence: 3, pending: [first] });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
+      "completed",
+    );
+    expect(
+      fixture.integration.acceptInteraction(bootstrap, {
+        ...base,
+        sequence: 6,
+        streamId: randomUUID(),
+      }),
+    ).toBe(false);
+    fixture.integration.acceptInteraction(bootstrap, {
+      ...base,
+      sequence: 6,
+      phase: "running",
+      pending: [first],
+    });
+    fixture.integration.observeExit(fixture.paneId, session.runtimeId as string, 1);
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe("failed");
+    expect(
+      fixture.integration.acceptInteraction(bootstrap, {
+        ...base,
+        sequence: 7,
+        pending: [first],
+      }),
+    ).toBe(false);
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe("failed");
+    fixture.repository.close();
+  });
+
+  it("projects auto-review as running and only a real approval RPC as interaction-required", () => {
+    const fixture = integrationFixture();
+    const bindingId = randomUUID();
+    const create = fixture.repository.preparePaneSessionOperation(
+      fixture.paneId,
+      "create",
+      null,
+      bindingId,
+    );
+    const session = sessionView();
+    const bootstrap = fixture.bootstrap(bindingId, session);
+    fixture.integration.launch(bootstrap);
+    fixture.repository.completePaneSessionOperation(
+      fixture.paneId,
+      "create",
+      create.operationKey as string,
+      session,
+    );
+    fixture.integration.bindRuntime(fixture.paneId, session);
+
+    const state = new CodexInteractionState("/safe/project", (snapshot) => {
+      expect(fixture.integration.acceptInteraction(bootstrap, snapshot)).toBe(true);
+    });
+    state.start();
+    state.observeClient({ id: 1, method: "thread/start", params: {} });
+    state.observeServer({
+      id: 1,
+      result: {
+        thread: {
+          id: CODEX_SESSION_ID,
+          cwd: "/safe/project",
+          parentThreadId: null,
+          status: { type: "idle" },
+        },
+      },
+    });
+    state.observeClient({ id: 2, method: "turn/start", params: { threadId: CODEX_SESSION_ID } });
+    state.observeServer({
+      method: "turn/started",
+      params: { threadId: CODEX_SESSION_ID, turn: { id: "turn-1" } },
+    });
+    state.observeServer({
+      method: "item/autoApprovalReview/started",
+      params: {
+        threadId: CODEX_SESSION_ID,
+        turnId: "turn-1",
+        reviewId: "review-1",
+        startedAtMs: 1,
+        action: { type: "requestPermissions", permissions: {} },
+        review: { status: "inProgress" },
+      },
+    });
+    // A legacy hook may also fire, but this runtime's app-server stream owns activity.
+    fixture.integration.acceptHook(bootstrap, {
+      type: "interaction-required",
+      sessionId: CODEX_SESSION_ID,
+      cwd: "/safe/project",
+      turnId: "turn-1",
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe("running");
+    state.observeServer({
+      method: "item/autoApprovalReview/completed",
+      params: {
+        threadId: CODEX_SESSION_ID,
+        turnId: "turn-1",
+        reviewId: "review-1",
+        startedAtMs: 1,
+        completedAtMs: 2,
+        decisionSource: "agent",
+        action: { type: "requestPermissions", permissions: {} },
+        review: { status: "approved" },
+      },
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe("running");
+    state.observeServer({
+      id: 7,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: CODEX_SESSION_ID, turnId: "turn-1" },
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe(
+      "interaction-required",
+    );
+    state.observeServer({
+      method: "serverRequest/resolved",
+      params: { threadId: CODEX_SESSION_ID, requestId: 7 },
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.activity.state).toBe("running");
+    fixture.repository.close();
+  });
+
+  it("does not erase a resumable session before the remote TUI has identified its thread", () => {
+    const fixture = integrationFixture();
+    const bindingId = randomUUID();
+    const create = fixture.repository.preparePaneSessionOperation(
+      fixture.paneId,
+      "create",
+      null,
+      bindingId,
+    );
+    const session = sessionView();
+    const bootstrap = fixture.bootstrap(bindingId, session);
+    fixture.integration.launch(bootstrap);
+    fixture.repository.completePaneSessionOperation(
+      fixture.paneId,
+      "create",
+      create.operationKey as string,
+      session,
+    );
+    fixture.integration.bindRuntime(fixture.paneId, session);
+    fixture.integration.acceptHook(bootstrap, {
+      type: "session-start",
+      sessionId: CODEX_SESSION_ID,
+      cwd: "/safe/project",
+      source: "resume",
+    });
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.codexSessionResumable).toBe(
+      true,
+    );
+
+    expect(
+      fixture.integration.acceptInteraction(bootstrap, {
+        streamId: randomUUID(),
+        sequence: 0,
+        cwd: "/safe/project",
+        sessionId: null,
+        identity: "unbound",
+        turnId: null,
+        phase: "idle",
+        pending: [],
+      }),
+    ).toBe(true);
+    fixture.integration.observeExit(fixture.paneId, session.runtimeId as string, 1);
+    expect(fixture.repository.getPaneContext(fixture.paneId)?.pane).toMatchObject({
+      codexSessionId: CODEX_SESSION_ID,
+      codexSessionResumable: true,
+      activity: { state: "failed" },
+    });
     fixture.repository.close();
   });
 });

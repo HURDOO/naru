@@ -38,6 +38,40 @@ export const CodexHookEventSchema = z.discriminatedUnion("type", [
 ]);
 export type CodexHookEvent = z.infer<typeof CodexHookEventSchema>;
 
+const InteractionRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
+
+/** Redacted, latest-only state from the Host-owned TUI/app-server relay. */
+export const CodexInteractionSnapshotSchema = z
+  .strictObject({
+    streamId: z.string().uuid(),
+    sequence: z.number().int().safe().nonnegative(),
+    cwd: z.string().min(1).max(4_096),
+    sessionId: CodexSessionIdSchema.nullable(),
+    identity: z.enum(["unbound", "bound", "cleared"]),
+    turnId: z.string().min(1).max(128).nullable(),
+    phase: z.enum(["idle", "running", "completed", "canceled", "failed"]),
+    pending: z
+      .array(
+        z.strictObject({
+          requestId: InteractionRequestIdSchema,
+          turnId: z.string().min(1).max(128).nullable(),
+          kind: z.enum(["command", "file-change", "permissions", "user-input", "mcp-elicitation"]),
+        }),
+      )
+      .max(64),
+  })
+  .refine(
+    (snapshot) =>
+      (snapshot.sessionId !== null && snapshot.identity === "bound") ||
+      (snapshot.sessionId === null &&
+        snapshot.identity !== "bound" &&
+        snapshot.turnId === null &&
+        snapshot.phase === "idle" &&
+        snapshot.pending.length === 0),
+    "An unbound Codex session cannot have an active turn or pending request.",
+  );
+export type CodexInteractionSnapshot = z.infer<typeof CodexInteractionSnapshotSchema>;
+
 const IntegrationEventBase = {
   version: z.literal(1),
   integrationKind: z.literal("codex"),
@@ -62,7 +96,7 @@ export const CodexIntegrationEventV1Schema = z.discriminatedUnion("eventKind", [
     ...IntegrationEventBase,
     eventKind: z.literal("session.identified"),
     codexSessionId: CodexSessionIdSchema,
-    source: HookSourceSchema.or(z.literal("status")).or(z.literal("exit-hint")),
+    source: HookSourceSchema.or(z.enum(["status", "exit-hint", "relay"])),
     resumable: z.boolean(),
   }),
   z.strictObject({

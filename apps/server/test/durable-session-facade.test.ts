@@ -776,6 +776,10 @@ class FakeCodexIntegration implements NaruCodexIntegrationPort {
     return false;
   }
 
+  acceptInteraction(): boolean {
+    return false;
+  }
+
   bindRuntime(paneId: string, session: SessionView): void {
     this.bound.push({ paneId, sessionId: session.sessionId, runtimeId: session.runtimeId });
   }
