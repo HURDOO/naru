@@ -41,7 +41,7 @@ export interface TerminalResizeScheduler {
   dispose(): void;
 }
 
-export const TERMINAL_RESIZE_SETTLE_MS = 80;
+export const TERMINAL_RESIZE_SETTLE_MS = 40;
 
 export function initialTerminalResizeState(
   host: TerminalHostGeometry,

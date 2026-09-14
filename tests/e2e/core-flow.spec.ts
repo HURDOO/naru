@@ -1704,6 +1704,7 @@ test("keeps a second browser observable until explicit takeover and preserves ev
       .toBeGreaterThan(foldBaselineResizeApplications);
     await expect(mobilePage.locator(".app-shell")).toHaveAttribute("data-workspace-view", "multi");
     await mobilePage.getByRole("tab", { name: /Dev Terminal/ }).click();
+    await expect(mobileDevTerminal).toHaveAttribute("data-restore-phase", "ready");
     const foldTerminalInput = mobilePage
       .getByLabel("Dev Terminal 터미널")
       .locator(".xterm-helper-textarea");
@@ -1717,6 +1718,7 @@ test("keeps a second browser observable until explicit takeover and preserves ev
       (await foldTerminalHost.getAttribute("data-resize-apply-count")) ?? "0",
     );
     await foldTerminalInput.focus();
+    await expect(foldTerminalInput).toBeFocused();
     await mobilePage.setViewportSize({ width: 687, height: 420 });
     await expect
       .poll(async () =>

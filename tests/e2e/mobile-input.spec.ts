@@ -60,9 +60,13 @@ test("Samsung Internet UA simulation of Android input and image paste", async ({
     await page.getByLabel(/표시 이름/).fill("Naru Mobile Input");
     await page.getByRole("button", { name: "연결하기" }).click();
   }
+  await page.getByRole("tab", { name: "Main Codex", exact: true }).click();
   const surface = page.getByLabel("Main Codex Codex");
   await expect(surface).toHaveAttribute("data-control-role", "controller");
-  await expect(surface.locator(".xterm-rows")).toContainText("FAKE_CODEX_READY");
+  await expect(surface).toHaveAttribute("data-restore-phase", "ready");
+  await expect(surface.locator(".xterm:not(.terminal-resize-freeze) .xterm-rows")).toContainText(
+    "FAKE_CODEX_READY",
+  );
   const input = surface.locator(".xterm-helper-textarea");
   await input.focus();
   await input.evaluate((textarea) => {
