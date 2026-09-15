@@ -1758,6 +1758,51 @@ button:disabled {
   outline-offset: 3px;
 }
 
+.terminal-selection-action-menu {
+  position: absolute;
+  top: 53px;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  max-width: calc(100% - 24px);
+  gap: 4px;
+  padding: 4px;
+  transform: translateX(-50%);
+  overflow-x: auto;
+  border: 1px solid #53616a;
+  border-radius: 10px;
+  background: #20272bf2;
+  box-shadow: 0 5px 20px #000b;
+  touch-action: manipulation;
+  scrollbar-width: none;
+}
+
+.terminal-selection-action-menu::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-selection-action-menu button {
+  min-width: 52px;
+  min-height: 42px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  color: #f2f6f8;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.terminal-selection-action-menu button:active {
+  background: #344047;
+}
+
+.terminal-selection-action-menu button:focus-visible {
+  outline: 2px solid #f28a55;
+  outline-offset: -2px;
+}
+
 .terminal-host .xterm-scrollable-element > .scrollbar.vertical > .slider {
   border-radius: 999px;
   background: #4a565d;
@@ -1788,6 +1833,10 @@ button:disabled {
   font-size: 11px;
   line-height: 1.4;
   pointer-events: none;
+}
+
+.pane-surface[data-touch-selection="true"] .terminal-clipboard-notice {
+  top: 106px;
 }
 
 .terminal-clipboard-notice.is-error {

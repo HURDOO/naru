@@ -1244,6 +1244,7 @@ export function TerminalPane({
       data-terminal-instance-id={terminalInstanceId || ""}
       data-scroll-bottom-offset={scrollBottomOffset}
       data-control-role={controlsPane ? "controller" : "observer"}
+      data-touch-selection={touchSelectionActive}
       onPointerDown={onActivate}
       onFocusCapture={onFocus ?? onActivate}
       onBlurCapture={() => requestAnimationFrame(() => promoteRestoreRef.current())}
@@ -1330,6 +1331,38 @@ export function TerminalPane({
         role={controlsPane ? undefined : "region"}
         aria-label={controlsPane ? undefined : `${pane.title} 보기 전용 터미널 출력`}
       />
+      {touchSelectionActive && (
+        <div
+          className="terminal-selection-action-menu"
+          role="toolbar"
+          aria-label={`${pane.title} 출력 선택 도구`}
+        >
+          <button
+            type="button"
+            aria-label={`${pane.title} 선택한 출력 복사`}
+            onClick={copySelectedOutput}
+          >
+            복사
+          </button>
+          <button
+            type="button"
+            aria-label={`${pane.title} 출력 전체 선택`}
+            onClick={() => touchSelectionRef.current?.selectAll()}
+          >
+            전체
+          </button>
+          <button
+            type="button"
+            aria-label={`${pane.title} 출력 선택 취소`}
+            onClick={() => {
+              touchSelectionRef.current?.cancel();
+              terminalRef.current?.focus();
+            }}
+          >
+            취소
+          </button>
+        </div>
+      )}
       {clipboardNotice && (
         <div
           className={`terminal-clipboard-notice is-${clipboardNotice.kind}`}
@@ -1390,31 +1423,6 @@ export function TerminalPane({
         >
           선택
         </button>
-        {touchSelectionActive && (
-          <>
-            <button
-              type="button"
-              aria-label={`${pane.title} 출력 전체 선택`}
-              onClick={() => touchSelectionRef.current?.selectAll()}
-            >
-              전체
-            </button>
-            <button
-              type="button"
-              aria-label={`${pane.title} 선택한 출력 복사`}
-              onClick={copySelectedOutput}
-            >
-              복사
-            </button>
-            <button
-              type="button"
-              aria-label={`${pane.title} 출력 선택 취소`}
-              onClick={() => touchSelectionRef.current?.cancel()}
-            >
-              취소
-            </button>
-          </>
-        )}
         <button
           type="button"
           className={ctrlArmed ? "is-active" : ""}

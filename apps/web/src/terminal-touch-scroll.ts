@@ -161,7 +161,7 @@ export function attachTerminalTouchScroll(
     gesture = beginTerminalTouchScroll(event.pointerId, event.clientX, event.clientY);
     selecting = selection?.active ?? false;
     if (selecting) {
-      if (selection?.hitTest(event.clientX, event.clientY) === "outside") {
+      if (selection?.hasSelection()) {
         selection.cancel();
         selecting = false;
         gesture = null;

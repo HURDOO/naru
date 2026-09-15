@@ -3,7 +3,7 @@ import type { Terminal } from "@xterm/xterm";
 export interface TerminalTouchSelectionController {
   readonly active: boolean;
   canLongPress(clientX: number, clientY: number): boolean;
-  hitTest(clientX: number, clientY: number): "empty" | "selected" | "outside";
+  hasSelection(): boolean;
   enter(): void;
   begin(clientX: number, clientY: number, longPress?: boolean): void;
   move(clientX: number, clientY: number): void;
@@ -59,16 +59,6 @@ export function touchSelectionSpan(
   return anchor;
 }
 
-export function touchSelectionHit(
-  selection: BufferSpan | null,
-  point: BufferPoint,
-  cols: number,
-): "empty" | "selected" | "outside" {
-  if (!selection) return "empty";
-  const index = point.row * cols + point.column;
-  return index >= selection.start && index < selection.end ? "selected" : "outside";
-}
-
 export function touchWordSpan(
   terminal: Pick<Terminal, "buffer" | "cols">,
   point: BufferPoint,
@@ -112,6 +102,8 @@ export function attachTerminalTouchSelection(
   let handleDrag: { pointerId: number; edge: "start" | "end"; span: BufferSpan } | null = null;
   let edgeScrollTimer: ReturnType<typeof setInterval> | null = null;
   let lastHandlePoint: { x: number; y: number } | null = null;
+  let focusAfterPaneTouch = false;
+  const paneSurface = screen.closest<HTMLElement>(".pane-surface");
   const handles = screen.ownerDocument.createElement("div");
   handles.className = "terminal-selection-handles";
   const startHandle = screen.ownerDocument.createElement("button");
@@ -281,6 +273,26 @@ export function attachTerminalTouchSelection(
     if (event.cancelable) event.preventDefault();
     event.stopImmediatePropagation();
   };
+  const onPaneTouchStart = (event: TouchEvent): void => {
+    if (!active || event.touches.length !== 1) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest(".terminal-selection-action-menu, .terminal-selection-handle")) return;
+    if (screen.contains(target) && (selectedSpan() === null || dragging !== null)) return;
+    const shouldRestoreInput = !target.closest(
+      "button, input, textarea, select, a, [role='button']",
+    );
+    cancel();
+    if (shouldRestoreInput) {
+      focusAfterPaneTouch = true;
+      terminal.focus();
+    }
+  };
+  const onPaneTouchEnd = (): void => {
+    if (!focusAfterPaneTouch) return;
+    focusAfterPaneTouch = false;
+    screen.ownerDocument.defaultView?.requestAnimationFrame(() => terminal.focus());
+  };
 
   const selectionChange = terminal.onSelectionChange(() => {
     retainedSpan = currentSpan() ?? retainedSpan;
@@ -299,6 +311,8 @@ export function attachTerminalTouchSelection(
   screen.ownerDocument.defaultView?.addEventListener("pointercancel", onWindowPointerEnd, true);
   screen.addEventListener("contextmenu", onContextMenu);
   screen.addEventListener("touchend", onTouchEnd, { capture: true, passive: false });
+  paneSurface?.addEventListener("touchstart", onPaneTouchStart, { capture: true, passive: true });
+  paneSurface?.addEventListener("touchend", onPaneTouchEnd, { capture: true, passive: true });
   handles.hidden = true;
 
   const cancel = (): void => {
@@ -320,8 +334,7 @@ export function attachTerminalTouchSelection(
     canLongPress: (clientX, clientY) =>
       screen.ownerDocument.activeElement !== terminal.textarea ||
       touchWordSpan(terminal, pointAt(clientX, clientY)) !== null,
-    hitTest: (clientX, clientY) =>
-      touchSelectionHit(selectedSpan(), pointAt(clientX, clientY), terminal.cols),
+    hasSelection: () => selectedSpan() !== null,
     enter: () => {
       active = true;
       dragging = null;
@@ -382,6 +395,8 @@ export function attachTerminalTouchSelection(
       );
       screen.removeEventListener("contextmenu", onContextMenu);
       screen.removeEventListener("touchend", onTouchEnd, true);
+      paneSurface?.removeEventListener("touchstart", onPaneTouchStart, true);
+      paneSurface?.removeEventListener("touchend", onPaneTouchEnd, true);
       handles.remove();
     },
   };

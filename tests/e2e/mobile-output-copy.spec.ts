@@ -42,17 +42,18 @@ test("selects and copies terminal output with touch without breaking scroll or f
   ).toHaveAttribute("aria-pressed", "true");
   await expect(input).not.toBeFocused();
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
+  await expect(surface.getByRole("toolbar", { name: "Dev Terminal 출력 선택 도구" })).toBeVisible();
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
-  const promptRow = outputRow.locator("xpath=following-sibling::div[1]");
-  const promptBounds = await promptRow.boundingBox();
-  if (!promptBounds) throw new Error("Prompt row has no bounds.");
-  const outsideX = promptBounds.x + promptBounds.width * 0.75;
-  const outsideY = promptBounds.y + promptBounds.height / 2;
+  const selectionScreenBounds = await surface.locator(".xterm-screen").boundingBox();
+  if (!selectionScreenBounds) throw new Error("Terminal selection screen has no bounds.");
+  const outsideX = selectionScreenBounds.x + selectionScreenBounds.width * 0.25;
+  const outsideY = selectionScreenBounds.y + selectionScreenBounds.height * 0.75;
   await dispatchTouch(cdp, "touchStart", outsideX, outsideY);
   await dispatchTouch(cdp, "touchEnd", outsideX, outsideY);
   await expect(
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
   ).toHaveAttribute("aria-pressed", "false");
+  await expect(surface.getByRole("toolbar", { name: "Dev Terminal 출력 선택 도구" })).toBeHidden();
   await expect(input).toBeFocused();
 
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
@@ -60,6 +61,21 @@ test("selects and copies terminal output with touch without breaking scroll or f
   await expect(
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY);
+  const paneTitle = surface.locator(".pane-identity").getByText("Dev Terminal", { exact: true });
+  const paneTitleBounds = await paneTitle.boundingBox();
+  if (!paneTitleBounds) throw new Error("Pane title has no bounds.");
+  const paneTitleX = paneTitleBounds.x + paneTitleBounds.width / 2;
+  const paneTitleY = paneTitleBounds.y + paneTitleBounds.height / 2;
+  await dispatchTouch(cdp, "touchStart", paneTitleX, paneTitleY);
+  await dispatchTouch(cdp, "touchEnd", paneTitleX, paneTitleY);
+  await expect(
+    surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await expect(input).toBeFocused();
+
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  await page.waitForTimeout(550);
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
   const endHandle = surface.locator(".terminal-selection-handle.is-end");

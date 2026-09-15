@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
   attachTerminalTouchSelection,
   touchBufferPoint,
-  touchSelectionHit,
   touchSelectionSpan,
   touchWordSpan,
 } from "./terminal-touch-selection";
@@ -33,23 +32,17 @@ describe("terminal touch selection", () => {
     expect(touchSelectionSpan(seed, { column: 4, row: 4 }, 10)).toEqual(seed);
   });
 
-  it("distinguishes selected cells from an outside tap", () => {
-    const selection = { start: 43, end: 47 };
-
-    expect(touchSelectionHit(null, { column: 4, row: 4 }, 10)).toBe("empty");
-    expect(touchSelectionHit(selection, { column: 3, row: 4 }, 10)).toBe("selected");
-    expect(touchSelectionHit(selection, { column: 6, row: 4 }, 10)).toBe("selected");
-    expect(touchSelectionHit(selection, { column: 7, row: 4 }, 10)).toBe("outside");
-    expect(touchSelectionHit(selection, { column: 2, row: 4 }, 10)).toBe("outside");
-  });
-
-  it("retains the selected span when xterm clears it before an outside tap is handled", () => {
+  it("retains the selected span and dismisses it when xterm clears first", () => {
+    const pane = document.createElement("section");
+    pane.className = "pane-surface";
     const screen = document.createElement("div");
-    document.body.appendChild(screen);
+    pane.appendChild(screen);
+    document.body.appendChild(pane);
     screen.getBoundingClientRect = () =>
       ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
     let selection: { start: { x: number; y: number }; end: { x: number; y: number } } | null = null;
-    let selectionListener = () => undefined;
+    let selectionListener: () => void = () => undefined;
+    let focusCount = 0;
     const textarea = document.createElement("textarea");
     const terminal = {
       cols: 10,
@@ -80,16 +73,24 @@ describe("terminal touch selection", () => {
         selectionListener();
       },
       blur: () => undefined,
+      focus: () => {
+        focusCount += 1;
+      },
       scrollLines: () => undefined,
     } as unknown as Terminal;
     const controller = attachTerminalTouchSelection(screen, terminal, () => undefined);
 
     controller.enter();
     controller.begin(15, 5);
+    controller.finish();
     terminal.clearSelection();
 
-    expect(controller.hitTest(15, 5)).toBe("selected");
-    expect(controller.hitTest(85, 5)).toBe("outside");
+    expect(controller.hasSelection()).toBe(true);
+    const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
+    screen.dispatchEvent(touchStart);
+    expect(controller.active).toBe(false);
+    expect(focusCount).toBe(1);
     controller.dispose();
   });
 
