@@ -1,6 +1,9 @@
+// @vitest-environment jsdom
+
 import type { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 import {
+  attachTerminalTouchSelection,
   touchBufferPoint,
   touchSelectionHit,
   touchSelectionSpan,
@@ -38,6 +41,56 @@ describe("terminal touch selection", () => {
     expect(touchSelectionHit(selection, { column: 6, row: 4 }, 10)).toBe("selected");
     expect(touchSelectionHit(selection, { column: 7, row: 4 }, 10)).toBe("outside");
     expect(touchSelectionHit(selection, { column: 2, row: 4 }, 10)).toBe("outside");
+  });
+
+  it("retains the selected span when xterm clears it before an outside tap is handled", () => {
+    const screen = document.createElement("div");
+    document.body.appendChild(screen);
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
+    let selection: { start: { x: number; y: number }; end: { x: number; y: number } } | null = null;
+    let selectionListener = () => undefined;
+    const textarea = document.createElement("textarea");
+    const terminal = {
+      cols: 10,
+      rows: 3,
+      textarea,
+      buffer: {
+        active: {
+          viewportY: 0,
+          length: 5,
+          getLine: () => undefined,
+        },
+      },
+      getSelectionPosition: () => selection,
+      onSelectionChange: (listener: () => void) => {
+        selectionListener = listener;
+        return { dispose: () => undefined };
+      },
+      onScroll: () => ({ dispose: () => undefined }),
+      select: (column: number, row: number, length: number) => {
+        selection = {
+          start: { x: column, y: row },
+          end: { x: column + length, y: row },
+        };
+        selectionListener();
+      },
+      clearSelection: () => {
+        selection = null;
+        selectionListener();
+      },
+      blur: () => undefined,
+      scrollLines: () => undefined,
+    } as unknown as Terminal;
+    const controller = attachTerminalTouchSelection(screen, terminal, () => undefined);
+
+    controller.enter();
+    controller.begin(15, 5);
+    terminal.clearSelection();
+
+    expect(controller.hitTest(15, 5)).toBe("selected");
+    expect(controller.hitTest(85, 5)).toBe("outside");
+    controller.dispose();
   });
 
   it("selects a Korean word by cell width and keeps an emoji intact", () => {

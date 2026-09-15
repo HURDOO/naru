@@ -2,7 +2,7 @@ import type { Terminal } from "@xterm/xterm";
 
 export interface TerminalTouchSelectionController {
   readonly active: boolean;
-  canLongPress(): boolean;
+  canLongPress(clientX: number, clientY: number): boolean;
   hitTest(clientX: number, clientY: number): "empty" | "selected" | "outside";
   enter(): void;
   begin(clientX: number, clientY: number, longPress?: boolean): void;
@@ -108,6 +108,7 @@ export function attachTerminalTouchSelection(
 ): TerminalTouchSelectionController {
   let active = false;
   let dragging: BufferSpan | null = null;
+  let retainedSpan: BufferSpan | null = null;
   let handleDrag: { pointerId: number; edge: "start" | "end"; span: BufferSpan } | null = null;
   let edgeScrollTimer: ReturnType<typeof setInterval> | null = null;
   let lastHandlePoint: { x: number; y: number } | null = null;
@@ -136,8 +137,10 @@ export function attachTerminalTouchSelection(
     };
   };
 
+  const selectedSpan = (): BufferSpan | null => currentSpan() ?? retainedSpan;
+
   const updateHandles = (): void => {
-    const span = active ? currentSpan() : null;
+    const span = active ? selectedSpan() : null;
     handles.hidden = span === null;
     if (!span) return;
     const bounds = screen.getBoundingClientRect();
@@ -168,6 +171,7 @@ export function attachTerminalTouchSelection(
       Math.max(span.end, start + 1),
       terminal.buffer.active.length * terminal.cols,
     );
+    retainedSpan = { start, end };
     terminal.select(start % terminal.cols, Math.floor(start / terminal.cols), end - start);
     publish();
   };
@@ -204,7 +208,7 @@ export function attachTerminalTouchSelection(
 
   const onHandlePointerDown = (event: PointerEvent): void => {
     const edge = event.currentTarget === startHandle ? "start" : "end";
-    const span = currentSpan();
+    const span = selectedSpan();
     if (!span) return;
     event.preventDefault();
     event.stopPropagation();
@@ -228,7 +232,7 @@ export function attachTerminalTouchSelection(
               ? terminal.cols
               : 0;
     if (delta === 0) return;
-    const span = currentSpan();
+    const span = selectedSpan();
     if (!span) return;
     event.preventDefault();
     event.stopPropagation();
@@ -278,7 +282,10 @@ export function attachTerminalTouchSelection(
     event.stopImmediatePropagation();
   };
 
-  const selectionChange = terminal.onSelectionChange(publish);
+  const selectionChange = terminal.onSelectionChange(() => {
+    retainedSpan = currentSpan() ?? retainedSpan;
+    publish();
+  });
   const scrollChange = terminal.onScroll(updateHandles);
   startHandle.addEventListener("pointerdown", onHandlePointerDown);
   endHandle.addEventListener("pointerdown", onHandlePointerDown);
@@ -299,6 +306,7 @@ export function attachTerminalTouchSelection(
     handleDrag = null;
     lastHandlePoint = null;
     dragging = null;
+    retainedSpan = null;
     active = false;
     screen.classList.remove("naru-touch-select");
     terminal.clearSelection();
@@ -309,12 +317,15 @@ export function attachTerminalTouchSelection(
     get active() {
       return active;
     },
-    canLongPress: () => screen.ownerDocument.activeElement !== terminal.textarea,
+    canLongPress: (clientX, clientY) =>
+      screen.ownerDocument.activeElement !== terminal.textarea ||
+      touchWordSpan(terminal, pointAt(clientX, clientY)) !== null,
     hitTest: (clientX, clientY) =>
-      touchSelectionHit(currentSpan(), pointAt(clientX, clientY), terminal.cols),
+      touchSelectionHit(selectedSpan(), pointAt(clientX, clientY), terminal.cols),
     enter: () => {
       active = true;
       dragging = null;
+      retainedSpan = null;
       terminal.clearSelection();
       terminal.blur();
       screen.classList.add("naru-touch-select");
@@ -345,6 +356,7 @@ export function attachTerminalTouchSelection(
     selectAll: () => {
       if (!active) return;
       terminal.selectAll();
+      retainedSpan = currentSpan();
       publish();
     },
     getSelection: () => (active ? terminal.getSelection() : ""),

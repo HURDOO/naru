@@ -39,14 +39,8 @@ test("selects and copies terminal output with touch without breaking scroll or f
   await page.waitForTimeout(550);
   await expect(
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
-  ).toHaveAttribute("aria-pressed", "false");
-  await dispatchTouch(cdp, "touchEnd", touchX, touchY);
-  await input.evaluate((element) => element.blur());
-  await dispatchTouch(cdp, "touchStart", touchX, touchY);
-  await page.waitForTimeout(550);
-  await expect(
-    surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }),
-  ).toBeVisible();
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(input).not.toBeFocused();
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
   const promptRow = outputRow.locator("xpath=following-sibling::div[1]");
@@ -61,9 +55,11 @@ test("selects and copies terminal output with touch without breaking scroll or f
   ).toHaveAttribute("aria-pressed", "false");
   await expect(input).toBeFocused();
 
-  await input.evaluate((element) => element.blur());
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
   await page.waitForTimeout(550);
+  await expect(
+    surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
   const endHandle = surface.locator(".terminal-selection-handle.is-end");

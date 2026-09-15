@@ -169,7 +169,7 @@ export function attachTerminalTouchScroll(
         return;
       }
       selection?.begin(event.clientX, event.clientY);
-    } else if (selection?.canLongPress()) {
+    } else if (selection?.canLongPress(event.clientX, event.clientY)) {
       clearLongPress();
       longPressTimer = setTimeout(() => {
         if (!gesture || gesture.pointerId !== event.pointerId || gesture.axis !== "pending") return;
