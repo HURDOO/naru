@@ -161,6 +161,13 @@ export function attachTerminalTouchScroll(
     gesture = beginTerminalTouchScroll(event.pointerId, event.clientX, event.clientY);
     selecting = selection?.active ?? false;
     if (selecting) {
+      if (selection?.hitTest(event.clientX, event.clientY) === "outside") {
+        selection.cancel();
+        selecting = false;
+        gesture = null;
+        terminal.focus();
+        return;
+      }
       selection?.begin(event.clientX, event.clientY);
     } else if (selection?.canLongPress()) {
       clearLongPress();

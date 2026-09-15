@@ -49,6 +49,23 @@ test("selects and copies terminal output with touch without breaking scroll or f
   ).toBeVisible();
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
+  const promptRow = outputRow.locator("xpath=following-sibling::div[1]");
+  const promptBounds = await promptRow.boundingBox();
+  if (!promptBounds) throw new Error("Prompt row has no bounds.");
+  const outsideX = promptBounds.x + promptBounds.width * 0.75;
+  const outsideY = promptBounds.y + promptBounds.height / 2;
+  await dispatchTouch(cdp, "touchStart", outsideX, outsideY);
+  await dispatchTouch(cdp, "touchEnd", outsideX, outsideY);
+  await expect(
+    surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await expect(input).toBeFocused();
+
+  await input.evaluate((element) => element.blur());
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  await page.waitForTimeout(550);
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY);
+  await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
   const endHandle = surface.locator(".terminal-selection-handle.is-end");
   await expect(endHandle).toBeVisible();
   const handleBounds = await endHandle.boundingBox();

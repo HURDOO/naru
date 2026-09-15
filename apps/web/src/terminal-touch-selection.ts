@@ -3,6 +3,7 @@ import type { Terminal } from "@xterm/xterm";
 export interface TerminalTouchSelectionController {
   readonly active: boolean;
   canLongPress(): boolean;
+  hitTest(clientX: number, clientY: number): "empty" | "selected" | "outside";
   enter(): void;
   begin(clientX: number, clientY: number, longPress?: boolean): void;
   move(clientX: number, clientY: number): void;
@@ -56,6 +57,16 @@ export function touchSelectionSpan(
   if (index < anchor.start) return { start: index, end: anchor.end };
   if (index >= anchor.end) return { start: anchor.start, end: index + 1 };
   return anchor;
+}
+
+export function touchSelectionHit(
+  selection: BufferSpan | null,
+  point: BufferPoint,
+  cols: number,
+): "empty" | "selected" | "outside" {
+  if (!selection) return "empty";
+  const index = point.row * cols + point.column;
+  return index >= selection.start && index < selection.end ? "selected" : "outside";
 }
 
 export function touchWordSpan(
@@ -299,6 +310,8 @@ export function attachTerminalTouchSelection(
       return active;
     },
     canLongPress: () => screen.ownerDocument.activeElement !== terminal.textarea,
+    hitTest: (clientX, clientY) =>
+      touchSelectionHit(currentSpan(), pointAt(clientX, clientY), terminal.cols),
     enter: () => {
       active = true;
       dragging = null;

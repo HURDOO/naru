@@ -1,6 +1,11 @@
 import type { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
-import { touchBufferPoint, touchSelectionSpan, touchWordSpan } from "./terminal-touch-selection";
+import {
+  touchBufferPoint,
+  touchSelectionHit,
+  touchSelectionSpan,
+  touchWordSpan,
+} from "./terminal-touch-selection";
 
 describe("terminal touch selection", () => {
   it("maps a touch to the visible absolute buffer cell and clamps screen edges", () => {
@@ -23,6 +28,16 @@ describe("terminal touch selection", () => {
       end: 47,
     });
     expect(touchSelectionSpan(seed, { column: 4, row: 4 }, 10)).toEqual(seed);
+  });
+
+  it("distinguishes selected cells from an outside tap", () => {
+    const selection = { start: 43, end: 47 };
+
+    expect(touchSelectionHit(null, { column: 4, row: 4 }, 10)).toBe("empty");
+    expect(touchSelectionHit(selection, { column: 3, row: 4 }, 10)).toBe("selected");
+    expect(touchSelectionHit(selection, { column: 6, row: 4 }, 10)).toBe("selected");
+    expect(touchSelectionHit(selection, { column: 7, row: 4 }, 10)).toBe("outside");
+    expect(touchSelectionHit(selection, { column: 2, row: 4 }, 10)).toBe("outside");
   });
 
   it("selects a Korean word by cell width and keeps an emoji intact", () => {
