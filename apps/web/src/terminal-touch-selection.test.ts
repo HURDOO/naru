@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { Terminal } from "@xterm/xterm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   attachTerminalTouchSelection,
   touchBufferPoint,
@@ -55,6 +55,7 @@ describe("terminal touch selection", () => {
           getLine: () => undefined,
         },
       },
+      getSelection: () => (selection ? "retained selection" : ""),
       getSelectionPosition: () => selection,
       onSelectionChange: (listener: () => void) => {
         selectionListener = listener;
@@ -129,5 +130,77 @@ describe("terminal touch selection", () => {
     expect(touchWordSpan(terminal, { column: 2, row: 2 })).toEqual({ start: 21, end: 27 });
     expect(touchWordSpan(terminal, { column: 7, row: 2 })).toEqual({ start: 27, end: 29 });
     expect(touchWordSpan(terminal, { column: 0, row: 2 })).toBeNull();
+  });
+
+  it("leaves the native context menu enabled and supplies xterm text to its copy event", () => {
+    const pane = document.createElement("section");
+    pane.className = "pane-surface";
+    const terminalElement = document.createElement("div");
+    const textarea = document.createElement("textarea");
+    const screen = document.createElement("div");
+    terminalElement.append(textarea, screen);
+    pane.appendChild(terminalElement);
+    document.body.appendChild(pane);
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
+    let selection: { start: { x: number; y: number }; end: { x: number; y: number } } | null = null;
+    let selectionListener: () => void = () => undefined;
+    const terminal = {
+      cols: 10,
+      rows: 3,
+      element: terminalElement,
+      textarea,
+      buffer: {
+        active: {
+          viewportY: 0,
+          length: 5,
+          getLine: () => undefined,
+        },
+      },
+      getSelection: () => (selection ? "native terminal selection" : ""),
+      getSelectionPosition: () => selection,
+      onSelectionChange: (listener: () => void) => {
+        selectionListener = listener;
+        return { dispose: () => undefined };
+      },
+      onScroll: () => ({ dispose: () => undefined }),
+      select: (column: number, row: number, length: number) => {
+        selection = {
+          start: { x: column, y: row },
+          end: { x: column + length, y: row },
+        };
+        selectionListener();
+      },
+      clearSelection: () => {
+        selection = null;
+        selectionListener();
+      },
+      blur: () => undefined,
+      focus: () => undefined,
+      scrollLines: () => undefined,
+    } as unknown as Terminal;
+    const copied = vi.fn();
+    const setData = vi.fn();
+    const controller = attachTerminalTouchSelection(screen, terminal, () => undefined, copied);
+
+    controller.begin(15, 5);
+    controller.finish();
+    terminal.clearSelection();
+    const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    screen.dispatchEvent(contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(false);
+    expect(textarea.value).toBe("native terminal selection");
+    expect(textarea.selectionStart).toBe(0);
+    expect(textarea.selectionEnd).toBe(textarea.value.length);
+
+    const copy = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copy, "clipboardData", { value: { setData } });
+    textarea.dispatchEvent(copy);
+
+    expect(copy.defaultPrevented).toBe(true);
+    expect(setData).toHaveBeenCalledWith("text/plain", "native terminal selection");
+    expect(copied).toHaveBeenCalledWith("copied");
+    controller.dispose();
   });
 });

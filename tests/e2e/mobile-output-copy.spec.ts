@@ -42,7 +42,7 @@ test("selects and copies terminal output with touch without breaking scroll or f
   ).toHaveAttribute("aria-pressed", "true");
   await expect(input).not.toBeFocused();
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
-  await expect(surface.getByRole("toolbar", { name: "Dev Terminal 출력 선택 도구" })).toBeVisible();
+  await expect(surface.locator(".terminal-selection-action-menu")).toHaveCount(0);
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
   const selectionScreenBounds = await surface.locator(".xterm-screen").boundingBox();
   if (!selectionScreenBounds) throw new Error("Terminal selection screen has no bounds.");
@@ -53,7 +53,6 @@ test("selects and copies terminal output with touch without breaking scroll or f
   await expect(
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
   ).toHaveAttribute("aria-pressed", "false");
-  await expect(surface.getByRole("toolbar", { name: "Dev Terminal 출력 선택 도구" })).toBeHidden();
   await expect(input).toBeFocused();
 
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
@@ -93,32 +92,35 @@ test("selects and copies terminal output with touch without breaking scroll or f
   await endHandle.focus();
   await expect(endHandle).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
+  await copyTerminalSelectionWithNativeCommand(page, surface, touchX, touchY);
   await expect
     .poll(() => page.evaluate(async () => navigator.clipboard.readText()))
     .toContain("T44_COPY_한글_😀");
+  await expect(surface.locator(".terminal-clipboard-notice")).toContainText("복사했습니다");
   await expect(
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
-  ).toHaveAttribute("aria-pressed", "false");
+  ).toHaveAttribute("aria-pressed", "true");
+  await dispatchTouch(cdp, "touchStart", outsideX, outsideY);
+  await dispatchTouch(cdp, "touchEnd", outsideX, outsideY);
+  await expect(input).toBeFocused();
 
   const selectionButton = surface.getByRole("button", {
     name: "Dev Terminal 출력 선택",
     exact: true,
   });
   await selectionButton.click();
-  await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
-  await expect(surface.locator(".terminal-clipboard-notice")).toContainText(
-    "복사할 터미널 출력을 먼저 선택",
-  );
   await dispatchTouch(cdp, "touchStart", rowBounds.x + 3, touchY);
   await dispatchTouch(cdp, "touchMove", rowBounds.x + 74, touchY);
   await dispatchTouch(cdp, "touchEnd", rowBounds.x + 74, touchY);
-  await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
+  await copyTerminalSelectionWithNativeCommand(page, surface, touchX, touchY);
   await expect
     .poll(() => page.evaluate(async () => navigator.clipboard.readText()))
     .toContain("T44_COPY");
   await selectionButton.click();
-  await surface.getByRole("button", { name: "Dev Terminal 출력 전체 선택" }).click();
+  await selectionButton.click();
+  await dispatchTouch(cdp, "touchStart", rowBounds.x + 3, touchY);
+  await dispatchTouch(cdp, "touchMove", rowBounds.x + 74, touchY);
+  await dispatchTouch(cdp, "touchEnd", rowBounds.x + 74, touchY);
   await page.setViewportSize({ width: 768, height: 780 });
   await expect(selectionButton).toHaveAttribute("aria-pressed", "false");
   await page.setViewportSize({ width: 360, height: 780 });
@@ -167,53 +169,26 @@ test("copies Codex Pane output with the explicit selection tool", async ({ page,
     "FAKE_CODEX_READY",
   );
   await expect(codex).toHaveAttribute("data-restore-phase", "ready");
+  const outputRow = codex
+    .locator(".xterm:not(.terminal-resize-freeze) .xterm-rows > div")
+    .filter({ hasText: "FAKE_CODEX_READY" })
+    .last();
+  const rowBounds = await outputRow.boundingBox();
+  if (!rowBounds) throw new Error("Codex output row has no bounds.");
+  const cdp = await context.newCDPSession(page);
   await codex.getByRole("button", { name: "Main Codex 출력 선택", exact: true }).click();
-  await codex.getByRole("button", { name: "Main Codex 출력 전체 선택" }).click();
-  await codex.getByRole("button", { name: "Main Codex 선택한 출력 복사" }).click();
+  await dispatchTouch(cdp, "touchStart", rowBounds.x + 3, rowBounds.y + rowBounds.height / 2);
+  await dispatchTouch(cdp, "touchMove", rowBounds.x + 140, rowBounds.y + rowBounds.height / 2);
+  await dispatchTouch(cdp, "touchEnd", rowBounds.x + 140, rowBounds.y + rowBounds.height / 2);
+  await copyTerminalSelectionWithNativeCommand(
+    page,
+    codex,
+    rowBounds.x + 24,
+    rowBounds.y + rowBounds.height / 2,
+  );
   await expect
     .poll(() => page.evaluate(async () => navigator.clipboard.readText()))
     .toContain("FAKE_CODEX_READY");
-});
-
-test("copy remains read-only for an observer and reports clipboard rejection", async ({
-  page,
-  browser,
-}) => {
-  await openTerminal(page);
-  const observerContext = await browser.newContext({
-    hasTouch: true,
-    viewport: { width: 360, height: 780 },
-    permissions: ["clipboard-read", "clipboard-write"],
-  });
-  try {
-    const observer = await observerContext.newPage();
-    await openTerminal(observer);
-    await expect(observer.locator(".app-shell")).toHaveAttribute("data-surface-role", "observer");
-    const surface = observer.getByLabel("Dev Terminal 터미널");
-    await expect(surface).toHaveAttribute("data-control-role", "observer");
-    await surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }).click();
-    await surface.getByRole("button", { name: "Dev Terminal 출력 전체 선택" }).click();
-    await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
-    await expect(surface.locator(".terminal-clipboard-notice")).toContainText("복사했습니다");
-
-    await observer.evaluate(() => {
-      Object.defineProperty(navigator.clipboard, "writeText", {
-        configurable: true,
-        value: () => Promise.reject(new Error("denied")),
-      });
-    });
-    await surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }).click();
-    await surface.getByRole("button", { name: "Dev Terminal 출력 전체 선택" }).click();
-    await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
-    await expect(surface.locator(".terminal-clipboard-notice")).toContainText(
-      "복사하지 못했습니다",
-    );
-    await expect(
-      surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
-  } finally {
-    await observerContext.close();
-  }
 });
 
 async function openTerminal(
@@ -239,6 +214,31 @@ async function openTerminal(
   });
   if (await restart.isVisible()) await restart.click();
   await expect(surface).toHaveAttribute("data-restore-phase", "ready");
+}
+
+async function copyTerminalSelectionWithNativeCommand(
+  page: Page,
+  surface: ReturnType<Page["getByLabel"]>,
+  clientX: number,
+  clientY: number,
+): Promise<void> {
+  await openNativeSelectionMenu(surface, clientX, clientY);
+  const copied = await page.evaluate(() => document.execCommand("copy"));
+  expect(copied).toBe(true);
+}
+
+async function openNativeSelectionMenu(
+  surface: ReturnType<Page["getByLabel"]>,
+  clientX: number,
+  clientY: number,
+): Promise<void> {
+  await surface.locator(".xterm-screen").dispatchEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    button: 2,
+    clientX,
+    clientY,
+  });
 }
 
 async function dispatchTouch(

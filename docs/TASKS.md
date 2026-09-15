@@ -232,6 +232,13 @@ ownership과 integration gate를 지킨다.
     제거했다. 선택 범위가 있으면 메뉴·핸들을 제외한 pane의 짧은 터치를 capture `touchstart`에서
     해제하고, 범위 조정은 핸들로만 수행한다. 관련 unit 4건과 선택·복사 및 기존 Samsung UA
     입력·이미지 E2E 4건이 통과했다.
+  - 네이티브 복사 보완(2026-09-16): Samsung Internet의 네이티브 선택 메뉴는 나타나지만
+    `복사`가 빈 clipboard로 끝나고 앱 알림도 없다는 사용자 확인을 반영했다. 떠 있는
+    복사·전체·취소 메뉴는 제거했다. xterm 좌표 선택을 숨은 입력 요소의 실제 텍스트 선택으로
+    동기화하고 `contextmenu` 기본 동작을 허용하며, 네이티브 `copy` 이벤트에 선택한 일반 텍스트를
+    제공한 뒤 성공 알림을 표시한다. 터치 종료 중 xterm이 선택을 먼저 지우는 경우에도 보관한
+    범위와 텍스트를 사용한다. 선택 핸들과 pane 바깥 탭 해제·focus 복원은 유지한다. Node 24에서
+    관련 unit 12건, shell·Codex 네이티브 copy 및 Samsung UA 입력 E2E 3건, typecheck가 통과했다.
   - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
     붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
     실기기 인수로 간주하지 않는다. 운영 반영은 별도다.

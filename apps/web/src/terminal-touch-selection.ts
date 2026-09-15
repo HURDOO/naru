@@ -14,6 +14,8 @@ export interface TerminalTouchSelectionController {
   dispose(): void;
 }
 
+export type TerminalNativeCopyResult = "copied" | "empty" | "unavailable";
+
 interface BufferPoint {
   column: number;
   row: number;
@@ -95,10 +97,12 @@ export function attachTerminalTouchSelection(
   screen: HTMLElement,
   terminal: Terminal,
   onChange: (active: boolean) => void,
+  onNativeCopy?: (result: TerminalNativeCopyResult) => void,
 ): TerminalTouchSelectionController {
   let active = false;
   let dragging: BufferSpan | null = null;
   let retainedSpan: BufferSpan | null = null;
+  let retainedText = "";
   let handleDrag: { pointerId: number; edge: "start" | "end"; span: BufferSpan } | null = null;
   let edgeScrollTimer: ReturnType<typeof setInterval> | null = null;
   let lastHandlePoint: { x: number; y: number } | null = null;
@@ -130,6 +134,21 @@ export function attachTerminalTouchSelection(
   };
 
   const selectedSpan = (): BufferSpan | null => currentSpan() ?? retainedSpan;
+
+  const selectionText = (): string => {
+    const current = terminal.getSelection();
+    if (current) {
+      retainedText = current;
+      return current;
+    }
+    if (!active) return "";
+    if (retainedText) return retainedText;
+    if (!retainedSpan) return "";
+    selectSpan(retainedSpan);
+    const restored = terminal.getSelection();
+    if (restored) retainedText = restored;
+    return restored;
+  };
 
   const updateHandles = (): void => {
     const span = active ? selectedSpan() : null;
@@ -165,6 +184,7 @@ export function attachTerminalTouchSelection(
     );
     retainedSpan = { start, end };
     terminal.select(start % terminal.cols, Math.floor(start / terminal.cols), end - start);
+    retainedText = terminal.getSelection() || retainedText;
     publish();
   };
 
@@ -265,19 +285,40 @@ export function attachTerminalTouchSelection(
     lastHandlePoint = null;
   };
 
-  const onContextMenu = (event: MouseEvent): void => {
-    if (active) event.preventDefault();
-  };
-  const onTouchEnd = (event: TouchEvent): void => {
+  const prepareNativeCopy = (): void => {
     if (!active) return;
-    if (event.cancelable) event.preventDefault();
-    event.stopImmediatePropagation();
+    const value = selectionText();
+    const textarea = terminal.textarea;
+    if (!value || !textarea) return;
+    textarea.value = value;
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(0, value.length);
+  };
+  const onContextMenu = (): void => {
+    // xterm stores its selection outside the browser DOM. Mirror it into xterm's textarea and
+    // leave the contextmenu default enabled so Android can show its native selection actions.
+    prepareNativeCopy();
+  };
+  const onCopy = (event: ClipboardEvent): void => {
+    if (!active) return;
+    const value = selectionText();
+    if (!value) {
+      onNativeCopy?.("empty");
+      return;
+    }
+    if (!event.clipboardData) {
+      onNativeCopy?.("unavailable");
+      return;
+    }
+    event.clipboardData.setData("text/plain", value);
+    event.preventDefault();
+    onNativeCopy?.("copied");
   };
   const onPaneTouchStart = (event: TouchEvent): void => {
     if (!active || event.touches.length !== 1) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.closest(".terminal-selection-action-menu, .terminal-selection-handle")) return;
+    if (target.closest(".terminal-selection-handle")) return;
     if (screen.contains(target) && (selectedSpan() === null || dragging !== null)) return;
     const shouldRestoreInput = !target.closest(
       "button, input, textarea, select, a, [role='button']",
@@ -296,6 +337,7 @@ export function attachTerminalTouchSelection(
 
   const selectionChange = terminal.onSelectionChange(() => {
     retainedSpan = currentSpan() ?? retainedSpan;
+    retainedText = terminal.getSelection() || retainedText;
     publish();
   });
   const scrollChange = terminal.onScroll(updateHandles);
@@ -310,20 +352,26 @@ export function attachTerminalTouchSelection(
   screen.ownerDocument.defaultView?.addEventListener("pointerup", onWindowPointerEnd, true);
   screen.ownerDocument.defaultView?.addEventListener("pointercancel", onWindowPointerEnd, true);
   screen.addEventListener("contextmenu", onContextMenu);
-  screen.addEventListener("touchend", onTouchEnd, { capture: true, passive: false });
+  terminal.element?.addEventListener("copy", onCopy, true);
   paneSurface?.addEventListener("touchstart", onPaneTouchStart, { capture: true, passive: true });
   paneSurface?.addEventListener("touchend", onPaneTouchEnd, { capture: true, passive: true });
   handles.hidden = true;
 
   const cancel = (): void => {
+    const wasActive = active;
     stopEdgeScroll();
     handleDrag = null;
     lastHandlePoint = null;
     dragging = null;
     retainedSpan = null;
+    retainedText = "";
     active = false;
     screen.classList.remove("naru-touch-select");
     terminal.clearSelection();
+    if (wasActive && terminal.textarea) {
+      terminal.textarea.value = "";
+      terminal.textarea.setSelectionRange(0, 0);
+    }
     publish();
   };
 
@@ -339,6 +387,7 @@ export function attachTerminalTouchSelection(
       active = true;
       dragging = null;
       retainedSpan = null;
+      retainedText = "";
       terminal.clearSelection();
       terminal.blur();
       screen.classList.add("naru-touch-select");
@@ -370,9 +419,10 @@ export function attachTerminalTouchSelection(
       if (!active) return;
       terminal.selectAll();
       retainedSpan = currentSpan();
+      retainedText = terminal.getSelection();
       publish();
     },
-    getSelection: () => (active ? terminal.getSelection() : ""),
+    getSelection: () => (active ? selectionText() : ""),
     cancel,
     dispose: () => {
       cancel();
@@ -394,7 +444,7 @@ export function attachTerminalTouchSelection(
         true,
       );
       screen.removeEventListener("contextmenu", onContextMenu);
-      screen.removeEventListener("touchend", onTouchEnd, true);
+      terminal.element?.removeEventListener("copy", onCopy, true);
       paneSurface?.removeEventListener("touchstart", onPaneTouchStart, true);
       paneSurface?.removeEventListener("touchend", onPaneTouchEnd, true);
       handles.remove();
