@@ -55,6 +55,22 @@ test("selects and copies terminal output with touch without breaking scroll or f
   ).toHaveAttribute("aria-pressed", "false");
   await expect(input).toBeFocused();
 
+  const blankX = selectionScreenBounds.x + selectionScreenBounds.width * 0.85;
+  await dispatchTouch(cdp, "touchStart", blankX, touchY);
+  await page.waitForTimeout(550);
+  await expect(
+    surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await dispatchTouch(cdp, "touchEnd", blankX, touchY);
+  await openNativeSelectionMenu(surface, blankX, touchY);
+  await expect(input).toHaveValue("\u00a0");
+  await expect
+    .poll(() => input.evaluate((element) => (element as HTMLTextAreaElement).selectionEnd))
+    .toBe(1);
+  await dispatchTouch(cdp, "touchStart", outsideX, outsideY);
+  await dispatchTouch(cdp, "touchEnd", outsideX, outsideY);
+  await expect(input).toBeFocused();
+
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
   await page.waitForTimeout(550);
   await expect(

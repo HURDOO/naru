@@ -199,9 +199,8 @@ ownership과 integration gate를 지킨다.
 - [-] T44 모바일 output 선택·복사
   - 모바일의 Codex·shell Pane에서 출력 텍스트를 길게 눌러 선택하고 범위를 조정해 명시적인
     복사 동작으로 일반 텍스트를 clipboard에 쓴다. 긴 누르기를 가로채는 브라우저를 위해
-    선택 도구 진입점도 제공한다. 입력에 초점이 있어도 출력 문자가 있는 위치의 긴 누르기는
-    선택을 시작하고, 빈 입력 영역의 긴 누르기는 기존 붙여넣기에 남긴다. 보기 전용 화면에서도
-    선택·복사할 수 있다.
+    선택 도구 진입점도 제공한다. 입력에 초점이 있어도 출력의 문자·공백 셀 긴 누르기는 선택을
+    시작하고 Android 네이티브 선택 동작을 연다. 보기 전용 화면에서도 선택·복사할 수 있다.
   - 빈 선택과 clipboard 거부를 분명히 알리고, 선택 내용은 저장·로그·Host 전송하지 않는다.
     기존 스크롤·스크롤바·한글 IME·이미지 붙여넣기·focus·reconnect·controller handoff를
     보존한다. renderer 교체나 column reflow 뒤에는 무효 선택을 복사하지 않는다.
@@ -239,6 +238,15 @@ ownership과 integration gate를 지킨다.
     제공한 뒤 성공 알림을 표시한다. 터치 종료 중 xterm이 선택을 먼저 지우는 경우에도 보관한
     범위와 텍스트를 사용한다. 선택 핸들과 pane 바깥 탭 해제·focus 복원은 유지한다. Node 24에서
     관련 unit 12건, shell·Codex 네이티브 copy 및 Samsung UA 입력 E2E 3건, typecheck가 통과했다.
+  - 네이티브 복사 재보완(2026-09-16): 네이티브 메뉴의 `복사`가 계속 clipboard와 앱 알림에
+    전달되지 않고, 공백 셀의 긴 누르기에는 메뉴가 나타나지 않는다는 실기기 결과를 반영했다.
+    terminal 내부 요소에 한정했던 `copy` 수신을 현재 선택을 소유한 pane의 document capture로
+    옮기고, 메뉴 동작 직전 pane touch가 선택 표시를 먼저 지워도 10초 동안 원문만 보관해 복사
+    이벤트에 제공한다. 다른 입력 요소의 복사는 가로채지 않는다. 공백 셀도 선택 모드에 진입하며,
+    빈 xterm 선택은 숨은 textarea의 non-breaking space 한 글자로 네이티브 선택 범위를 만든다.
+    clipboard에는 placeholder 대신 원래의 빈 값을 제공하고 빈 선택 알림을 표시한다. 관련 unit
+    13건과 공백 긴 누르기를 포함한 shell·Codex 네이티브 copy 및 Samsung UA 입력 E2E 3건,
+    lint·typecheck·web build가 통과했다.
   - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
     붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
     실기기 인수로 간주하지 않는다. 운영 반영은 별도다.

@@ -132,7 +132,7 @@ describe("terminal touch selection", () => {
     expect(touchWordSpan(terminal, { column: 0, row: 2 })).toBeNull();
   });
 
-  it("leaves the native context menu enabled and supplies xterm text to its copy event", () => {
+  it("keeps native copy data after the pane touch dismisses the visual selection", () => {
     const pane = document.createElement("section");
     pane.className = "pane-surface";
     const terminalElement = document.createElement("div");
@@ -186,21 +186,106 @@ describe("terminal touch selection", () => {
     controller.begin(15, 5);
     controller.finish();
     terminal.clearSelection();
+    const xtermContextMenu = vi.fn(() => {
+      textarea.value = "";
+    });
+    terminalElement.addEventListener("contextmenu", xtermContextMenu);
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
 
     expect(contextMenu.defaultPrevented).toBe(false);
+    expect(xtermContextMenu).not.toHaveBeenCalled();
     expect(textarea.value).toBe("native terminal selection");
     expect(textarea.selectionStart).toBe(0);
     expect(textarea.selectionEnd).toBe(textarea.value.length);
 
+    const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
+    screen.dispatchEvent(touchStart);
+
+    expect(controller.active).toBe(false);
+    expect(textarea.value).toBe("");
+
     const copy = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copy, "clipboardData", { value: { setData } });
-    textarea.dispatchEvent(copy);
+    document.dispatchEvent(copy);
 
     expect(copy.defaultPrevented).toBe(true);
     expect(setData).toHaveBeenCalledWith("text/plain", "native terminal selection");
     expect(copied).toHaveBeenCalledWith("copied");
+    controller.dispose();
+  });
+
+  it("creates a native textarea selection when a focused blank cell is long-pressed", () => {
+    const pane = document.createElement("section");
+    pane.className = "pane-surface";
+    const terminalElement = document.createElement("div");
+    const textarea = document.createElement("textarea");
+    const screen = document.createElement("div");
+    terminalElement.append(textarea, screen);
+    pane.appendChild(terminalElement);
+    document.body.appendChild(pane);
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
+    let selection: { start: { x: number; y: number }; end: { x: number; y: number } } | null = null;
+    let selectionListener: () => void = () => undefined;
+    const terminal = {
+      cols: 10,
+      rows: 3,
+      element: terminalElement,
+      textarea,
+      buffer: {
+        active: {
+          viewportY: 0,
+          length: 5,
+          getLine: () => undefined,
+        },
+      },
+      getSelection: () => "",
+      getSelectionPosition: () => selection,
+      onSelectionChange: (listener: () => void) => {
+        selectionListener = listener;
+        return { dispose: () => undefined };
+      },
+      onScroll: () => ({ dispose: () => undefined }),
+      select: (column: number, row: number, length: number) => {
+        selection = {
+          start: { x: column, y: row },
+          end: { x: column + length, y: row },
+        };
+        selectionListener();
+      },
+      clearSelection: () => {
+        selection = null;
+        selectionListener();
+      },
+      blur: () => undefined,
+      focus: () => undefined,
+      scrollLines: () => undefined,
+    } as unknown as Terminal;
+    const copied = vi.fn();
+    const setData = vi.fn();
+    const controller = attachTerminalTouchSelection(screen, terminal, () => undefined, copied);
+
+    textarea.focus();
+    expect(controller.canLongPress(15, 5)).toBe(true);
+    controller.begin(15, 5, true);
+    controller.finish();
+    const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    screen.dispatchEvent(contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(false);
+    expect(textarea.value).toBe("\u00a0");
+    expect(textarea.selectionStart).toBe(0);
+    expect(textarea.selectionEnd).toBe(1);
+
+    const copy = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copy, "clipboardData", { value: { setData } });
+    document.dispatchEvent(copy);
+
+    expect(copy.defaultPrevented).toBe(true);
+    expect(setData).toHaveBeenCalledWith("text/plain", "");
+    expect(copied).toHaveBeenCalledWith("empty");
     controller.dispose();
   });
 });
