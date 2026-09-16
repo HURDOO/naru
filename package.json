@@ -17,7 +17,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:operations": "vitest run apps/server/test/environment-file.test.ts apps/server/test/database-backup.test.ts apps/server/test/operations.test.ts apps/server/test/discord-notifier.test.ts apps/server/test/maintenance.test.ts apps/server/test/cloudflare-dns.test.ts apps/server/test/authoritative-dns.test.ts apps/server/test/acme-renewal.test.ts apps/server/test/tls-certificate.test.ts apps/server/test/shutdown.test.ts",
-    "test:production-smoke": "pnpm build && playwright test --config playwright.production.config.ts",
+    "test:production-smoke": "NARU_APP_BASE_PATH=/ pnpm build && playwright test --config playwright.production.config.ts",
     "test:private-ingress-acceptance": "PRIVATE_INGRESS_ACTUAL_ACCEPTANCE=1 vitest run apps/server/test/private-ingress-release.actual.acceptance.test.ts",
     "test:performance": "pnpm test:performance:terminal && pnpm test:performance:browser",
     "test:performance:browser": "playwright test --config playwright.performance.config.ts",

@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DISTRIBUTION_SCHEMA_VERSION, WORKSTATION_PACKAGE_ID } from "./constants.js";
 import { PRIVATE_INGRESS_DISTRIBUTION_SCHEMA_VERSION } from "./constants.js";
+import { NARU_DEFAULT_APP_BASE_PATH } from "../../../packages/contracts/src/naru-app/v1/index.js";
 import { PrivateIngressV0Schema } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { createWorkstationAuthIntent, type WorkstationAuthOperation } from "./auth.js";
 import { verifyDistributionArtifact } from "./artifact.js";
@@ -349,6 +350,7 @@ function createIntent(options: IntentOptions): WorkstationInstallationIntent {
     targetUid: identity.uid,
     homeDirectory: identity.homedir,
     artifactRoot: options.artifactRoot,
+    naruAppBasePath: NARU_DEFAULT_APP_BASE_PATH,
     canonicalBrowserOrigin: privateIngress?.browserOrigin ?? options.canonicalBrowserOrigin,
     allowedProjectRoots: options.projectRoots,
     nodeExecutable,

@@ -121,6 +121,7 @@ actualDescribe("PI-06 isolated release continuity acceptance", () => {
       projectRoots: [root.path],
       dataDir: join(hostFixture.root, "pi06-naru-data"),
       secureCookie: false,
+      appBasePath: "/",
       gatewayAuth: {
         issuer: gatewayConfig.instanceId,
         audience: "fixture-app",

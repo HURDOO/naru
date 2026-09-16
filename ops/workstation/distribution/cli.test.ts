@@ -99,7 +99,10 @@ describe("T14 Workstation CLI auth command", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       expect(await runDistributionCli(base)).toBe(0);
-      expect(JSON.parse(output)).toMatchObject({ nodeExecutable: fixture.nodeExecutable });
+      expect(JSON.parse(output)).toMatchObject({
+        naruAppBasePath: "/naru",
+        nodeExecutable: fixture.nodeExecutable,
+      });
       expect(
         await runDistributionCli([
           ...base.slice(0, -1),
@@ -146,6 +149,7 @@ describe("T14 Workstation CLI auth command", () => {
       ).toBe(0);
       expect(JSON.parse(output)).toMatchObject({
         version: 2,
+        naruAppBasePath: "/naru",
         canonicalBrowserOrigin: fixture.intent.canonicalBrowserOrigin,
         ingress: { kind: "direct-private-tls" },
       });

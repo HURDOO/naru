@@ -44,6 +44,7 @@ const serviceEnvironment = {
   NARU_ALLOWED_ORIGINS: origin,
   NARU_PROJECT_ROOTS: allowedProjectRoot,
   NARU_AUTH_MODE: "app-managed",
+  NARU_APP_BASE_PATH: "/",
   NARU_PASSWORD_HASH: passwordHash,
   NARU_SESSION_SECRET: "naru-production-smoke-session-secret-1234567890",
   NARU_DATA_DIR: dataDirectory,

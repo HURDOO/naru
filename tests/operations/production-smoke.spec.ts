@@ -69,7 +69,7 @@ test("serves a clean production build and completes login, project, and PTY smok
     .toBe(true);
   const cacheInspection = await page.evaluate(async () => {
     const names = await caches.keys();
-    const shellNames = names.filter((name) => name.startsWith("naru-app-shell-"));
+    const shellNames = names.filter((name) => name.startsWith("naru-app-shell:/:"));
     const entries = await Promise.all(
       shellNames.map(async (name) => {
         const cache = await caches.open(name);

@@ -12,11 +12,25 @@ describe("TerminalConnection authentication recovery", () => {
     sessionStorage.clear();
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);
+    const basePath = document.createElement("meta");
+    basePath.name = "naru-app-base-path";
+    basePath.content = "/";
+    document.head.append(basePath);
   });
 
   afterEach(() => {
+    document.querySelectorAll('meta[name="naru-app-base-path"]').forEach((node) => node.remove());
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("opens the terminal WebSocket under the configured app base path", () => {
+    const basePath = document.querySelector<HTMLMetaElement>('meta[name="naru-app-base-path"]');
+    if (basePath === null) throw new Error("Fixture app base path metadata is missing.");
+    basePath.content = "/naru";
+    const connection = new TerminalConnection();
+    expect(new URL(FakeWebSocket.instances[0]!.url).pathname).toBe("/naru/api/terminal");
+    connection.dispose();
   });
 
   it("turns an expired established lease into a terminal authentication state without retrying", async () => {

@@ -1,4 +1,5 @@
 import { isLoopbackHost, isValidSessionCookieName, type AppConfig } from "./config.js";
+import { parseNaruAppBasePath } from "@naru/contracts/naru-app/v1";
 
 export type CheckStatus = "ok" | "failed";
 
@@ -34,8 +35,18 @@ export function configurationReadiness(config: AppConfig): CheckStatus {
     config.host.length > 0 &&
     (isLoopbackHost(config.host) || (config.allowedClientIps?.size ?? 0) > 0) &&
     Number.isInteger(config.port) &&
-    config.port > 0;
+    config.port > 0 &&
+    isCanonicalAppBasePath(config.appBasePath) &&
+    (config.authMode === "gateway-managed" || config.appBasePath === "/");
   return valid ? "ok" : "failed";
+}
+
+function isCanonicalAppBasePath(value: string): boolean {
+  try {
+    return parseNaruAppBasePath(value) === value;
+  } catch {
+    return false;
+  }
 }
 
 export function readinessStatus(checks: ReadinessChecks): "ready" | "not_ready" {

@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  NARU_APP_BASE_PATH_META_NAME,
+  naruAppPath,
+  naruAppScopePath,
+  parseNaruAppBasePath,
+} from "@naru/contracts/naru-app/v1";
 import { WORKSTATION_GATEWAY_BROWSER_ROUTE_PREFIX } from "@naru/contracts/workstation-gateway/v1";
 import type { Plugin } from "vite";
 import { PUBLIC_PWA_BUILD_FIXTURE_ORIGIN } from "./src/public-build-config.js";
 
-export const PWA_CACHE_PREFIX = "naru-app-shell-";
+export const PWA_CACHE_PREFIX = "naru-app-shell:";
 
-export const PWA_PUBLIC_ASSETS = [
+export const PWA_PUBLIC_ASSET_PATHS = [
   "/manifest.webmanifest",
   "/icons/naru-192.png",
   "/icons/naru-512.png",
@@ -19,17 +25,26 @@ export const PWA_PUBLIC_ASSETS = [
 export function pwaServiceWorkerPlugin(
   publicDirectory: string,
   canonicalOrigin = PUBLIC_PWA_BUILD_FIXTURE_ORIGIN,
+  appBasePath = "/",
 ): Plugin {
   const renderedOrigin = validatePwaBuildOrigin(canonicalOrigin);
+  const renderedBasePath = parseNaruAppBasePath(appBasePath);
   return {
     name: "naru-pwa-service-worker",
     apply: "build",
     transformIndexHtml(source) {
-      return renderPwaOriginMeta(source, renderedOrigin);
+      return renderPwaBuildMetadata(source, renderedOrigin, renderedBasePath);
     },
     generateBundle(_options, bundle) {
+      const manifestSource = readFileSync(join(publicDirectory, "manifest.webmanifest"), "utf8");
+      this.emitFile({
+        type: "asset",
+        fileName: "manifest.webmanifest",
+        source: renderPwaManifestBasePath(manifestSource, renderedBasePath),
+      });
       const hash = createHash("sha256");
       hash.update(renderedOrigin);
+      hash.update(renderedBasePath);
       const bundlePaths = Object.keys(bundle)
         .filter((filename) => !filename.endsWith(".map") && filename !== "sw.js")
         .sort();
@@ -42,38 +57,82 @@ export function pwaServiceWorkerPlugin(
       }
       hash.update("/index.html");
       hash.update(readFileSync(join(publicDirectory, "..", "index.html")));
-      for (const pathname of PWA_PUBLIC_ASSETS) {
+      for (const pathname of PWA_PUBLIC_ASSET_PATHS) {
         hash.update(pathname);
         hash.update(readFileSync(join(publicDirectory, pathname.slice(1))));
       }
 
       const revision = hash.digest("hex").slice(0, 20);
-      const appShellPaths = [
+      const appShellPathSuffixes = [
         "/index.html",
         ...bundlePaths.map((filename) => `/${filename}`),
-        ...PWA_PUBLIC_ASSETS,
+        ...PWA_PUBLIC_ASSET_PATHS,
       ].sort();
       this.emitFile({
         type: "asset",
         fileName: "sw.js",
-        source: createServiceWorkerSource(revision, appShellPaths),
+        source: createServiceWorkerSource(revision, appShellPathSuffixes, renderedBasePath),
       });
     },
   };
 }
 
-export function renderPwaOriginMeta(source: string, canonicalOrigin: string): string {
+export function renderPwaBuildMetadata(
+  source: string,
+  canonicalOrigin: string,
+  appBasePath: string,
+): string {
   const origin = validatePwaBuildOrigin(canonicalOrigin);
-  const pattern = /<meta\s+name=["']naru-canonical-origin["']\s+content=["']([^"']*)["']\s*\/?>/g;
-  const matches = [...source.matchAll(pattern)];
-  if (matches.length !== 1) {
-    throw new Error("Web source must contain exactly one Naru canonical Origin meta tag.");
-  }
-  pattern.lastIndex = 0;
-  return source.replace(
-    pattern,
-    `<meta name="naru-canonical-origin" content="${escapeHtmlAttribute(origin)}" />`,
+  const basePath = parseNaruAppBasePath(appBasePath);
+  return renderSingleMeta(
+    renderSingleMeta(source, "naru-canonical-origin", origin),
+    NARU_APP_BASE_PATH_META_NAME,
+    basePath,
   );
+}
+
+export function renderPwaOriginMeta(source: string, canonicalOrigin: string): string {
+  return renderSingleMeta(source, "naru-canonical-origin", validatePwaBuildOrigin(canonicalOrigin));
+}
+
+export function renderPwaManifestBasePath(source: string, appBasePath: string): string {
+  const basePath = parseNaruAppBasePath(appBasePath);
+  let value: unknown;
+  try {
+    value = JSON.parse(source) as unknown;
+  } catch {
+    throw new Error("PWA manifest must be valid JSON.");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("PWA manifest must be an object.");
+  }
+  const manifest = value as Record<string, unknown>;
+  if (!Array.isArray(manifest.icons)) throw new Error("PWA manifest must contain icons.");
+  const icons = manifest.icons.map((icon) => {
+    if (icon === null || typeof icon !== "object" || Array.isArray(icon)) {
+      throw new Error("PWA manifest icon must be an object.");
+    }
+    const item = icon as Record<string, unknown>;
+    if (typeof item.src !== "string") throw new Error("PWA manifest icon path is invalid.");
+    const pathname = new URL(item.src, "https://naru.invalid").pathname;
+    const marker = pathname.indexOf("/icons/");
+    const suffix = marker < 0 ? "" : pathname.slice(marker);
+    if (!/^\/icons\/[A-Za-z0-9._-]+$/.test(suffix)) {
+      throw new Error("PWA manifest icon path must remain in the app icons directory.");
+    }
+    return { ...item, src: naruAppPath(basePath, suffix) };
+  });
+  return `${JSON.stringify(
+    {
+      ...manifest,
+      id: naruAppScopePath(basePath),
+      start_url: naruAppPath(basePath, "/?source=pwa"),
+      scope: naruAppScopePath(basePath),
+      icons,
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 function validatePwaBuildOrigin(value: string): string {
@@ -107,24 +166,31 @@ function escapeHtmlAttribute(value: string): string {
 
 export function createServiceWorkerSource(
   revision: string,
-  appShellPaths: readonly string[],
+  appShellPathSuffixes: readonly string[],
+  appBasePath = "/",
 ): string {
   if (!/^[a-f0-9]{8,64}$/.test(revision)) {
     throw new Error("PWA revision must be a lowercase hexadecimal digest.");
   }
-  const paths = [...new Set(appShellPaths)].sort();
-  if (!paths.includes("/index.html")) throw new Error("PWA app shell must include index.html.");
-  if (paths.some((pathname) => !pathname.startsWith("/") || pathname.startsWith("//"))) {
+  const basePath = parseNaruAppBasePath(appBasePath);
+  const pathSuffixes = [...new Set(appShellPathSuffixes)].sort();
+  if (!pathSuffixes.includes("/index.html")) {
+    throw new Error("PWA app shell must include index.html.");
+  }
+  if (pathSuffixes.some((pathname) => !pathname.startsWith("/") || pathname.startsWith("//"))) {
     throw new Error("PWA app shell paths must be same-origin absolute paths.");
   }
 
-  return `/* Naru generated service worker. Build revision: ${revision} */
-const CACHE_PREFIX = ${JSON.stringify(PWA_CACHE_PREFIX)};
+  return `/* Naru generated service worker. Build revision: ${revision}; Build app base path: ${basePath} */
+const APP_BASE_PATH = ${JSON.stringify(basePath)};
+const APP_SCOPE_PATH = ${JSON.stringify(naruAppScopePath(basePath))};
+const CACHE_PREFIX = ${JSON.stringify(PWA_CACHE_PREFIX)} + APP_BASE_PATH + ":";
 const CACHE_NAME = CACHE_PREFIX + ${JSON.stringify(revision)};
-const INDEX_PATH = "/index.html";
+const appPath = (pathname) => APP_BASE_PATH === "/" ? pathname : APP_BASE_PATH + pathname;
+const INDEX_PATH = appPath("/index.html");
 const GATEWAY_ROUTE_PREFIX = ${JSON.stringify(WORKSTATION_GATEWAY_BROWSER_ROUTE_PREFIX)};
-const APP_SHELL_PATHS = new Set(${JSON.stringify(paths)});
-const BLOCKED_PATHS = new Set(["/healthz", "/readyz"]);
+const APP_SHELL_PATHS = new Set(${JSON.stringify(pathSuffixes)}.map(appPath));
+const BLOCKED_PATHS = new Set([appPath("/healthz"), appPath("/readyz")]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -175,14 +241,16 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (
-    url.pathname === "/api" ||
-    url.pathname.startsWith("/api/") ||
+    url.pathname === appPath("/api") ||
+    url.pathname.startsWith(appPath("/api/")) ||
     url.pathname === GATEWAY_ROUTE_PREFIX ||
     url.pathname.startsWith(GATEWAY_ROUTE_PREFIX + "/") ||
     BLOCKED_PATHS.has(url.pathname)
   ) {
     return;
   }
+
+  if (!url.pathname.startsWith(APP_SCOPE_PATH)) return;
 
   if (request.mode === "navigate") {
     event.respondWith(caches.open(CACHE_NAME).then((cache) => cache.match(INDEX_PATH)));
@@ -241,8 +309,8 @@ async function handlePush(event) {
   const presentation = notificationPresentation(projectName, state, count);
   await self.registration.showNotification(presentation.title, {
     body: presentation.body,
-    badge: "/icons/naru-192.png",
-    icon: "/icons/naru-192.png",
+    badge: appPath("/icons/naru-192.png"),
+    icon: appPath("/icons/naru-192.png"),
     tag,
     renotify: false,
     data: payload,
@@ -251,7 +319,7 @@ async function handlePush(event) {
 
 async function loadPushProjectSummary(projectId) {
   try {
-    const response = await fetch("/api/push/projects/" + projectId + "/summary", {
+    const response = await fetch(appPath("/api/push/projects/" + projectId + "/summary"), {
       cache: "no-store",
       credentials: "same-origin",
       headers: { Accept: "application/json" },
@@ -339,7 +407,8 @@ async function openNotificationTarget(payload) {
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   const client = windows.find((candidate) => {
     try {
-      return new URL(candidate.url).origin === self.location.origin;
+      const candidateUrl = new URL(candidate.url);
+      return candidateUrl.origin === self.location.origin && candidateUrl.pathname.startsWith(APP_SCOPE_PATH);
     } catch {
       return false;
     }
@@ -350,7 +419,7 @@ async function openNotificationTarget(payload) {
     return;
   }
 
-  const url = new URL("/", self.location.origin);
+  const url = new URL(APP_SCOPE_PATH, self.location.origin);
   url.searchParams.set("naruProject", payload.projectId);
   url.searchParams.set("naruPane", payload.paneId);
   url.searchParams.set("naruEvent", payload.eventId);
@@ -378,4 +447,17 @@ function isUuid(value) {
   );
 }
 `;
+}
+
+function renderSingleMeta(source: string, name: string, value: string): string {
+  const pattern = new RegExp(
+    `<meta\\s+name=["']${name}["']\\s+content=["']([^"']*)["']\\s*\\/?>`,
+    "g",
+  );
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) {
+    throw new Error(`Web source must contain exactly one ${name} meta tag.`);
+  }
+  pattern.lastIndex = 0;
+  return source.replace(pattern, `<meta name="${name}" content="${escapeHtmlAttribute(value)}" />`);
 }

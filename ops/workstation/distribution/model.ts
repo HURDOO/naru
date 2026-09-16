@@ -6,6 +6,11 @@ import {
   type PrivateIngressV0,
 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import {
+  naruAppPath,
+  naruAppScopePath,
+  parseNaruAppBasePath,
+} from "../../../packages/contracts/src/naru-app/v1/index.js";
+import {
   DISTRIBUTION_SCHEMA_VERSION,
   DISTRIBUTION_TASK_ID,
   INSTANCE_DIGEST_LENGTH,
@@ -34,6 +39,8 @@ interface WorkstationInstallationIntentCommon {
   readonly homeDirectory: string;
   readonly artifactRoot: string;
   readonly canonicalBrowserOrigin: string;
+  /** Absent only in legacy intent/receipt documents, where Naru owned `/`. */
+  readonly naruAppBasePath?: string;
   readonly allowedProjectRoots: readonly string[];
   readonly nodeExecutable: string;
   readonly shellExecutable: string;
@@ -139,6 +146,7 @@ export interface WorkstationInstanceLayout {
     readonly naruOrigin: string;
   };
   readonly browser: CanonicalBrowserIdentity;
+  readonly appBasePath: string;
   readonly ownerSubject: string;
   readonly gatewayAppId: "naru";
   readonly localSessionCliAppId: typeof LOCAL_SESSION_CLI_APP_ID;
@@ -184,6 +192,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     "homeDirectory",
     "artifactRoot",
     "canonicalBrowserOrigin",
+    "naruAppBasePath",
     "allowedProjectRoots",
     "nodeExecutable",
     "shellExecutable",
@@ -213,6 +222,8 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
   const shellExecutable = requireAbsolutePath(value.shellExecutable, "Shell executable");
   const codexExecutable = requireAbsolutePath(value.codexExecutable, "Codex executable");
   const canonicalBrowserOrigin = canonicalHttpsOrigin(value.canonicalBrowserOrigin);
+  const naruAppBasePath =
+    value.naruAppBasePath === undefined ? undefined : parseNaruAppBasePath(value.naruAppBasePath);
   const allowedProjectRoots = parseProjectRoots(value.allowedProjectRoots);
   const vapidSubject =
     value.vapidSubject === undefined
@@ -226,6 +237,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     homeDirectory,
     artifactRoot,
     canonicalBrowserOrigin,
+    ...(naruAppBasePath === undefined ? {} : { naruAppBasePath }),
     allowedProjectRoots,
     nodeExecutable,
     shellExecutable,
@@ -320,7 +332,12 @@ export function createInstanceLayout(
     artifact.nodeRuntime === undefined
       ? intent.nodeExecutable
       : join(releaseRoot, artifact.nodeRuntime.executableRelativePath);
-  const originDigest = digestText(intent.canonicalBrowserOrigin).slice(0, 12);
+  const appBasePath = intent.naruAppBasePath ?? "/";
+  const webIdentity =
+    intent.naruAppBasePath === undefined
+      ? intent.canonicalBrowserOrigin
+      : `${intent.canonicalBrowserOrigin}\0${appBasePath}`;
+  const originDigest = digestText(webIdentity).slice(0, 12);
   const webReleaseRoot = join(webReleases, `${artifact.buildId}-${originDigest}`);
   const config = join(stateRoot, "config");
   const credentials = join(stateRoot, "credentials");
@@ -350,6 +367,7 @@ export function createInstanceLayout(
   const browser = browserIdentity(
     intent.canonicalBrowserOrigin,
     intent.vapidSubject ?? intent.canonicalBrowserOrigin,
+    appBasePath,
   );
   const rootMappings = intent.allowedProjectRoots.map((path) => ({
     rootId: `root-${digestText(path).slice(0, 16)}`,
@@ -408,6 +426,7 @@ export function createInstanceLayout(
       naruOrigin: `http://127.0.0.1:${naruPort}`,
     },
     browser,
+    appBasePath,
     ownerSubject: `owner-u${intent.targetUid}-${digest}`,
     gatewayAppId: "naru",
     localSessionCliAppId: LOCAL_SESSION_CLI_APP_ID,
@@ -508,15 +527,20 @@ export function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 
-function browserIdentity(origin: string, subject: string): CanonicalBrowserIdentity {
+function browserIdentity(
+  origin: string,
+  subject: string,
+  appBasePath: string,
+): CanonicalBrowserIdentity {
   const parsed = new URL(canonicalHttpsOrigin(origin));
+  const appScope = naruAppScopePath(appBasePath);
   return {
     origin: parsed.origin,
     hostname: parsed.hostname,
     rpId: parsed.hostname,
-    manifestId: `${parsed.origin}/`,
-    manifestStartUrl: `${parsed.origin}/?source=pwa`,
-    manifestScope: `${parsed.origin}/`,
+    manifestId: `${parsed.origin}${appScope}`,
+    manifestStartUrl: `${parsed.origin}${naruAppPath(appBasePath, "/?source=pwa")}`,
+    manifestScope: `${parsed.origin}${appScope}`,
     vapidSubject: canonicalVapidSubject(subject, parsed.origin),
   };
 }

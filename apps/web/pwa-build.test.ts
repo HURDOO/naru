@@ -5,26 +5,29 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createServiceWorkerSource,
   PWA_CACHE_PREFIX,
-  PWA_PUBLIC_ASSETS,
+  PWA_PUBLIC_ASSET_PATHS,
+  renderPwaBuildMetadata,
+  renderPwaManifestBasePath,
   renderPwaOriginMeta,
 } from "./pwa-build";
 
 describe("PWA build artifacts", () => {
   it("generates a versioned app-shell worker without runtime data caching", () => {
-    const source = createServiceWorkerSource("12345678abcdef00", [
-      "/index.html",
-      "/assets/index-12345678.js",
-      ...PWA_PUBLIC_ASSETS,
-    ]);
+    const source = createServiceWorkerSource(
+      "12345678abcdef00",
+      ["/index.html", "/assets/index-12345678.js", ...PWA_PUBLIC_ASSET_PATHS],
+      "/naru",
+    );
 
-    expect(source).toContain(`const CACHE_PREFIX = "${PWA_CACHE_PREFIX}";`);
+    expect(source).toContain(`const CACHE_PREFIX = "${PWA_CACHE_PREFIX}" + APP_BASE_PATH + ":";`);
+    expect(source).toContain('const APP_BASE_PATH = "/naru";');
     expect(source).toContain('const CACHE_NAME = CACHE_PREFIX + "12345678abcdef00";');
     expect(source).toContain('request.mode === "navigate"');
-    expect(source).toContain('url.pathname.startsWith("/api/")');
+    expect(source).toContain('url.pathname.startsWith(appPath("/api/"))');
     expect(source).toContain('const GATEWAY_ROUTE_PREFIX = "/_gateway";');
     expect(source).toContain("url.pathname === GATEWAY_ROUTE_PREFIX");
     expect(source).toContain('url.pathname.startsWith(GATEWAY_ROUTE_PREFIX + "/")');
-    expect(source).toContain('BLOCKED_PATHS = new Set(["/healthz", "/readyz"])');
+    expect(source).toContain('BLOCKED_PATHS = new Set([appPath("/healthz"), appPath("/readyz")])');
     expect(source).toContain('event.data?.type === "SKIP_WAITING"');
     expect(source).not.toContain("cache.put(");
     expect(source.match(/skipWaiting\(\)/g)).toHaveLength(1);
@@ -32,8 +35,10 @@ describe("PWA build artifacts", () => {
     const fetchHarness = workerFetchHarness(source);
     expect(fetchHarness.navigate("/_gateway")).not.toHaveBeenCalled();
     expect(fetchHarness.navigate("/_gateway/login?return=%2F")).not.toHaveBeenCalled();
-    expect(fetchHarness.navigate("/api/session")).not.toHaveBeenCalled();
-    expect(fetchHarness.navigate("/")).toHaveBeenCalledOnce();
+    expect(fetchHarness.navigate("/naru/api/session")).not.toHaveBeenCalled();
+    expect(fetchHarness.navigate("/")).not.toHaveBeenCalled();
+    expect(fetchHarness.navigate("/other/")).not.toHaveBeenCalled();
+    expect(fetchHarness.navigate("/naru/")).toHaveBeenCalledOnce();
   });
 
   it("rejects unsafe or incomplete app-shell inputs", () => {
@@ -42,6 +47,22 @@ describe("PWA build artifacts", () => {
     expect(() =>
       createServiceWorkerSource("12345678", ["/index.html", "https://other.test/x"]),
     ).toThrow(/same-origin/);
+    expect(() => createServiceWorkerSource("12345678", ["/index.html"], "/_gateway/app")).toThrow(
+      /canonical|reserved Gateway/,
+    );
+  });
+
+  it("deletes only obsolete caches belonging to the same app base path", async () => {
+    const source = createServiceWorkerSource("12345678", ["/index.html"], "/naru");
+    const harness = workerActivationHarness(source, [
+      "naru-app-shell:/naru:older-a",
+      "naru-app-shell:/naru:older-b",
+      "naru-app-shell:/other:older-a",
+      "naru-app-shell:/:legacy-root",
+      "naru-app-shell:/naru:12345678",
+    ]);
+    await harness.activate();
+    expect(harness.deleted).toEqual(["naru-app-shell:/naru:older-a"]);
   });
 
   it("renders a configured exact HTTPS Origin into build metadata", () => {
@@ -52,6 +73,39 @@ describe("PWA build artifacts", () => {
     expect(() => renderPwaOriginMeta(source, "http://127.0.0.1:4174")).toThrow(
       /exact HTTPS hostname Origin/,
     );
+    const withBase = `${source}<meta name="naru-app-base-path" content="/" />`;
+    expect(
+      renderPwaBuildMetadata(withBase, "https://naru.fixture.invalid:9443", "/naru"),
+    ).toContain('name="naru-app-base-path" content="/naru"');
+  });
+
+  it("renders source manifests for non-root and legacy root builds", () => {
+    const source = readFileSync(new URL("./public/manifest.webmanifest", import.meta.url), "utf8");
+    const nonRootManifest = JSON.parse(renderPwaManifestBasePath(source, "/naru")) as {
+      id: string;
+      start_url: string;
+      scope: string;
+      icons: Array<{ src: string }>;
+    };
+    expect(nonRootManifest).toMatchObject({
+      id: "/naru/",
+      start_url: "/naru/?source=pwa",
+      scope: "/naru/",
+    });
+    expect(nonRootManifest.icons.map(({ src }) => src)).toContain("/naru/icons/naru-192.png");
+
+    const rootManifest = JSON.parse(renderPwaManifestBasePath(source, "/")) as {
+      id: string;
+      start_url: string;
+      scope: string;
+      icons: Array<{ src: string }>;
+    };
+    expect(rootManifest).toMatchObject({
+      id: "/",
+      start_url: "/?source=pwa",
+      scope: "/",
+    });
+    expect(rootManifest.icons.map(({ src }) => src)).toContain("/icons/naru-192.png");
   });
 
   it("uses server presence and project summaries while safely replacing and routing alerts", async () => {
@@ -65,7 +119,7 @@ describe("PWA build artifacts", () => {
     };
     const harness = workerHarness();
     const visibleClient = {
-      url: "https://naru.example.test:8443/",
+      url: "https://naru.example.test:8443/naru/",
       visibilityState: "visible",
       focus: vi.fn().mockResolvedValue(undefined),
       postMessage: vi.fn(),
@@ -88,16 +142,16 @@ describe("PWA build artifacts", () => {
     expect(harness.showNotification).toHaveBeenCalledWith(
       "editor · 입력 필요",
       expect.objectContaining({
-        badge: "/icons/naru-192.png",
+        badge: "/naru/icons/naru-192.png",
         body: "2개의 작업에 입력 또는 승인이 필요합니다.",
         data: payload,
-        icon: "/icons/naru-192.png",
+        icon: "/naru/icons/naru-192.png",
         renotify: false,
         tag: `naru:project:${payload.projectId}`,
       }),
     );
     expect(harness.fetcher).toHaveBeenLastCalledWith(
-      `/api/push/projects/${payload.projectId}/summary`,
+      `/naru/api/push/projects/${payload.projectId}/summary`,
       expect.objectContaining({ cache: "no-store", credentials: "same-origin" }),
     );
     expect(JSON.stringify(harness.showNotification.mock.calls[0])).not.toMatch(
@@ -194,11 +248,19 @@ describe("PWA build artifacts", () => {
     expect(visibleClient.postMessage).toHaveBeenCalledWith({ type: "NARU_PUSH_EVENT", payload });
 
     harness.windows.splice(0);
+    const otherAppClient = {
+      url: "https://naru.example.test:8443/other/",
+      visibilityState: "visible",
+      focus: vi.fn().mockResolvedValue(undefined),
+      postMessage: vi.fn(),
+    };
+    harness.windows.push(otherAppClient);
     await harness.dispatch("notificationclick", {
       notification: { data: payload, close: vi.fn() },
     });
+    expect(otherAppClient.focus).not.toHaveBeenCalled();
     expect(harness.openWindow).toHaveBeenCalledWith(
-      "https://naru.example.test:8443/?naruProject=00000000-0000-4000-8000-000000000002&naruPane=00000000-0000-4000-8000-000000000003&naruEvent=00000000-0000-4000-8000-000000000001",
+      "https://naru.example.test:8443/naru/?naruProject=00000000-0000-4000-8000-000000000002&naruPane=00000000-0000-4000-8000-000000000003&naruEvent=00000000-0000-4000-8000-000000000001",
     );
   });
 
@@ -234,9 +296,9 @@ describe("PWA build artifacts", () => {
     };
 
     expect(manifest).toMatchObject({
-      id: "/",
-      start_url: "/?source=pwa",
-      scope: "/",
+      id: "/naru/",
+      start_url: "/naru/?source=pwa",
+      scope: "/naru/",
       display: "standalone",
     });
     expect(manifest.icons).toEqual(
@@ -247,7 +309,7 @@ describe("PWA build artifacts", () => {
       ]),
     );
     for (const icon of manifest.icons) {
-      expect(icon.src).toMatch(/^\/icons\//);
+      expect(icon.src).toMatch(/^\/naru\/icons\//);
       const filename = icon.src.split("/").at(-1);
       if (!filename) throw new Error("Manifest icon is missing a filename.");
       const png = readFileSync(new URL(`./public/icons/${filename}`, import.meta.url));
@@ -278,9 +340,9 @@ describe("PWA build artifacts", () => {
       }
     }
     const indexHtml = readFileSync(new URL("./index.html", import.meta.url), "utf8");
-    expect(indexHtml).toContain('rel="icon" href="/icons/naru-192.png"');
-    expect(indexHtml).toContain('rel="apple-touch-icon" href="/icons/naru-maskable-512.png"');
-    expect(PWA_PUBLIC_ASSETS).not.toContain("/favicon.svg");
+    expect(indexHtml).toContain('rel="icon" href="./icons/naru-192.png"');
+    expect(indexHtml).toContain('rel="apple-touch-icon" href="./icons/naru-maskable-512.png"');
+    expect(PWA_PUBLIC_ASSET_PATHS).not.toContain("/favicon.svg");
     expect(existsSync(new URL("./public/favicon.svg", import.meta.url))).toBe(false);
     expect(existsSync(new URL("./public/icons/naru-maskable.svg", import.meta.url))).toBe(false);
   });
@@ -437,7 +499,7 @@ function workerHarness() {
     },
     skipWaiting: vi.fn().mockResolvedValue(undefined),
   };
-  runInNewContext(createServiceWorkerSource("12345678", ["/index.html"]), {
+  runInNewContext(createServiceWorkerSource("12345678", ["/index.html"], "/naru"), {
     self,
     caches: {},
     URL,
@@ -496,6 +558,44 @@ function workerFetchHarness(source: string) {
         respondWith,
       });
       return respondWith;
+    },
+  };
+}
+
+function workerActivationHarness(source: string, cacheNames: readonly string[]) {
+  type ActivateEvent = { waitUntil: (work: Promise<unknown>) => void };
+  let activateListener: ((event: ActivateEvent) => void) | undefined;
+  const deleted: string[] = [];
+  runInNewContext(source, {
+    self: {
+      location: { origin: "https://naru.example.test:8443" },
+      addEventListener: (type: string, listener: (event: ActivateEvent) => void) => {
+        if (type === "activate") activateListener = listener;
+      },
+      clients: { claim: vi.fn().mockResolvedValue(undefined) },
+      registration: {},
+    },
+    caches: {
+      keys: () => Promise.resolve([...cacheNames]),
+      delete: (name: string) => {
+        deleted.push(name);
+        return Promise.resolve(true);
+      },
+    },
+    URL,
+    Request,
+    fetch: vi.fn(),
+  });
+  return {
+    deleted,
+    async activate(): Promise<void> {
+      let work: Promise<unknown> | undefined;
+      activateListener?.({
+        waitUntil: (next) => {
+          work = next;
+        },
+      });
+      await work;
     },
   };
 }

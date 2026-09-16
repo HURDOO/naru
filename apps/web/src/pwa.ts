@@ -1,4 +1,10 @@
 import { PUBLIC_PWA_BUILD_FIXTURE_ORIGIN } from "./public-build-config";
+import {
+  currentAppBasePath,
+  currentAppPath,
+  currentAppScopePath,
+  readConfiguredAppBasePath,
+} from "./app-base-path";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const CANONICAL_ORIGIN_META_SELECTOR = 'meta[name="naru-canonical-origin"]';
@@ -90,6 +96,7 @@ export function isStandalonePwa(): boolean {
 
 export function getPwaServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
   const configuredOrigin = readConfiguredPwaOrigin(document);
+  const configuredBasePath = readConfiguredAppBasePath(document);
   if (
     !shouldRegisterPwa({
       origin: window.location.origin,
@@ -97,13 +104,18 @@ export function getPwaServiceWorkerRegistration(): Promise<ServiceWorkerRegistra
       production: import.meta.env.MODE === "production",
       secureContext: window.isSecureContext,
       serviceWorkerSupported: "serviceWorker" in navigator,
-    })
+    }) ||
+    configuredBasePath === null ||
+    configuredBasePath !== currentAppBasePath()
   ) {
     return Promise.resolve(null);
   }
 
   registrationPromise ??= navigator.serviceWorker
-    .register("/sw.js", { scope: "/", updateViaCache: "none" })
+    .register(currentAppPath("/sw.js"), {
+      scope: currentAppScopePath(),
+      updateViaCache: "none",
+    })
     .then((registration) => {
       void registration.update().catch(() => undefined);
       return registration;

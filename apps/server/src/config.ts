@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { createECDH, ECDH, timingSafeEqual } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
+import { parseNaruAppBasePath } from "@naru/contracts/naru-app/v1";
 import { loadGatewayVerifierKeys, type GatewayManagedAuthSettings } from "./gateway-auth.js";
 import { validatePasswordHash } from "./password.js";
 
@@ -58,6 +59,7 @@ const RawConfigSchema = z.object({
   NARU_GATEWAY_VERIFIER_KEYS_FILE: z.string().min(1).optional(),
   NARU_DATA_DIR: z.string().default(".local"),
   NARU_WEB_DIST: z.string().optional(),
+  NARU_APP_BASE_PATH: z.string().default("/"),
   NARU_CODEX_PATH: z.string().min(1).optional(),
   NARU_CODEX_INTEGRATION_SOCKET_PATH: z.string().min(1).optional(),
   NARU_TLS_STATE_DIR: z.string().min(1).optional(),
@@ -126,6 +128,7 @@ interface AppConfigBase {
   projectRoots: readonly string[];
   dataDir: string;
   webDist?: string;
+  appBasePath: string;
   codexExecutable?: string;
   codexIntegrationSocketPath?: string;
   tls?: TlsConfig;
@@ -214,6 +217,7 @@ export function loadConfig(
     ...(raw.NARU_WEB_DIST === undefined
       ? {}
       : { webDist: resolve(baseDirectory, raw.NARU_WEB_DIST) }),
+    appBasePath: parseNaruAppBasePath(raw.NARU_APP_BASE_PATH),
     ...(raw.NARU_CODEX_PATH === undefined
       ? {}
       : { codexExecutable: validateExecutablePath(raw.NARU_CODEX_PATH) }),
@@ -230,6 +234,11 @@ export function loadConfig(
     raw.NARU_GATEWAY_VERIFIER_KEYS_FILE,
   ];
   if (raw.NARU_AUTH_MODE === "app-managed") {
+    if (common.appBasePath !== "/") {
+      throw new Error(
+        "Non-root NARU_APP_BASE_PATH requires NARU_AUTH_MODE=gateway-managed path stripping.",
+      );
+    }
     if (gatewayValues.some((value) => value !== undefined)) {
       throw new Error("NARU_GATEWAY_* settings require NARU_AUTH_MODE=gateway-managed.");
     }

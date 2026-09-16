@@ -163,6 +163,7 @@ async function createFixture(): Promise<{
     projectRoots: [canonicalRoot],
     dataDir: base,
     secureCookie: false,
+    appBasePath: "/",
     gatewayAuth: {
       issuer: ISSUER,
       audience: AUDIENCE,

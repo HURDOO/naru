@@ -13,6 +13,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
+import { parseNaruAppBasePath } from "../../../packages/contracts/src/naru-app/v1/index.js";
 import {
   ARTIFACT_FEATURE_LOCAL_SESSION_CLI,
   DISTRIBUTION_SCHEMA_VERSION,
@@ -682,6 +683,7 @@ export async function executeMaintenanceRequest(
       buildId: installedArtifact.summary.buildId,
       basePayloadDigest: installedArtifact.summary.payloadDigest,
       browser: plan.layout.browser,
+      appBasePath: plan.layout.appBasePath,
     });
 
     currentResult = updateStage(plan.layout, currentResult, "write-private-configuration");
@@ -942,6 +944,7 @@ function configurationDigest(
     settings: digestJson({
       installationId: intent.installationId,
       canonicalBrowserOrigin: intent.canonicalBrowserOrigin,
+      naruAppBasePath: layout.appBasePath,
       allowedProjectRoots: intent.allowedProjectRoots,
       nodeExecutable: layout.runtime.nodeExecutable,
       nodeRuntime: artifact.nodeRuntime ?? null,
@@ -957,6 +960,7 @@ function configurationDigest(
       buildId: artifact.buildId,
       payloadDigest: artifact.payloadDigest,
       origin: intent.canonicalBrowserOrigin,
+      appBasePath: layout.appBasePath,
     }),
     launchAgents: Object.fromEntries(
       Object.entries(configuration.launchAgents).map(([service, source]) => [
@@ -1070,6 +1074,7 @@ function nonRuntimeSettings(intent: WorkstationInstallationIntent): unknown {
     targetUid: intent.targetUid,
     homeDirectory: intent.homeDirectory,
     canonicalBrowserOrigin: intent.canonicalBrowserOrigin,
+    naruAppBasePath: intent.naruAppBasePath ?? "/",
     allowedProjectRoots: intent.allowedProjectRoots,
     shellExecutable: intent.shellExecutable,
     codexExecutable: intent.codexExecutable,
@@ -1790,6 +1795,9 @@ function parseWebReceiptShape(value: Record<string, unknown>): InstanceWebReleas
     packageId: WORKSTATION_PACKAGE_ID,
     buildId: requireString(value.buildId, "web build ID"),
     canonicalBrowserOrigin: root,
+    ...(value.appBasePath === undefined
+      ? {}
+      : { appBasePath: parseNaruAppBasePath(value.appBasePath) }),
     rpId: requireString(value.rpId, "web RP ID"),
     basePayloadDigest: requireString(value.basePayloadDigest, "web base digest"),
     manifestSha256: requireString(value.manifestSha256, "manifest digest"),

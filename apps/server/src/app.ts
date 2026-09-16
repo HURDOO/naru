@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { NARU_APP_BASE_PATH_META_NAME, naruAppScopePath } from "@naru/contracts/naru-app/v1";
 import type { ServerOptions } from "node:https";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
@@ -1523,13 +1525,14 @@ export async function buildApp(
   });
 
   if (config.webDist && existsSync(config.webDist)) {
+    assertWebIndexBasePath(config.webDist, config.appBasePath);
     await app.register(fastifyStatic, {
       root: config.webDist,
       wildcard: false,
       setHeaders(response, filePath) {
         if (filePath.endsWith("/sw.js")) {
           response.header("Cache-Control", "no-cache, no-store, must-revalidate");
-          response.header("Service-Worker-Allowed", "/");
+          response.header("Service-Worker-Allowed", naruAppScopePath(config.appBasePath));
         } else if (filePath.endsWith("/index.html") || filePath.endsWith("/manifest.webmanifest")) {
           response.header("Cache-Control", "no-cache");
         } else if (/\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[^/]+$/.test(filePath)) {
@@ -1552,6 +1555,19 @@ export async function buildApp(
   tlsCertificateManager?.start(app.server);
 
   return app;
+}
+
+function assertWebIndexBasePath(webDist: string, expectedBasePath: string): void {
+  const source = readFileSync(join(webDist, "index.html"), "utf8");
+  const pattern = new RegExp(
+    `<meta\\s+name=["']${NARU_APP_BASE_PATH_META_NAME}["']\\s+content=["']([^"']*)["']\\s*\\/?>`,
+    "g",
+  );
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length === 0 && expectedBasePath === "/") return;
+  if (matches.length !== 1 || matches[0]?.[1] !== expectedBasePath) {
+    throw new Error("Naru web release app base path metadata does not match configuration.");
+  }
 }
 
 function isReservedStaticAssetRequest(url: string): boolean {

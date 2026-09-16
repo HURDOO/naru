@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctorDistribution } from "./doctor.js";
 import {
@@ -7,6 +8,7 @@ import {
   stageMaintenanceHandoff,
 } from "./transaction.js";
 import { createDistributionFixture, FakeWorkstationRuntime } from "./test-support.js";
+import { renderInstanceWebRelease } from "./web-release.js";
 
 const CODEX_OK = {
   checks: {
@@ -72,6 +74,41 @@ describe("T14 distribution doctor", () => {
     expect(report.checks.find((check) => check.id === "pwa.instance-web-release")?.status).toBe(
       "blocked",
     );
+  });
+
+  it("fails closed when a valid web release is scoped to a different app base path", async () => {
+    const fixture = createDistributionFixture();
+    const runtime = new FakeWorkstationRuntime();
+    const plan = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(plan, plan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    renameSync(plan.layout.webReleaseRoot, `${plan.layout.webReleaseRoot}-expected-scope`);
+    renderInstanceWebRelease({
+      baseWebRoot: join(plan.layout.releaseRoot, "web-base"),
+      targetWebRoot: plan.layout.webReleaseRoot,
+      buildId: plan.artifact.buildId,
+      basePayloadDigest: plan.artifact.payloadDigest,
+      browser: {
+        ...plan.layout.browser,
+        manifestId: `${plan.layout.browser.origin}/`,
+        manifestStartUrl: `${plan.layout.browser.origin}/?source=pwa`,
+        manifestScope: `${plan.layout.browser.origin}/`,
+      },
+      appBasePath: "/",
+    });
+
+    const report = await doctorDistribution(fixture.intent, runtime, {
+      codexDoctorReport: CODEX_OK,
+    });
+    expect(report.status).toBe("blocked");
+    const webCheck = report.checks.find((check) => check.id === "pwa.instance-web-release");
+    expect(webCheck?.status).toBe("blocked");
+    expect(webCheck?.expected).toContain("app base path");
   });
 
   it("fails closed when the local CLI credential is replaced with Naru's credential", async () => {

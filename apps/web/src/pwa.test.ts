@@ -7,6 +7,7 @@ import {
   shouldRegisterPwa,
   type CanonicalOriginMetaSource,
 } from "./pwa";
+import { readConfiguredAppBasePath } from "./app-base-path";
 import { PUBLIC_PWA_BUILD_FIXTURE_ORIGIN } from "./public-build-config";
 
 describe("PWA runtime boundary", () => {
@@ -79,10 +80,12 @@ describe("PWA runtime boundary", () => {
     expect(index).toContain(
       `<meta name="naru-canonical-origin" content="${PUBLIC_PWA_BUILD_FIXTURE_ORIGIN}" />`,
     );
+    expect(index).toContain('<meta name="naru-app-base-path" content="/" />');
+    expect(readConfiguredAppBasePath(metaSource("/naru"))).toBe("/naru");
     expect(manifest).toMatchObject({
-      id: "/",
-      start_url: "/?source=pwa",
-      scope: "/",
+      id: "/naru/",
+      start_url: "/naru/?source=pwa",
+      scope: "/naru/",
     });
   });
 });

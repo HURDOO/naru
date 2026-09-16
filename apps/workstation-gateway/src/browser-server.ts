@@ -22,6 +22,7 @@ import {
 import type { GatewayManagedAppRegistration, WorkstationGatewayConfig } from "./config.js";
 import { isDirectPrivateWorkstationGatewayConfig } from "./config.js";
 import { GatewayError, internalGatewayError } from "./gateway-error.js";
+import { legacyNaruRootServiceWorkerSource } from "./legacy-root-service-worker.js";
 import type { GatewayLogger } from "./logging.js";
 import type { GatewayPasskeyManager } from "./passkeys.js";
 import { sendGatewayPreAuthPage } from "./pre-auth-page.js";
@@ -241,7 +242,7 @@ export async function buildGatewayBrowserServer(
     return reply.code(204).send();
   });
 
-  server.get(GATEWAY_APPS_PATH, (request, reply) => {
+  const serveDashboard = (request: FastifyRequest, reply: FastifyReply): FastifyReply => {
     requireExactBrowserRequest(request, options.config, false);
     const token = request.cookies[options.config.sessionCookieName];
     const authenticated = options.sessions.authenticate(token);
@@ -254,7 +255,26 @@ export async function buildGatewayBrowserServer(
       Math.min(session.expiresAt, session.idleExpiresAt),
     );
     return sendGatewayAppDashboard(reply, options.registry.inventory());
-  });
+  };
+  server.get(GATEWAY_APPS_PATH, serveDashboard);
+
+  const rootManagedApp = options.registry.matchManaged("/");
+  if (rootManagedApp === undefined) {
+    server.get("/", serveDashboard);
+    server.get("/sw.js", (request, reply) => {
+      requireExactBrowserRequest(request, options.config, false);
+      const session = requireSession(request, options.config, options.sessions);
+      options.sockets.refreshSession(
+        session.sessionId,
+        Math.min(session.expiresAt, session.idleExpiresAt),
+      );
+      return reply
+        .header("cache-control", "no-cache, no-store, must-revalidate")
+        .header("content-type", "application/javascript; charset=utf-8")
+        .header("service-worker-allowed", "/")
+        .send(legacyNaruRootServiceWorkerSource());
+    });
+  }
 
   server.all("/_gateway/*", (request, reply) => {
     requireExactHost(request, options.config);
@@ -298,6 +318,10 @@ export async function buildGatewayBrowserServer(
       session.sessionId,
       Math.min(session.expiresAt, session.idleExpiresAt),
     );
+    if (request.method === "GET" && app.routePrefix !== "/" && pathname === app.routePrefix) {
+      const requested = new URL(request.raw.url ?? request.url, options.config.browserOrigin);
+      return reply.code(308).header("location", `${app.routePrefix}/${requested.search}`).send();
+    }
     authorizations.set(request, { app, session });
     await Promise.resolve();
   };
@@ -350,7 +374,8 @@ export async function buildGatewayBrowserServer(
       onUpstreamUnavailable: () => options.registry.markUnavailable(authorization.app.appId),
     });
   };
-  for (const url of ["/", "/*"] as const) {
+  const proxyRoutes = rootManagedApp === undefined ? (["/*"] as const) : (["/", "/*"] as const);
+  for (const url of proxyRoutes) {
     server.route({
       method: "GET",
       url,
@@ -490,13 +515,7 @@ function gatewayLoginPath(rawUrl: string): string {
 
 function gatewayReturnPath(rawUrl: string, options: GatewayBrowserServerOptions): string {
   const requested = new URL(rawUrl, options.config.browserOrigin).searchParams.get("return");
-  const fallback =
-    options.registry
-      .list()
-      .find(
-        (app): app is GatewayManagedAppRegistration =>
-          app.mode === "gateway-managed" && app.enabled,
-      )?.routePrefix ?? GATEWAY_APPS_PATH;
+  const fallback = "/";
   if (
     requested === null ||
     requested.length > 2_048 ||
@@ -510,6 +529,7 @@ function gatewayReturnPath(rawUrl: string, options: GatewayBrowserServerOptions)
     parsed.origin !== options.config.browserOrigin ||
     parsed.hash !== "" ||
     (parsed.pathname !== GATEWAY_APPS_PATH &&
+      !(parsed.pathname === "/" && options.registry.matchManaged("/") === undefined) &&
       options.registry.matchManaged(parsed.pathname) === undefined)
   ) {
     return fallback;

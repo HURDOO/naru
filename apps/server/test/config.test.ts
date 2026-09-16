@@ -134,6 +134,7 @@ describe("loadConfig", () => {
     expect(config.projectRoots).toEqual(["/tmp/naru-project/projects"]);
     expect(config.dataDir).toBe("/tmp/naru-project/.local");
     expect(config.webDist).toBe("/tmp/naru-project/apps/web/dist");
+    expect(config.appBasePath).toBe("/");
     expect(config.codexExecutable).toBe("/opt/homebrew/bin/codex");
     expect(config.allowedOrigins).toEqual(new Set(["https://naru.internal"]));
     expect(config.allowedClientIps).toBeUndefined();
@@ -144,6 +145,29 @@ describe("loadConfig", () => {
       serverNames: ["naru.internal"],
       reloadIntervalMs: 10_000,
     });
+  });
+
+  it("accepts one canonical app base path and rejects traversal or Gateway-owned routes", () => {
+    expect(() => loadConfig({ ...validEnvironment, NARU_APP_BASE_PATH: "/naru" })).toThrow(
+      /gateway-managed path stripping/,
+    );
+    const verifierKeysFile = createVerifierKeysFile();
+    expect(
+      loadConfig({ ...gatewayEnvironment(verifierKeysFile), NARU_APP_BASE_PATH: "/naru" }, "/safe")
+        .appBasePath,
+    ).toBe("/naru");
+    for (const appBasePath of [
+      "naru",
+      "/naru/",
+      "/naru//nested",
+      "/naru/..",
+      "/naru?mode=pwa",
+      "/_gateway/apps",
+    ]) {
+      expect(() => loadConfig({ ...validEnvironment, NARU_APP_BASE_PATH: appBasePath })).toThrow(
+        /app base path|canonical|Gateway/,
+      );
+    }
   });
 
   it("uses environment-specific cookie defaults and accepts an explicit valid override", () => {

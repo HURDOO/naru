@@ -33,6 +33,7 @@ import type {
   startAuthentication,
   startRegistration,
 } from "@simplewebauthn/browser";
+import { currentAppPath } from "./app-base-path";
 import { isCurrentPwaOriginConsistent } from "./pwa";
 
 type AuthenticationOptions = StartAuthenticationOpts["optionsJSON"];
@@ -423,7 +424,9 @@ export class NaruApi {
 
     let response: Response;
     try {
-      response = await fetch(path, { ...init, headers, credentials: "same-origin" });
+      const requestPath =
+        path === "/_gateway" || path.startsWith("/_gateway/") ? path : currentAppPath(path);
+      response = await fetch(requestPath, { ...init, headers, credentials: "same-origin" });
     } catch {
       throw new ApiFailure(
         "Naru 서버에 연결할 수 없습니다. 네트워크와 서버 상태를 확인해 주세요.",

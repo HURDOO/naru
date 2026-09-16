@@ -95,9 +95,9 @@ describe("Gateway-owned app dashboard", () => {
     expect(dashboard.headers["content-security-policy"]).toContain("default-src 'none'");
     expect(dashboard.headers["referrer-policy"]).toBe("no-referrer");
     expect(dashboard.body).toContain("team/alpha");
-    expect(dashboard.body).toContain('href="/alpha"');
+    expect(dashboard.body).toContain('href="/alpha/"');
     expect(dashboard.body).not.toContain('href="/team/alpha"');
-    expect(dashboard.body).toContain('href="/beta"');
+    expect(dashboard.body).toContain('href="/beta/"');
     expect(dashboard.body).toContain("disabled-fixture");
     expect(dashboard.body).toContain("비활성");
     expect(dashboard.body).toContain('href="https://standalone.fixture.invalid"');
@@ -169,6 +169,69 @@ describe("Gateway-owned app dashboard", () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("root-app");
     expect(response.body).not.toContain("127.0.0.1");
+    const rootWorker = await gateway.browser.inject({
+      method: "GET",
+      url: "/sw.js",
+      headers: {
+        host: new URL(config.browserOrigin).host,
+        cookie: `${config.sessionCookieName}=${session.token}`,
+      },
+    });
+    expect(rootWorker.statusCode).toBe(502);
+    expect(rootWorker.body).not.toContain("legacy root service-worker retirement");
+    await gateway.close();
+  });
+
+  it("serves the dashboard at root without a root app and canonicalizes app prefixes", async () => {
+    const fixture = createGatewayTestFixture();
+    const config = WorkstationGatewayConfigSchema.parse({
+      ...fixture.config,
+      appRegistrations: [
+        {
+          appId: "naru",
+          mode: "gateway-managed",
+          routePrefix: "/naru",
+          upstream: { kind: "loopback", origin: "http://127.0.0.1:1" },
+        },
+      ],
+    });
+    const gateway = await WorkstationGateway.create(config);
+    const session = seedSession(gateway);
+    const headers = {
+      host: new URL(config.browserOrigin).host,
+      cookie: `${config.sessionCookieName}=${session.token}`,
+    };
+    const dashboard = await gateway.browser.inject({ method: "GET", url: "/", headers });
+    expect(dashboard.statusCode).toBe(200);
+    expect(dashboard.body).toContain('href="/naru/"');
+
+    const unauthenticatedRetirementWorker = await gateway.browser.inject({
+      method: "GET",
+      url: "/sw.js",
+      headers: { host: headers.host },
+    });
+    expect(unauthenticatedRetirementWorker.statusCode).toBe(401);
+
+    const retirementWorker = await gateway.browser.inject({
+      method: "GET",
+      url: "/sw.js",
+      headers,
+    });
+    expect(retirementWorker.statusCode).toBe(200);
+    expect(retirementWorker.headers["cache-control"]).toBe("no-cache, no-store, must-revalidate");
+    expect(retirementWorker.headers["content-type"]).toContain("application/javascript");
+    expect(retirementWorker.headers["service-worker-allowed"]).toBe("/");
+    expect(retirementWorker.body).toContain("naru-app-shell:/:");
+    expect(retirementWorker.body).toContain("self.registration.unregister()");
+    expect(retirementWorker.body).not.toContain('self.addEventListener("fetch"');
+
+    const canonical = await gateway.browser.inject({
+      method: "GET",
+      url: "/naru?source=dashboard",
+      headers,
+    });
+    expect(canonical.statusCode).toBe(308);
+    expect(canonical.headers.location).toBe("/naru/?source=dashboard");
     await gateway.close();
   });
 
@@ -192,7 +255,7 @@ describe("Gateway-owned app dashboard", () => {
       headers: { host, accept: "text/html" },
     });
     expect(login.statusCode).toBe(200);
-    expect(login.body).toContain('const returnTo = "/_gateway/apps"');
+    expect(login.body).toContain('const returnTo = "/"');
 
     const session = seedSession(gateway);
     const dashboard = await gateway.browser.inject({

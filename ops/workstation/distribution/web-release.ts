@@ -18,19 +18,32 @@ import {
   PRIVATE_FILE_MODE,
   WORKSTATION_PACKAGE_ID,
 } from "./constants.js";
+import {
+  NARU_APP_BASE_PATH_META_NAME,
+  naruAppPath,
+  parseNaruAppBasePath,
+} from "../../../packages/contracts/src/naru-app/v1/index.js";
 import type { CanonicalBrowserIdentity } from "./model.js";
 import { digestJson, stableJson } from "./model.js";
 
 const WEB_RELEASE_RECEIPT = "workstation-web-release.json";
 const ORIGIN_META_PATTERN =
   /<meta\s+name=["']naru-canonical-origin["']\s+content=["']([^"']*)["']\s*\/?>/g;
+const APP_BASE_PATH_META_PATTERN = new RegExp(
+  `<meta\\s+name=["']${NARU_APP_BASE_PATH_META_NAME}["']\\s+content=["']([^"']*)["']\\s*\\/?>`,
+  "g",
+);
 const SERVICE_WORKER_REVISION_PATTERN = /Build revision: ([a-f0-9]{8,64})/;
+const SERVICE_WORKER_BASE_PATH_PATTERN = /const APP_BASE_PATH = ("(?:[^"\\]|\\.)*");/g;
+const SERVICE_WORKER_BASE_PATH_COMMENT_PATTERN = /Build app base path: ([^ *;]+)/g;
 
 export interface InstanceWebReleaseReceiptV1 {
   readonly version: typeof DISTRIBUTION_SCHEMA_VERSION;
   readonly packageId: typeof WORKSTATION_PACKAGE_ID;
   readonly buildId: string;
   readonly canonicalBrowserOrigin: string;
+  /** Absent only in legacy root-scoped web release receipts. */
+  readonly appBasePath?: string;
   readonly rpId: string;
   readonly basePayloadDigest: string;
   readonly manifestSha256: string;
@@ -44,6 +57,7 @@ export interface RenderInstanceWebReleaseInput {
   readonly buildId: string;
   readonly basePayloadDigest: string;
   readonly browser: CanonicalBrowserIdentity;
+  readonly appBasePath: string;
 }
 
 export function renderInstanceWebRelease(
@@ -67,12 +81,17 @@ export function renderInstanceWebRelease(
   copyTree(source, temporary);
 
   const manifestPath = join(temporary, "manifest.webmanifest");
-  const renderedManifest = renderManifest(manifestPath, input.browser);
+  const renderedManifest = renderManifest(manifestPath, input.browser, input.appBasePath);
   writeFileSync(manifestPath, renderedManifest, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
   chmodSync(manifestPath, PRIVATE_FILE_MODE);
 
   const indexPath = join(temporary, "index.html");
-  const renderedIndex = renderOriginMeta(readFileSync(indexPath, "utf8"), input.browser.origin);
+  const baseIndexSource = readFileSync(indexPath, "utf8");
+  const sourceAppBasePath = readAppBasePathMeta(baseIndexSource);
+  if (sourceAppBasePath === null) {
+    throw new Error("Base web index app base path metadata is missing.");
+  }
+  const renderedIndex = renderWebMetadata(baseIndexSource, input.browser.origin, input.appBasePath);
   writeFileSync(indexPath, renderedIndex, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
   chmodSync(indexPath, PRIVATE_FILE_MODE);
 
@@ -82,6 +101,7 @@ export function renderInstanceWebRelease(
     renderedManifest,
     renderedIndex,
     input,
+    sourceAppBasePath,
   );
   writeFileSync(serviceWorkerPath, renderedWorker.source, {
     encoding: "utf8",
@@ -96,6 +116,7 @@ export function renderInstanceWebRelease(
     packageId: WORKSTATION_PACKAGE_ID,
     buildId: input.buildId,
     canonicalBrowserOrigin: input.browser.origin,
+    appBasePath: input.appBasePath,
     rpId: input.browser.rpId,
     basePayloadDigest: input.basePayloadDigest,
     manifestSha256,
@@ -133,19 +154,37 @@ export function verifyInstanceWebRelease(webRoot: string): InstanceWebReleaseRec
   if (sha256(manifestSource) !== receipt.manifestSha256) {
     throw new Error("Instance PWA manifest digest does not match its receipt.");
   }
-  assertRenderedManifest(manifestSource, receipt.canonicalBrowserOrigin);
+  const appBasePath = receipt.appBasePath ?? "/";
+  assertRenderedManifest(manifestSource, receipt.canonicalBrowserOrigin, appBasePath);
   const indexSource = readFileSync(join(root, "index.html"), "utf8");
   if (readOriginMeta(indexSource) !== receipt.canonicalBrowserOrigin) {
     throw new Error("Instance web index Origin metadata does not match its receipt.");
+  }
+  const indexBasePath = readAppBasePathMeta(indexSource);
+  if (
+    (receipt.appBasePath === undefined && indexBasePath !== null && indexBasePath !== "/") ||
+    (receipt.appBasePath !== undefined && indexBasePath !== receipt.appBasePath)
+  ) {
+    throw new Error("Instance web index app base path does not match its receipt.");
   }
   const workerSource = readFileSync(join(root, "sw.js"), "utf8");
   if (readServiceWorkerRevision(workerSource) !== receipt.serviceWorkerRevision) {
     throw new Error("Instance service worker revision does not match its receipt.");
   }
+  if (
+    receipt.appBasePath !== undefined &&
+    readServiceWorkerBasePath(workerSource) !== appBasePath
+  ) {
+    throw new Error("Instance service worker app base path does not match its receipt.");
+  }
   return receipt;
 }
 
-function renderManifest(path: string, browser: CanonicalBrowserIdentity): string {
+function renderManifest(
+  path: string,
+  browser: CanonicalBrowserIdentity,
+  appBasePath: string,
+): string {
   assertRegularFile(path);
   let value: unknown;
   try {
@@ -161,10 +200,11 @@ function renderManifest(path: string, browser: CanonicalBrowserIdentity): string
       throw new Error("Base PWA manifest contains an invalid icon.");
     }
     const pathname = iconPathname(icon.src);
-    if (!pathname.startsWith("/icons/")) {
-      throw new Error("PWA icon must remain under the same-origin /icons path.");
+    const iconSuffix = pathname.slice(pathname.indexOf("/icons/"));
+    if (!pathname.includes("/icons/") || !/^\/icons\/[A-Za-z0-9._-]+$/.test(iconSuffix)) {
+      throw new Error("PWA icon must remain under the same-origin app icons path.");
     }
-    return { ...icon, src: `${browser.origin}${pathname}` };
+    return { ...icon, src: `${browser.origin}${naruAppPath(appBasePath, iconSuffix)}` };
   });
   return `${JSON.stringify(
     {
@@ -179,15 +219,15 @@ function renderManifest(path: string, browser: CanonicalBrowserIdentity): string
   )}\n`;
 }
 
-function assertRenderedManifest(source: string, origin: string): void {
+function assertRenderedManifest(source: string, origin: string, appBasePath: string): void {
   const value = JSON.parse(source) as unknown;
   if (!isRecord(value) || !Array.isArray(value.icons)) {
     throw new Error("Rendered PWA manifest is invalid.");
   }
   if (
-    value.id !== `${origin}/` ||
-    value.start_url !== `${origin}/?source=pwa` ||
-    value.scope !== `${origin}/`
+    value.id !== `${origin}${appBasePath === "/" ? "/" : `${appBasePath}/`}` ||
+    value.start_url !== `${origin}${naruAppPath(appBasePath, "/?source=pwa")}` ||
+    value.scope !== `${origin}${appBasePath === "/" ? "/" : `${appBasePath}/`}`
   ) {
     throw new Error("Rendered PWA manifest identity is inconsistent with its canonical Origin.");
   }
@@ -196,10 +236,17 @@ function assertRenderedManifest(source: string, origin: string): void {
       throw new Error("Rendered PWA manifest contains an invalid icon.");
     }
     const iconUrl = new URL(icon.src);
-    if (iconUrl.origin !== origin || !iconUrl.pathname.startsWith("/icons/")) {
+    if (
+      iconUrl.origin !== origin ||
+      !iconUrl.pathname.startsWith(naruAppPath(appBasePath, "/icons/"))
+    ) {
       throw new Error("Rendered PWA icon escaped the canonical Origin.");
     }
   }
+}
+
+function renderWebMetadata(source: string, origin: string, appBasePath: string): string {
+  return renderAppBasePathMeta(renderOriginMeta(source, origin), appBasePath);
 }
 
 function renderOriginMeta(source: string, origin: string): string {
@@ -223,15 +270,57 @@ function readOriginMeta(source: string): string {
   return matches[0][1];
 }
 
+function renderAppBasePathMeta(source: string, appBasePath: string): string {
+  const basePath = parseNaruAppBasePath(appBasePath);
+  const matches = [...source.matchAll(APP_BASE_PATH_META_PATTERN)];
+  if (matches.length !== 1) {
+    throw new Error("Base web index must contain exactly one Naru app base path meta tag.");
+  }
+  APP_BASE_PATH_META_PATTERN.lastIndex = 0;
+  return source.replace(
+    APP_BASE_PATH_META_PATTERN,
+    `<meta name="${NARU_APP_BASE_PATH_META_NAME}" content="${escapeHtmlAttribute(basePath)}" />`,
+  );
+}
+
+function readAppBasePathMeta(source: string): string | null {
+  const matches = [...source.matchAll(APP_BASE_PATH_META_PATTERN)];
+  APP_BASE_PATH_META_PATTERN.lastIndex = 0;
+  if (matches.length === 0) return null;
+  if (matches.length !== 1 || matches[0]?.[1] === undefined) {
+    throw new Error("Web index app base path metadata is ambiguous.");
+  }
+  return parseNaruAppBasePath(matches[0][1]);
+}
+
 function renderServiceWorker(
   source: string,
   manifest: string,
   index: string,
   input: RenderInstanceWebReleaseInput,
+  sourceAppBasePath: string,
 ): { readonly source: string; readonly revision: string } {
   const previous = readServiceWorkerRevision(source);
+  const previousBasePath = readServiceWorkerBasePath(source);
+  if (previousBasePath !== sourceAppBasePath) {
+    throw new Error("Base service worker app base path does not match web index metadata.");
+  }
+  const appBasePath = parseNaruAppBasePath(input.appBasePath);
+  SERVICE_WORKER_BASE_PATH_PATTERN.lastIndex = 0;
+  SERVICE_WORKER_BASE_PATH_COMMENT_PATTERN.lastIndex = 0;
+  const commentMatches = [...source.matchAll(SERVICE_WORKER_BASE_PATH_COMMENT_PATTERN)];
+  if (commentMatches.length !== 1) {
+    throw new Error("Base service worker app base path comment is missing or ambiguous.");
+  }
+  SERVICE_WORKER_BASE_PATH_COMMENT_PATTERN.lastIndex = 0;
+  const renderedBasePathSource = source
+    .replace(
+      SERVICE_WORKER_BASE_PATH_PATTERN,
+      `const APP_BASE_PATH = ${JSON.stringify(appBasePath)};`,
+    )
+    .replace(SERVICE_WORKER_BASE_PATH_COMMENT_PATTERN, `Build app base path: ${appBasePath}`);
   const revision = createHash("sha256")
-    .update(source)
+    .update(renderedBasePathSource)
     .update("\0")
     .update(manifest)
     .update("\0")
@@ -242,11 +331,20 @@ function renderServiceWorker(
     .update(input.basePayloadDigest)
     .digest("hex")
     .slice(0, 20);
-  const occurrences = source.split(previous).length - 1;
+  const occurrences = renderedBasePathSource.split(previous).length - 1;
   if (occurrences < 2) {
     throw new Error("Base service worker revision is not present in its cache identity.");
   }
-  return { source: source.replaceAll(previous, revision), revision };
+  return { source: renderedBasePathSource.replaceAll(previous, revision), revision };
+}
+
+function readServiceWorkerBasePath(source: string): string {
+  const matches = [...source.matchAll(SERVICE_WORKER_BASE_PATH_PATTERN)];
+  SERVICE_WORKER_BASE_PATH_PATTERN.lastIndex = 0;
+  if (matches.length !== 1 || matches[0]?.[1] === undefined) {
+    throw new Error("Service worker app base path marker is missing or ambiguous.");
+  }
+  return parseNaruAppBasePath(JSON.parse(matches[0][1]) as unknown);
 }
 
 function readServiceWorkerRevision(source: string): string {
@@ -286,7 +384,7 @@ function digestWebTree(root: string): string {
 
 function parseWebReleaseReceipt(value: unknown): InstanceWebReleaseReceiptV1 {
   if (!isRecord(value)) throw new Error("Instance web release receipt must be an object.");
-  const keys = [
+  const legacyKeys = [
     "version",
     "packageId",
     "buildId",
@@ -297,7 +395,9 @@ function parseWebReleaseReceipt(value: unknown): InstanceWebReleaseReceiptV1 {
     "serviceWorkerRevision",
     "contentDigest",
   ];
-  if (!hasExactKeys(value, keys)) {
+  const currentKeys = [...legacyKeys, "appBasePath"];
+  const legacy = hasExactKeys(value, legacyKeys);
+  if (!legacy && !hasExactKeys(value, currentKeys)) {
     throw new Error("Instance web release receipt fields are invalid.");
   }
   if (
@@ -321,11 +421,13 @@ function parseWebReleaseReceipt(value: unknown): InstanceWebReleaseReceiptV1 {
   if (origin.origin !== value.canonicalBrowserOrigin || origin.hostname !== value.rpId) {
     throw new Error("Instance web release Origin and RP ID are inconsistent.");
   }
+  const appBasePath = legacy ? undefined : parseNaruAppBasePath(value.appBasePath);
   return {
     version: DISTRIBUTION_SCHEMA_VERSION,
     packageId: WORKSTATION_PACKAGE_ID,
     buildId: value.buildId,
     canonicalBrowserOrigin: value.canonicalBrowserOrigin,
+    ...(appBasePath === undefined ? {} : { appBasePath }),
     rpId: value.rpId,
     basePayloadDigest: value.basePayloadDigest,
     manifestSha256: value.manifestSha256,
@@ -342,7 +444,8 @@ function assertReceiptMatchesInput(
     receipt.buildId !== input.buildId ||
     receipt.basePayloadDigest !== input.basePayloadDigest ||
     receipt.canonicalBrowserOrigin !== input.browser.origin ||
-    receipt.rpId !== input.browser.rpId
+    receipt.rpId !== input.browser.rpId ||
+    (receipt.appBasePath ?? "/") !== input.appBasePath
   ) {
     throw new Error("Immutable web release path already contains a different configuration.");
   }

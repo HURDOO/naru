@@ -173,7 +173,7 @@ describe("NaruApi authentication expiry", () => {
   });
 
   it("uses only the namespaced Gateway CSRF for gateway-managed mutation and logout", async () => {
-    stubPwaOrigin(PUBLIC_PWA_BUILD_FIXTURE_ORIGIN);
+    stubPwaOrigin(PUBLIC_PWA_BUILD_FIXTURE_ORIGIN, "/naru");
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -199,10 +199,10 @@ describe("NaruApi authentication expiry", () => {
     await api.refreshProjectGroups();
     await api.logout();
 
-    expect(request(fetchMock, 0)).toMatchObject({ path: "/api/session", method: "GET" });
+    expect(request(fetchMock, 0)).toMatchObject({ path: "/naru/api/session", method: "GET" });
     expect(request(fetchMock, 1)).toMatchObject({ path: "/_gateway/session", method: "GET" });
     expect(request(fetchMock, 2)).toMatchObject({
-      path: "/api/project-groups/refresh",
+      path: "/naru/api/project-groups/refresh",
       method: "POST",
       gatewayCsrf: "gateway-csrf",
     });
@@ -265,13 +265,16 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-function stubPwaOrigin(origin: string): void {
+function stubPwaOrigin(origin: string, appBasePath = "/"): void {
   vi.stubGlobal("window", { location: { origin } });
   vi.stubGlobal("document", {
-    querySelectorAll: () => [
-      {
-        getAttribute: (name: string) => (name === "content" ? origin : null),
-      },
-    ],
+    querySelectorAll: (selector: string) => {
+      const content = selector.includes("naru-app-base-path") ? appBasePath : origin;
+      return [
+        {
+          getAttribute: (name: string) => (name === "content" ? content : null),
+        },
+      ];
+    },
   });
 }

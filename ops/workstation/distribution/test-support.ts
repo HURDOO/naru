@@ -98,6 +98,7 @@ export function createDistributionFixture(
     homeDirectory: home,
     artifactRoot,
     canonicalBrowserOrigin: options.origin ?? "https://naru.fixture.test:8443",
+    naruAppBasePath: "/naru",
     allowedProjectRoots: [projectRoot],
     nodeExecutable: selectedNodeExecutable,
     shellExecutable: "/bin/zsh",
@@ -223,20 +224,20 @@ export function createArtifactFixture(
     {
       path: "web-base/index.html",
       contents:
-        '<!doctype html><html><head><meta name="naru-canonical-origin" content="https://naru.example.test:8443" /><link rel="manifest" href="/manifest.webmanifest" /></head><body></body></html>\n',
+        '<!doctype html><html><head><meta name="naru-canonical-origin" content="https://naru.example.test:8443" /><meta name="naru-app-base-path" content="/naru" /><link rel="manifest" href="./manifest.webmanifest" /></head><body></body></html>\n',
     },
     {
       path: "web-base/manifest.webmanifest",
       contents: `${JSON.stringify(
         {
-          id: "https://naru.example.test:8443/",
+          id: "https://naru.example.test:8443/naru/",
           name: "Naru",
-          start_url: "https://naru.example.test:8443/?source=pwa",
-          scope: "https://naru.example.test:8443/",
+          start_url: "https://naru.example.test:8443/naru/?source=pwa",
+          scope: "https://naru.example.test:8443/naru/",
           display: "standalone",
           icons: [
             {
-              src: "https://naru.example.test:8443/icons/naru-192.png",
+              src: "https://naru.example.test:8443/naru/icons/naru-192.png",
               sizes: "192x192",
               type: "image/png",
             },
@@ -249,7 +250,7 @@ export function createArtifactFixture(
     {
       path: "web-base/sw.js",
       contents:
-        '/* Naru generated service worker. Build revision: abcdef1234567890abcd */\nconst CACHE_NAME = "naru-app-shell-" + "abcdef1234567890abcd";\n',
+        '/* Naru generated service worker. Build revision: abcdef1234567890abcd; Build app base path: /naru */\nconst APP_BASE_PATH = "/naru";\nconst CACHE_NAME = "naru-app-shell:/naru:" + "abcdef1234567890abcd";\n',
     },
     { path: "web-base/LICENSE", contents: "fixture-license\n" },
     { path: "web-base/icons/naru-192.png", contents: "fixture-icon" },

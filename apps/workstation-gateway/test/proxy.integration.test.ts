@@ -420,6 +420,7 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
       projectRoots: [canonicalProjectRoot],
       dataDir: join(fixture.root, "naru-data"),
       secureCookie: false,
+      appBasePath: "/naru",
       gatewayAuth: {
         issuer: fixture.config.instanceId,
         audience: "naru",
@@ -462,7 +463,7 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
         {
           appId: "naru",
           mode: "gateway-managed",
-          routePrefix: "/",
+          routePrefix: "/naru",
           upstream: { kind: "loopback", origin: naruOrigin },
         },
       ],
@@ -480,7 +481,7 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
 
     const restored = await requestGateway(gatewayPort, {
       method: "GET",
-      path: "/api/session",
+      path: "/naru/api/session",
       headers: browserHeaders,
     });
     expect(restored.statusCode).toBe(200);
@@ -489,7 +490,7 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
 
     const mutated = await requestGateway(gatewayPort, {
       method: "POST",
-      path: "/api/project-groups/refresh",
+      path: "/naru/api/project-groups/refresh",
       headers: {
         ...browserHeaders,
         "content-type": "application/json",
@@ -503,7 +504,7 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
 
     const noLegacyFallback = await requestGateway(gatewayPort, {
       method: "POST",
-      path: "/api/auth/login",
+      path: "/naru/api/auth/login",
       headers: {
         ...browserHeaders,
         "content-type": "application/json",
@@ -513,7 +514,7 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
     });
     expect(noLegacyFallback.statusCode).toBe(404);
 
-    const client = new WebSocket(`ws://127.0.0.1:${gatewayPort}/api/terminal`, {
+    const client = new WebSocket(`ws://127.0.0.1:${gatewayPort}/naru/api/terminal`, {
       headers: browserHeaders,
     });
     await once(client, "open");

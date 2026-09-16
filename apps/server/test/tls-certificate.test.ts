@@ -172,6 +172,7 @@ describe("TLS certificate hot reload", () => {
       sessionCookieName: "naru_test_session",
       dataDir: `${state.root}/data`,
       secureCookie: true,
+      appBasePath: "/",
       sessionRuntime: { owner: "legacy" },
       tls: tlsConfig(state),
     };

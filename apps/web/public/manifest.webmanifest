@@ -1,11 +1,11 @@
 {
-  "id": "/",
+  "id": "/naru/",
   "name": "Naru · Agent workspace",
   "short_name": "Naru",
   "description": "Mac mini에서 실행 중인 Agent 작업공간을 안전하게 이어 쓰는 개인용 웹 IDE",
   "lang": "ko",
-  "start_url": "/?source=pwa",
-  "scope": "/",
+  "start_url": "/naru/?source=pwa",
+  "scope": "/naru/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#0d1013",
@@ -13,19 +13,19 @@
   "categories": ["developer", "productivity"],
   "icons": [
     {
-      "src": "/icons/naru-192.png",
+      "src": "/naru/icons/naru-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/naru-512.png",
+      "src": "/naru/icons/naru-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/naru-maskable-512.png",
+      "src": "/naru/icons/naru-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

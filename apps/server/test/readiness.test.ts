@@ -14,6 +14,7 @@ const config: AppManagedConfig = {
   sessionCookieName: "naru_test_session",
   dataDir: "/safe/data",
   secureCookie: false,
+  appBasePath: "/",
   sessionRuntime: { owner: "legacy" },
 };
 
@@ -31,6 +32,8 @@ describe("readiness policy", () => {
       }),
     ).toBe("ok");
     expect(configurationReadiness({ ...config, secureCookie: true })).toBe("failed");
+    expect(configurationReadiness({ ...config, appBasePath: "/naru/" })).toBe("failed");
+    expect(configurationReadiness({ ...config, appBasePath: "/naru" })).toBe("failed");
     expect(
       configurationReadiness({
         ...config,

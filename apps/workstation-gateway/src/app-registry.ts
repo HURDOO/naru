@@ -43,7 +43,14 @@ export class GatewayAppRegistry {
           ? "unavailable"
           : "enabled",
       ...(app.enabled
-        ? { href: app.mode === "gateway-managed" ? app.routePrefix : app.origin }
+        ? {
+            href:
+              app.mode === "gateway-managed" && app.routePrefix !== "/"
+                ? `${app.routePrefix}/`
+                : app.mode === "gateway-managed"
+                  ? app.routePrefix
+                  : app.origin,
+          }
         : {}),
     }));
   }

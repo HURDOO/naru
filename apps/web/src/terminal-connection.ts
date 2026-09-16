@@ -8,6 +8,7 @@ import {
   type SurfaceRole,
   type TerminalRestoreProtocol,
 } from "@naru/contracts";
+import { currentAppPath } from "./app-base-path";
 import { createClientId } from "./client-id";
 
 export type ConnectionState =
@@ -286,7 +287,7 @@ export class TerminalConnection {
   #connect(): void {
     if (this.#disposed) return;
     this.#setTransitionalStatus("connecting");
-    const url = new URL("/api/terminal", window.location.href);
+    const url = new URL(currentAppPath("/api/terminal"), window.location.href);
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(url);
     this.#socket = socket;
@@ -683,7 +684,7 @@ export class TerminalConnection {
     const probe = new AbortController();
     this.#offlineProbe = probe;
     const timeout = setTimeout(() => probe.abort(), 1_500);
-    void fetch(new URL("/healthz", window.location.href), {
+    void fetch(new URL(currentAppPath("/healthz"), window.location.href), {
       cache: "no-store",
       credentials: "same-origin",
       signal: probe.signal,

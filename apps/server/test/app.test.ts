@@ -2217,7 +2217,7 @@ describe("Naru HTTP API", () => {
   it("keeps structured API errors when the production static app is enabled", async () => {
     const webDist = await mkdtemp(join(tmpdir(), "naru-static-"));
     temporaryDirectories.push(webDist);
-    await writeFile(join(webDist, "index.html"), "<!doctype html><title>Naru</title>");
+    await writeFile(join(webDist, "index.html"), "<!doctype html><title>Legacy root Naru</title>");
     const fixture = await createFixture({ configPatch: { webDist } });
     try {
       const response = await fixture.app.inject({ method: "GET", url: "/api/session" });
@@ -2237,16 +2237,19 @@ describe("Naru HTTP API", () => {
     const webDist = await mkdtemp(join(tmpdir(), "naru-static-pwa-"));
     temporaryDirectories.push(webDist);
     await mkdir(join(webDist, "assets"));
-    await writeFile(join(webDist, "index.html"), "<!doctype html><title>Naru</title>");
+    await writeFile(
+      join(webDist, "index.html"),
+      '<!doctype html><meta name="naru-app-base-path" content="/naru" /><title>Naru</title>',
+    );
     await writeFile(join(webDist, "manifest.webmanifest"), '{"name":"Naru"}');
     await writeFile(join(webDist, "sw.js"), "self.addEventListener('fetch', () => {});");
     await writeFile(join(webDist, "assets", "index-12345678.js"), "export {};");
-    const fixture = await createFixture({ configPatch: { webDist } });
+    const fixture = await createFixture({ configPatch: { webDist, appBasePath: "/naru" } });
     try {
       const worker = await fixture.app.inject({ method: "GET", url: "/sw.js" });
       expect(worker.statusCode).toBe(200);
       expect(worker.headers["cache-control"]).toBe("no-cache, no-store, must-revalidate");
-      expect(worker.headers["service-worker-allowed"]).toBe("/");
+      expect(worker.headers["service-worker-allowed"]).toBe("/naru/");
 
       const manifest = await fixture.app.inject({
         method: "GET",
@@ -2511,6 +2514,7 @@ async function createFixture(options: FixtureOptions = {}): Promise<{
     passwordHash,
     sessionSecret: "naru-test-session-secret-that-is-long-enough",
     sessionCookieName: "naru_test_session",
+    appBasePath: "/",
     dataDir: base,
     secureCookie: options.secureCookie ?? false,
     sessionRuntime: { owner: "legacy" },

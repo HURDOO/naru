@@ -795,6 +795,72 @@ describe("T14 deterministic maintenance transactions", () => {
     });
     expect(readdirSync(originalLayout.directories.receipts)).toHaveLength(3);
   });
+
+  it("migrates a legacy root Naru receipt to /naru and rolls back to root deterministically", async () => {
+    const fixture = createDistributionFixture();
+    const legacyRaw: Record<string, unknown> = { ...fixture.intent };
+    delete legacyRaw.naruAppBasePath;
+    const legacyIntent = parseInstallationIntent(legacyRaw);
+    const runtime = new FakeWorkstationRuntime();
+
+    const installPlan = await planDistribution(legacyIntent, "install", runtime, {
+      probePorts: false,
+    });
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(installPlan, installPlan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    const legacyReceipt = readCurrentReceipt(installPlan.layout);
+    if (legacyReceipt === undefined) throw new Error("Legacy root receipt is missing.");
+    expect(legacyReceipt.intent.naruAppBasePath).toBeUndefined();
+    expect(legacyReceipt.webRelease.appBasePath).toBe("/");
+    expect(parseEnv(readFileSync(installPlan.layout.files.naruEnvironment, "utf8"))).toMatchObject({
+      NARU_APP_BASE_PATH: "/",
+    });
+
+    const migrationPlan = await planDistribution(fixture.intent, "reconfigure", runtime, {
+      probePorts: false,
+    });
+    expect(migrationPlan.layout.appBasePath).toBe("/naru");
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(migrationPlan, migrationPlan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(
+      JSON.parse(readFileSync(migrationPlan.layout.files.gatewayConfig, "utf8")),
+    ).toMatchObject({ appRegistrations: [{ appId: "naru", routePrefix: "/naru" }] });
+    expect(
+      parseEnv(readFileSync(migrationPlan.layout.files.naruEnvironment, "utf8")),
+    ).toMatchObject({ NARU_APP_BASE_PATH: "/naru" });
+
+    const migratedReceipt = readCurrentReceipt(migrationPlan.layout);
+    if (migratedReceipt === undefined) throw new Error("Migrated receipt is missing.");
+    expect(migratedReceipt.webRelease.appBasePath).toBe("/naru");
+    const rollbackPlan = await planDistribution(fixture.intent, "rollback", runtime, {
+      targetReceiptId: legacyReceipt.receiptId,
+      probePorts: false,
+    });
+    expect(rollbackPlan.layout.appBasePath).toBe("/");
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(rollbackPlan, rollbackPlan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(JSON.parse(readFileSync(rollbackPlan.layout.files.gatewayConfig, "utf8"))).toMatchObject(
+      { appRegistrations: [{ appId: "naru", routePrefix: "/" }] },
+    );
+    expect(parseEnv(readFileSync(rollbackPlan.layout.files.naruEnvironment, "utf8"))).toMatchObject(
+      { NARU_APP_BASE_PATH: "/" },
+    );
+    expect(readCurrentReceipt(rollbackPlan.layout)).toMatchObject({
+      operation: "rollback",
+      supersedesReceiptId: migratedReceipt.receiptId,
+      intent: { canonicalBrowserOrigin: fixture.intent.canonicalBrowserOrigin },
+    });
+    expect(readCurrentReceipt(rollbackPlan.layout)?.intent.naruAppBasePath).toBeUndefined();
+  });
 });
 
 class FailingNaruRuntime extends FakeWorkstationRuntime {

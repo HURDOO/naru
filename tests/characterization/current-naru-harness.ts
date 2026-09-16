@@ -147,6 +147,7 @@ export async function createCurrentNaruFixture(
     sessionCookieName: "naru_test_session",
     dataDir: basePath,
     secureCookie: false,
+    appBasePath: "/",
     ...options.configPatch,
   };
   const repository = new NaruRepository(":memory:");

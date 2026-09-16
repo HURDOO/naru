@@ -88,13 +88,17 @@ describe("T14 distribution identity and configuration", () => {
     expect(layout.browser).toMatchObject({
       origin: "https://custom.tailnet.ts.net",
       rpId: "custom.tailnet.ts.net",
-      manifestId: "https://custom.tailnet.ts.net/",
-      manifestStartUrl: "https://custom.tailnet.ts.net/?source=pwa",
-      manifestScope: "https://custom.tailnet.ts.net/",
+      manifestId: "https://custom.tailnet.ts.net/naru/",
+      manifestStartUrl: "https://custom.tailnet.ts.net/naru/?source=pwa",
+      manifestScope: "https://custom.tailnet.ts.net/naru/",
       vapidSubject: "https://custom.tailnet.ts.net",
     });
     expect(generated.gateway.browserOrigin).toBe(layout.browser.origin);
+    expect(generated.gateway.appRegistrations).toEqual([
+      expect.objectContaining({ appId: "naru", routePrefix: "/naru" }),
+    ]);
     expect(generated.naruEnvironment.NARU_ALLOWED_ORIGINS).toBe(layout.browser.origin);
+    expect(generated.naruEnvironment.NARU_APP_BASE_PATH).toBe("/naru");
     expect(generated.naruEnvironment.NARU_CODEX_INTEGRATION_SOCKET_PATH).toBe(
       layout.sockets.naruIntegration,
     );
@@ -179,6 +183,28 @@ describe("T14 distribution identity and configuration", () => {
     });
     expect(generated.gateway).not.toHaveProperty("browserIngress");
     expect(() => WorkstationGatewayConfigSchema.parse(generated.gateway)).not.toThrow();
+  });
+
+  it("keeps missing legacy app base paths at root and rejects invalid explicit values", () => {
+    const fixture = createDistributionFixture();
+    const legacyRaw: Record<string, unknown> = { ...fixture.intent };
+    delete legacyRaw.naruAppBasePath;
+    const legacy = parseInstallationIntent(legacyRaw);
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(legacy, artifact.summary);
+    const generated = createInstanceConfiguration(legacy, artifact.summary, layout);
+    expect(legacy.naruAppBasePath).toBeUndefined();
+    expect(layout.appBasePath).toBe("/");
+    expect(generated.gateway.appRegistrations).toEqual([
+      expect.objectContaining({ routePrefix: "/" }),
+    ]);
+    expect(generated.naruEnvironment.NARU_APP_BASE_PATH).toBe("/");
+
+    for (const value of ["/naru/", "/naru/..", "/_gateway/apps", "/naru?x=1"]) {
+      expect(() =>
+        parseInstallationIntent({ ...fixture.intent, naruAppBasePath: value }),
+      ).toThrow();
+    }
   });
 
   it("rejects private ingress Origin drift instead of falling back to legacy config", () => {

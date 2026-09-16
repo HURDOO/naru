@@ -176,11 +176,13 @@ export async function doctorDistribution(
       id: "pwa.instance-web-release",
       status:
         web.canonicalBrowserOrigin === layout.browser.origin &&
+        (web.appBasePath ?? "/") === layout.appBasePath &&
         web.basePayloadDigest === current.artifact.payloadDigest
           ? "ok"
           : "blocked",
-      expected: "manifest/meta/service-worker digest bound to the current canonical Origin",
-      actual: `${web.canonicalBrowserOrigin}:${web.serviceWorkerRevision}`,
+      expected:
+        "manifest/meta/service-worker digest bound to the current canonical Origin and app base path",
+      actual: `${web.canonicalBrowserOrigin}:${web.appBasePath ?? "/"}:${web.serviceWorkerRevision}`,
       owner: "package",
     });
   } catch (error) {

@@ -39,7 +39,7 @@ describe("Gateway browser authentication boundary", () => {
       headers: { host, accept: "text/html" },
     });
     expect(unsafeReturn.statusCode).toBe(200);
-    expect(unsafeReturn.body).toContain('const returnTo = "/app"');
+    expect(unsafeReturn.body).toContain('const returnTo = "/"');
     expect(unsafeReturn.body).not.toContain("evil.invalid");
 
     const escapedReturn = await gateway.browser.inject({

@@ -79,6 +79,16 @@ subscription Origin을 결정한다. Source manifest는 same-origin relative URL
 `NARU_PWA_BUILD_ORIGIN`으로 source build metadata를 바꿀 수 있고 installer는 항상 instance별 immutable
 web release를 다시 렌더한다.
 
+새 intent는 `naruAppBasePath: "/naru"`를 명시하며 Gateway `routePrefix`, Naru의
+`NARU_APP_BASE_PATH`, HTML metadata, manifest scope와 service-worker scope/cache를 같은 값으로
+렌더한다. 이 값은 query·fragment·trailing slash·traversal과 `/_gateway` prefix가 없는 canonical
+absolute path여야 한다. 기존 intent/receipt에서 field가 없으면 동결된 root Naru 의미인 `/`로 읽는다.
+`/naru` 전환은 reconfigure receipt로 기록하고 rollback은 선택한 immutable legacy receipt의 `/`를
+복원한다. Non-root path는 Gateway-managed mode의 prefix stripping을 전제로 하며 app-managed Naru는
+legacy `/`만 허용한다. Invalid explicit field는 legacy root로 fallback하지 않는다. Root app이 없는
+Gateway는 인증된 `/sw.js` retirement worker도 제공해 전환 전 Naru root worker와 root cache만 해제하고,
+`/naru`나 다른 앱의 service worker/cache에는 관여하지 않는다.
+
 Origin 변경은 allowlist에 누적하지 않고 새 receipt가 이전 receipt를 supersede한다. port가 바뀌면
 PWA/service-worker/cache/push subscription을 새 Origin에서 다시 인수하고, hostname이 바뀌면 새 RP
 ID의 owner bootstrap/passkey도 다시 인수한다. VAPID keypair는 명시적 rotation 없이 보존한다.
