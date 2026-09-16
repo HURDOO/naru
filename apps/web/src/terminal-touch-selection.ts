@@ -26,6 +26,14 @@ interface BufferSpan {
   end: number;
 }
 
+interface NativeTextareaStyle {
+  readonly width: string;
+  readonly height: string;
+  readonly left: string;
+  readonly top: string;
+  readonly zIndex: string;
+}
+
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
 const HANDLE_EDGE_PX = 22;
 const NATIVE_COPY_RETENTION_MS = 10_000;
@@ -111,6 +119,8 @@ export function attachTerminalTouchSelection(
   let lastHandlePoint: { x: number; y: number } | null = null;
   let focusAfterPaneTouch = false;
   let nativeCopyPrepared = false;
+  let nativeCopyAnchor: { x: number; y: number } | null = null;
+  let nativeTextareaStyle: NativeTextareaStyle | null = null;
   let nativeCopyRetentionTimer: ReturnType<typeof setTimeout> | null = null;
   const nativeCopyToken = {};
   const ownerDocument = screen.ownerDocument;
@@ -213,6 +223,7 @@ export function attachTerminalTouchSelection(
   const moveHandle = (clientX: number, clientY: number): void => {
     if (!handleDrag) return;
     lastHandlePoint = { x: clientX, y: clientY };
+    nativeCopyAnchor = { x: clientX, y: clientY };
     const point = pointAt(clientX, clientY);
     const index = point.row * terminal.cols + point.column;
     if (handleDrag.edge === "start") {
@@ -290,6 +301,7 @@ export function attachTerminalTouchSelection(
     stopEdgeScroll();
     handleDrag = null;
     lastHandlePoint = null;
+    prepareNativeCopy();
   };
 
   const ownsNativeCopy = (): boolean => nativeCopyOwners.get(ownerDocument) === nativeCopyToken;
@@ -303,9 +315,18 @@ export function attachTerminalTouchSelection(
     nativeCopyRetentionTimer = null;
   };
 
+  const restoreNativeTextareaPosition = (): void => {
+    const textarea = terminal.textarea;
+    if (!textarea || nativeTextareaStyle === null) return;
+    Object.assign(textarea.style, nativeTextareaStyle);
+    nativeTextareaStyle = null;
+  };
+
   const releaseNativeCopy = (): void => {
     clearNativeCopyRetention();
     nativeCopyPrepared = false;
+    nativeCopyAnchor = null;
+    restoreNativeTextareaPosition();
     if (ownsNativeCopy()) nativeCopyOwners.delete(ownerDocument);
   };
 
@@ -326,14 +347,37 @@ export function attachTerminalTouchSelection(
   const resetNativeCopyPreparation = (): void => {
     clearNativeCopyRetention();
     nativeCopyPrepared = false;
+    restoreNativeTextareaPosition();
     claimNativeCopy();
   };
 
-  const prepareNativeCopy = (): void => {
+  const prepareNativeCopy = (clientX?: number, clientY?: number): void => {
     if (!active || selectedSpan() === null) return;
     const value = selectionText();
     const textarea = terminal.textarea;
     if (!textarea) return;
+    const anchor =
+      clientX === undefined || clientY === undefined
+        ? nativeCopyAnchor
+        : { x: clientX, y: clientY };
+    if (anchor) {
+      nativeCopyAnchor = anchor;
+      if (nativeTextareaStyle === null) {
+        nativeTextareaStyle = {
+          width: textarea.style.width,
+          height: textarea.style.height,
+          left: textarea.style.left,
+          top: textarea.style.top,
+          zIndex: textarea.style.zIndex,
+        };
+      }
+      const bounds = screen.getBoundingClientRect();
+      textarea.style.width = "20px";
+      textarea.style.height = "20px";
+      textarea.style.left = `${anchor.x - bounds.left - 10}px`;
+      textarea.style.top = `${anchor.y - bounds.top - 10}px`;
+      textarea.style.zIndex = "1000";
+    }
     const nativeSelection = value || NATIVE_SELECTION_PLACEHOLDER;
     textarea.value = nativeSelection;
     textarea.focus({ preventScroll: true });
@@ -344,7 +388,7 @@ export function attachTerminalTouchSelection(
   const onContextMenu = (event: MouseEvent): void => {
     // xterm stores its selection outside the browser DOM. Mirror it into xterm's textarea and
     // leave the contextmenu default enabled so Android can show its native selection actions.
-    prepareNativeCopy();
+    prepareNativeCopy(event.clientX, event.clientY);
     if (nativeCopyPrepared) event.stopPropagation();
   };
   const onCopy = (event: ClipboardEvent): void => {
@@ -367,7 +411,10 @@ export function attachTerminalTouchSelection(
     event.stopPropagation();
     onNativeCopy?.(value ? "copied" : "empty");
     if (!active) clearRetainedSelection();
-    else nativeCopyPrepared = false;
+    else {
+      nativeCopyPrepared = false;
+      restoreNativeTextareaPosition();
+    }
   };
   const onPaneTouchStart = (event: TouchEvent): void => {
     if (!active || event.touches.length !== 1) return;
@@ -458,6 +505,7 @@ export function attachTerminalTouchSelection(
         screen.classList.add("naru-touch-select");
       }
       resetNativeCopyPreparation();
+      nativeCopyAnchor = { x: clientX, y: clientY };
       const point = pointAt(clientX, clientY);
       const index = point.row * terminal.cols + point.column;
       dragging = (longPress ? touchWordSpan(terminal, point) : null) ?? {
@@ -468,11 +516,13 @@ export function attachTerminalTouchSelection(
     },
     move: (clientX, clientY) => {
       if (!dragging) return;
+      nativeCopyAnchor = { x: clientX, y: clientY };
       selectSpan(touchSelectionSpan(dragging, pointAt(clientX, clientY), terminal.cols));
     },
     finish: () => {
       dragging = null;
       publish();
+      prepareNativeCopy();
     },
     selectAll: () => {
       if (!active) return;

@@ -244,6 +244,17 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   expect(await scrollBottomOffset(codex)).toBeGreaterThan(0);
+  await expect(input).toBeFocused();
+  await expect
+    .poll(() => input.evaluate((element) => (element as HTMLTextAreaElement).selectionEnd))
+    .toBeGreaterThan(0);
+  await expect.poll(() => input.evaluate((element) => element.style.zIndex)).toBe("1000");
+  const nativeAnchorBounds = await input.boundingBox();
+  if (!nativeAnchorBounds) throw new Error("Native selection anchor has no bounds.");
+  expect(nativeAnchorBounds.x).toBeGreaterThanOrEqual(screenBounds.x - 1);
+  expect(nativeAnchorBounds.y).toBeGreaterThanOrEqual(screenBounds.y - 1);
+  expect(nativeAnchorBounds.x).toBeLessThan(screenBounds.x + screenBounds.width);
+  expect(nativeAnchorBounds.y).toBeLessThan(screenBounds.y + screenBounds.height);
 
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
   await dispatchTouch(cdp, "touchMove", touchX, touchY + 45);

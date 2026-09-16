@@ -258,6 +258,7 @@ export function attachTerminalTouchScroll(
       return;
     }
     if (wasScrolling) {
+      if (selection?.active && selection.hasSelection()) selection.finish();
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
     } else if (!canceled) {

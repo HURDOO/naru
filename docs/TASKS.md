@@ -144,6 +144,14 @@ ownership과 integration gate를 지킨다.
   typecheck·lint·build가 통과했다. 전체 unit은 768건 통과·5건 skip이며, 실제 login shell이 hook
   환경을 다시 주입하는 기존 hook 3건은 이번 변경과 무관하게 실패했다. 새 9443 빌드의 Samsung
   Internet 브라우저/PWA 인수는 남아 있다.
+- 추가 보고·후속 수정(2026-09-17): Codex scrollback에서 드래그 선택해도 Android 네이티브
+  toolbar가 거의 뜨지 않았다. xterm 선택을 helper textarea의 DOM selection으로 반영하는
+  경로가 Android의 `contextmenu`에만 의존했고, helper textarea도 live cursor 위치에 남아
+  scrollback 밖에 숨을 수 있었다. 선택·handle·scroll drag의 pointer-up에서도 DOM
+  selection을 생성하고 helper textarea를 마지막 touch 좌표에 배치한 뒤 복사·취소 시
+  원래 위치로 복구한다. 관련 단위 14건과 Samsung UA 선택 E2E 3건, typecheck·lint·format·build가
+  통과했다. 실제 Samsung Internet ActionMode toolbar 표시 인수는 9443 실기기에 남아
+  있다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,

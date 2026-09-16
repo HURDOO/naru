@@ -273,6 +273,16 @@ describe("terminal touch selection", () => {
     expect(controller.canLongPress(15, 5)).toBe(true);
     controller.begin(15, 5, true);
     controller.finish();
+
+    // Pointer-up must create the real DOM selection even when Samsung Internet omits the
+    // contextmenu event after a long press or drag in scrollback.
+    expect(textarea.value).toBe("\u00a0");
+    expect(textarea.selectionStart).toBe(0);
+    expect(textarea.selectionEnd).toBe(1);
+    expect(textarea.style.left).toBe("5px");
+    expect(textarea.style.top).toBe("-5px");
+    expect(textarea.style.zIndex).toBe("1000");
+
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
 
