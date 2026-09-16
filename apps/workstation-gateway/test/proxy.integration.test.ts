@@ -30,6 +30,7 @@ import { createGatewayTestFixture } from "./support.js";
 interface UpstreamFixture {
   server: Server;
   readonly webSockets: WebSocketServer;
+  readonly webSocketPaths: string[];
   origin: string;
   readonly assertions: string[];
   requests: number;
@@ -205,6 +206,129 @@ describe("Workstation Gateway HTTP and WebSocket proxy", () => {
       },
     });
     expect(appManagedNotProxied.statusCode).toBe(404);
+  });
+
+  it("isolates HTTP and WebSocket routes and assertion audiences across managed apps", async () => {
+    const alpha = await createUpstreamFixture();
+    const beta = await createUpstreamFixture();
+    const fixture = createGatewayTestFixture();
+    const config = WorkstationGatewayConfigSchema.parse({
+      ...fixture.config,
+      appRegistrations: [
+        {
+          appId: "alpha-app",
+          mode: "gateway-managed",
+          routePrefix: "/alpha",
+          upstream: { kind: "loopback", origin: alpha.origin },
+        },
+        {
+          appId: "beta-app",
+          mode: "gateway-managed",
+          routePrefix: "/beta",
+          upstream: { kind: "loopback", origin: beta.origin },
+        },
+      ],
+    });
+    alpha.cookieName = config.sessionCookieName;
+    beta.cookieName = config.sessionCookieName;
+    const gateway = await WorkstationGateway.create(config);
+    running.push({ close: () => gateway.close() });
+    const session = seedSession(gateway);
+    const host = new URL(config.browserOrigin).host;
+    const headers = {
+      host,
+      origin: config.browserOrigin,
+      cookie: `${config.sessionCookieName}=${session.token}`,
+    };
+    await gateway.browser.listen({ host: "127.0.0.1", port: 0 });
+    const gatewayPort = (gateway.browser.server.address() as AddressInfo).port;
+
+    const alphaHttp = await requestGateway(gatewayPort, {
+      method: "GET",
+      path: "/alpha/inspect?target=alpha",
+      headers,
+    });
+    const betaHttp = await requestGateway(gatewayPort, {
+      method: "GET",
+      path: "/beta/inspect?target=beta",
+      headers,
+    });
+    expect(alphaHttp.statusCode).toBe(200);
+    expect(alphaHttp.json()).toMatchObject({ url: "/inspect?target=alpha" });
+    expect(betaHttp.statusCode).toBe(200);
+    expect(betaHttp.json()).toMatchObject({ url: "/inspect?target=beta" });
+    expect(alpha.assertions).toHaveLength(1);
+    expect(beta.assertions).toHaveLength(1);
+    expect(
+      verifyFixtureAssertion(
+        gateway,
+        requiredAssertion(alpha.assertions[0]),
+        new InMemoryGatewayReplayStore(),
+        "alpha-app",
+      ),
+    ).toMatchObject({ aud: "alpha-app" });
+    expect(
+      verifyFixtureAssertion(
+        gateway,
+        requiredAssertion(beta.assertions[0]),
+        new InMemoryGatewayReplayStore(),
+        "beta-app",
+      ),
+    ).toMatchObject({ aud: "beta-app" });
+
+    const alphaSocket = new WebSocket(`ws://127.0.0.1:${gatewayPort}/alpha/socket?target=alpha`, {
+      headers,
+    });
+    const betaSocket = new WebSocket(`ws://127.0.0.1:${gatewayPort}/beta/socket?target=beta`, {
+      headers,
+    });
+    await Promise.all([once(alphaSocket, "open"), once(betaSocket, "open")]);
+    alphaSocket.send("alpha-only");
+    betaSocket.send("beta-only");
+    const [[alphaMessage], [betaMessage]] = (await Promise.all([
+      once(alphaSocket, "message"),
+      once(betaSocket, "message"),
+    ])) as [[Buffer], [Buffer]];
+    expect(alphaMessage.toString()).toBe("echo:alpha-only");
+    expect(betaMessage.toString()).toBe("echo:beta-only");
+    expect(alpha.webSocketPaths).toEqual(["/socket?target=alpha"]);
+    expect(beta.webSocketPaths).toEqual(["/socket?target=beta"]);
+    expect(
+      verifyFixtureAssertion(
+        gateway,
+        requiredAssertion(alpha.assertions[1]),
+        new InMemoryGatewayReplayStore(),
+        "alpha-app",
+      ),
+    ).toMatchObject({ aud: "alpha-app" });
+    expect(
+      verifyFixtureAssertion(
+        gateway,
+        requiredAssertion(beta.assertions[1]),
+        new InMemoryGatewayReplayStore(),
+        "beta-app",
+      ),
+    ).toMatchObject({ aud: "beta-app" });
+
+    const unmatchedHttp = await requestGateway(gatewayPort, {
+      method: "GET",
+      path: "/alpha-other/inspect",
+      headers,
+    });
+    expect(unmatchedHttp.statusCode).toBe(404);
+    await expectWebSocketUpgradeStatus(
+      `ws://127.0.0.1:${gatewayPort}/beta-other/socket`,
+      headers,
+      404,
+    );
+    expect(alpha.requests).toBe(1);
+    expect(beta.requests).toBe(1);
+
+    const alphaClosed = once(alphaSocket, "close");
+    const betaClosed = once(betaSocket, "close");
+    alphaSocket.close();
+    betaSocket.close();
+    await Promise.all([alphaClosed, betaClosed]);
   });
 
   it("pins WebSocket identity at upgrade and closes the socket on logout without stopping the app", async () => {
@@ -483,6 +607,7 @@ async function createUpstreamFixture(): Promise<UpstreamFixture> {
   const fixture: UpstreamFixture = {
     server: undefined as never,
     webSockets: new WebSocketServer({ noServer: true }),
+    webSocketPaths: [],
     origin: "",
     assertions,
     requests: 0,
@@ -501,6 +626,7 @@ async function createUpstreamFixture(): Promise<UpstreamFixture> {
     });
   });
   fixture.webSockets.on("connection", (socket, request) => {
+    fixture.webSocketPaths.push(request.url ?? "");
     const assertion = singleHeader(request.headers["x-workstation-gateway-assertion"]);
     if (assertion === undefined) {
       socket.close(4003, "missing identity");
@@ -573,16 +699,22 @@ function verifyFixtureAssertion(
   gateway: WorkstationGateway,
   assertion: string,
   replay: InMemoryGatewayReplayStore,
+  expectedAudience = "fixture-app",
 ) {
   const key = gatewayVerifierKey(gateway.keys);
   return verifyGatewayAssertion(assertion, {
     expectedIssuer: gateway.config.instanceId,
-    expectedAudience: "fixture-app",
+    expectedAudience,
     expectedOrigin: gateway.config.browserOrigin,
     resolveKey: (keyId) => (keyId === key.keyId ? key.publicKeyPem : undefined),
     replayStore: replay,
     now: () => Math.floor(gateway.nowMs() / 1_000),
   }).principal;
+}
+
+function requiredAssertion(assertion: string | undefined): string {
+  if (assertion === undefined) throw new Error("Fixture assertion is missing.");
+  return assertion;
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {

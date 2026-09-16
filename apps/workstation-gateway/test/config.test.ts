@@ -70,22 +70,25 @@ describe("Workstation Gateway configuration", () => {
         ],
       }).success,
     ).toBe(false);
-    expect(
-      WorkstationGatewayConfigSchema.safeParse({
-        ...config,
-        appRegistrations: [
-          {
-            appId: "reserved",
-            mode: "gateway-managed",
-            routePrefix: "/_gateway/auth",
-            upstream:
-              config.appRegistrations[0]?.mode === "gateway-managed"
-                ? config.appRegistrations[0].upstream
-                : undefined,
-          },
-        ],
-      }).success,
-    ).toBe(false);
+    for (const routePrefix of ["/_gateway", "/_gateway/auth", "/_gateway/apps"]) {
+      expect(
+        WorkstationGatewayConfigSchema.safeParse({
+          ...config,
+          appRegistrations: [
+            {
+              appId: "reserved",
+              mode: "gateway-managed",
+              routePrefix,
+              upstream:
+                config.appRegistrations[0]?.mode === "gateway-managed"
+                  ? config.appRegistrations[0].upstream
+                  : undefined,
+            },
+          ],
+        }).success,
+        routePrefix,
+      ).toBe(false);
+    }
     for (const routePrefix of ["/apps//two", "/apps/%2e%2e/two", "/apps\\two"]) {
       expect(
         WorkstationGatewayConfigSchema.safeParse({

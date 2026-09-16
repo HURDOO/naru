@@ -11,6 +11,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import type { WebSocket } from "ws";
 import { z, ZodError } from "zod";
 import type { GatewayAppRegistry } from "./app-registry.js";
+import { GATEWAY_APPS_PATH, sendGatewayAppDashboard } from "./app-dashboard.js";
 import type { GatewayAssertionIssuer } from "./assertion-issuer.js";
 import {
   GATEWAY_BROWSER_LIMITS,
@@ -240,6 +241,21 @@ export async function buildGatewayBrowserServer(
     return reply.code(204).send();
   });
 
+  server.get(GATEWAY_APPS_PATH, (request, reply) => {
+    requireExactBrowserRequest(request, options.config, false);
+    const token = request.cookies[options.config.sessionCookieName];
+    const authenticated = options.sessions.authenticate(token);
+    if (authenticated === undefined && isPreAuthNavigation(request)) {
+      return redirect(reply, gatewayLoginPath(request.raw.url ?? request.url));
+    }
+    const session = authenticated ?? requireSession(request, options.config, options.sessions);
+    options.sockets.refreshSession(
+      session.sessionId,
+      Math.min(session.expiresAt, session.idleExpiresAt),
+    );
+    return sendGatewayAppDashboard(reply, options.registry.inventory());
+  });
+
   server.all("/_gateway/*", (request, reply) => {
     requireExactHost(request, options.config);
     reply.header("cache-control", "no-store");
@@ -301,8 +317,10 @@ export async function buildGatewayBrowserServer(
         assertion: issued.assertion,
         sessionCookieName: options.config.sessionCookieName,
       });
+      options.registry.markAvailable(authorization.app.appId);
     } catch (error) {
       if (error instanceof GatewayError) throw error;
+      options.registry.markUnavailable(authorization.app.appId);
       options.logger.write({
         level: "warn",
         event: "proxy.request-failed",
@@ -328,6 +346,8 @@ export async function buildGatewayBrowserServer(
       sessionCookieName: options.config.sessionCookieName,
       sockets: options.sockets,
       logger: options.logger,
+      onUpstreamAvailable: () => options.registry.markAvailable(authorization.app.appId),
+      onUpstreamUnavailable: () => options.registry.markUnavailable(authorization.app.appId),
     });
   };
   for (const url of ["/", "/*"] as const) {
@@ -470,14 +490,13 @@ function gatewayLoginPath(rawUrl: string): string {
 
 function gatewayReturnPath(rawUrl: string, options: GatewayBrowserServerOptions): string {
   const requested = new URL(rawUrl, options.config.browserOrigin).searchParams.get("return");
-  const fallback = options.registry
-    .list()
-    .find(
-      (app): app is GatewayManagedAppRegistration => app.mode === "gateway-managed" && app.enabled,
-    )?.routePrefix;
-  if (fallback === undefined) {
-    throw new GatewayError("APP_UNAVAILABLE", 404, "Gateway managed app was not found.");
-  }
+  const fallback =
+    options.registry
+      .list()
+      .find(
+        (app): app is GatewayManagedAppRegistration =>
+          app.mode === "gateway-managed" && app.enabled,
+      )?.routePrefix ?? GATEWAY_APPS_PATH;
   if (
     requested === null ||
     requested.length > 2_048 ||
@@ -490,7 +509,8 @@ function gatewayReturnPath(rawUrl: string, options: GatewayBrowserServerOptions)
   if (
     parsed.origin !== options.config.browserOrigin ||
     parsed.hash !== "" ||
-    options.registry.matchManaged(parsed.pathname) === undefined
+    (parsed.pathname !== GATEWAY_APPS_PATH &&
+      options.registry.matchManaged(parsed.pathname) === undefined)
   ) {
     return fallback;
   }

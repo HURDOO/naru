@@ -95,6 +95,8 @@ export interface GatewayWebSocketProxyInput {
   readonly sessionCookieName: string;
   readonly sockets: GatewayWebSocketRegistry;
   readonly logger: GatewayLogger;
+  readonly onUpstreamAvailable?: () => void;
+  readonly onUpstreamUnavailable?: () => void;
 }
 
 export function proxyGatewayWebSocket(input: GatewayWebSocketProxyInput): void {
@@ -144,6 +146,7 @@ export function proxyGatewayWebSocket(input: GatewayWebSocketProxyInput): void {
     pending.push({ data, binary });
   });
   upstream.once("open", () => {
+    input.onUpstreamAvailable?.();
     for (const item of pending) upstream.send(item.data, { binary: item.binary });
     pending.length = 0;
     pendingBytes = 0;
@@ -169,6 +172,7 @@ export function proxyGatewayWebSocket(input: GatewayWebSocketProxyInput): void {
     });
   });
   upstream.once("error", () => {
+    input.onUpstreamUnavailable?.();
     input.logger.write({
       level: "warn",
       event: "proxy.request-failed",
