@@ -84,6 +84,7 @@ interface TerminalRenderer {
 interface MountedTerminalRenderer extends TerminalRenderer {
   dispose: () => void;
   scheduleFit: (refresh?: boolean) => void;
+  freezeFrame: () => void;
   clearResizeFreeze: () => void;
 }
 
@@ -101,6 +102,13 @@ interface PreviewAnchor {
   restoreId: string;
   bottomOffset: number;
   previewBottomOffset: number;
+}
+
+interface TransientFocusIntent {
+  connection: TerminalConnection;
+  runtimeId: string;
+  terminal: Terminal;
+  target: HTMLTextAreaElement;
 }
 
 let nextTerminalInstanceId = 1;
@@ -149,6 +157,8 @@ export function TerminalPane({
   const touchSelectionRef = useRef<TerminalTouchSelectionController | null>(null);
   const composeInputRef = useRef<HTMLTextAreaElement>(null);
   const mobileImeRef = useRef<MobileTerminalImeBridge | null>(null);
+  const previousConnectionStatusRef = useRef(connectionStatus);
+  const transientFocusIntentRef = useRef<TransientFocusIntent | null>(null);
   const keyboardHelpId = `${pane.id}-terminal-keyboard-help`;
   const composeInputId = `${pane.id}-terminal-compose-input`;
   const [runtimeStatus, setRuntimeStatus] = useState<PaneStatus>(pane.status);
@@ -173,14 +183,28 @@ export function TerminalPane({
   const [documentVisible, setDocumentVisible] = useState(
     () => document.visibilityState === "visible",
   );
-  const paneControl =
+  const lastPaneControl =
     paneControlSource.connection === connection && paneControlSource.paneId === pane.id
       ? paneControlSource.value
       : connection?.paneControl(pane.id);
+  const currentPaneControl =
+    connectionStatus.state === "active" ? connection?.paneControl(pane.id) : undefined;
+  const paneControl = lastPaneControl;
   const controlsPane = mutationAllowed && paneControl?.role === "controller";
-  const inputDisabled = !controlsPane || runtimeStatus !== "running";
+  const transientConnection =
+    connectionStatus.state === "connecting" || connectionStatus.state === "disconnected";
+  const preservingReconnectInput =
+    lastPaneControl?.role === "controller" &&
+    (transientConnection ||
+      (connectionStatus.state === "active" &&
+        connectionStatus.surfaceRole === "controller" &&
+        connectionStatus.acquisition === "reconnect" &&
+        currentPaneControl === undefined));
+  const inputDisabled = (!controlsPane && !preservingReconnectInput) || runtimeStatus !== "running";
   const terminalSubscriptionAllowed =
-    connectionStatus.state === "active" &&
+    (connectionStatus.state === "active" ||
+      ((connectionStatus.state === "connecting" || connectionStatus.state === "disconnected") &&
+        connectionStatus.surfaceRole !== undefined)) &&
     (connectionStatus.surfaceRole !== "observer" || (active && documentVisible));
 
   useLayoutEffect(() => {
@@ -217,9 +241,9 @@ export function TerminalPane({
       const attachment = attachmentRef.current;
       if (!attachment) return;
       const output = ctrlArmedRef.current ? applyCtrlToTerminalData(data) : data;
+      if (!attachment.input(output)) return;
       if (ctrlArmedRef.current) updateCtrlArmed(false);
       returnToLiveTail();
-      attachment.input(output);
     },
     [returnToLiveTail, updateCtrlArmed],
   );
@@ -227,8 +251,8 @@ export function TerminalPane({
   const sendSpecialKey = (key: MobileTerminalKey): void => {
     const attachment = attachmentRef.current;
     if (!attachment) return;
+    if (!attachment.input(mobileTerminalKeySequence(key, ctrlArmedRef.current))) return;
     returnToLiveTail();
-    attachment.input(mobileTerminalKeySequence(key, ctrlArmedRef.current));
     updateCtrlArmed(false);
     terminalRef.current?.focus();
   };
@@ -247,8 +271,8 @@ export function TerminalPane({
     event.preventDefault();
     const value = composeInputRef.current?.value ?? composeText;
     if (!value || !attachmentRef.current) return;
+    if (!attachmentRef.current.input(value)) return;
     returnToLiveTail();
-    attachmentRef.current.input(value);
     updateCtrlArmed(false);
     setComposeText("");
     requestAnimationFrame(() => composeInputRef.current?.focus());
@@ -340,8 +364,8 @@ export function TerminalPane({
       const terminal = terminalRef.current;
       if (terminal?.textarea) terminal.textarea.value = "";
       updateCtrlArmed(false);
+      if (!attachmentRef.current.input(sequence)) return;
       returnToLiveTail();
-      attachmentRef.current.input(sequence);
     };
     const handlePaste = (event: Event): void => {
       if (!(event instanceof ClipboardEvent)) return;
@@ -499,8 +523,8 @@ export function TerminalPane({
             event.preventDefault();
             event.stopPropagation();
             updateCtrlArmed(false);
+            if (!attachmentRef.current?.input(sequence)) return false;
             returnToLiveTail();
-            attachmentRef.current?.input(sequence);
             return false;
           }
         }
@@ -514,8 +538,8 @@ export function TerminalPane({
             event.preventDefault();
             event.stopPropagation();
             updateCtrlArmed(false);
+            if (!attachmentRef.current?.input(sequence)) return false;
             returnToLiveTail();
-            attachmentRef.current?.input(sequence);
             return false;
           }
         }
@@ -695,6 +719,7 @@ export function TerminalPane({
       return {
         ...renderer,
         scheduleFit,
+        freezeFrame: () => resizeFreeze.begin(),
         clearResizeFreeze: () => resizeFreeze.dispose(),
         dispose: () => {
           if (rendererDisposed) return;
@@ -851,7 +876,7 @@ export function TerminalPane({
         disposeCandidate();
         const displayedSequence = latestSequenceRef.current;
         const sameRuntime = runtimeIdRef.current === frame.runtimeId;
-        const preservesMountedRuntime = sameRuntime && frame.sequence <= displayedSequence;
+        const preservesMountedRuntime = sameRuntime;
         if (!preservesMountedRuntime) touchSelectionRef.current?.cancel();
         if (!preservesMountedRuntime) mobileIme?.cancelPending();
         preservedRestoreRef.current = preservesMountedRuntime
@@ -865,8 +890,10 @@ export function TerminalPane({
         latestSequenceRef.current = sameRuntime
           ? Math.max(displayedSequence, frame.sequence)
           : frame.sequence;
-        desiredBottomOffsetRef.current = frame.bottomOffset;
-        setScrollBottomOffset(frame.bottomOffset);
+        if (!preservesMountedRuntime) {
+          desiredBottomOffsetRef.current = frame.bottomOffset;
+          setScrollBottomOffset(frame.bottomOffset);
+        }
         runtimeIdRef.current = frame.runtimeId;
         setRuntimeId(frame.runtimeId);
         setRuntimeStatus("running");
@@ -926,14 +953,42 @@ export function TerminalPane({
         }
         const preserved = preservedRestoreRef.current;
         preservedRestoreRef.current = null;
-        if (
-          preserved?.restoreId === frame.restoreId &&
-          preserved.runtimeId === frame.runtimeId &&
-          frame.sequence <= preserved.sequence
-        ) {
-          setRestorePhase("ready");
-          revealTerminalFonts();
-          revealTerminalRestore();
+        if (preserved?.restoreId === frame.restoreId && preserved.runtimeId === frame.runtimeId) {
+          const terminal = terminalRef.current;
+          if (frame.sequence > preserved.sequence && terminal) {
+            const targetBottomOffset = desiredBottomOffsetRef.current;
+            const releaseViewportReporting = suppressViewportReporting();
+            touchSelectionRef.current?.cancel();
+            mountedRendererRef.current?.freezeFrame();
+            incrementDatasetCount(host, "sameRuntimeRestoreCount");
+            terminal.reset();
+            terminal.write(frame.serializedState, () => {
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  releaseViewportReporting();
+                  if (
+                    disposed ||
+                    restoreIdRef.current !== frame.restoreId ||
+                    runtimeIdRef.current !== frame.runtimeId ||
+                    terminalRef.current !== terminal
+                  ) {
+                    return;
+                  }
+                  desiredBottomOffsetRef.current = targetBottomOffset;
+                  setScrollBottomOffset(targetBottomOffset);
+                  scrollToBottomOffset(terminal, targetBottomOffset);
+                  attachmentRef.current?.viewport(frame.runtimeId, targetBottomOffset);
+                  setRestorePhase("ready");
+                  revealTerminalFonts();
+                  revealTerminalRestore();
+                });
+              });
+            });
+          } else {
+            setRestorePhase("ready");
+            revealTerminalFonts();
+            revealTerminalRestore();
+          }
           return;
         }
         disposeCandidate();
@@ -1133,6 +1188,118 @@ export function TerminalPane({
   }, []);
 
   useEffect(() => {
+    const invalidateTransientFocus = (event: Event): void => {
+      const intent = transientFocusIntentRef.current;
+      if (intent && event.target !== intent.target) transientFocusIntentRef.current = null;
+    };
+    document.addEventListener("pointerdown", invalidateTransientFocus, true);
+    document.addEventListener("focusin", invalidateTransientFocus, true);
+    return () => {
+      document.removeEventListener("pointerdown", invalidateTransientFocus, true);
+      document.removeEventListener("focusin", invalidateTransientFocus, true);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const previous = previousConnectionStatusRef.current;
+    previousConnectionStatusRef.current = connectionStatus;
+    if (!connection || !active || runtimeIdRef.current === null) {
+      transientFocusIntentRef.current = null;
+      return;
+    }
+    if (transientConnection) {
+      if (
+        transientFocusIntentRef.current === null &&
+        previous.state === "active" &&
+        previous.surfaceRole === "controller" &&
+        lastPaneControl?.role === "controller"
+      ) {
+        const terminal = terminalRef.current;
+        const target =
+          document.activeElement === terminal?.textarea
+            ? terminal.textarea
+            : document.activeElement === composeInputRef.current
+              ? composeInputRef.current
+              : undefined;
+        if (terminal && target) {
+          transientFocusIntentRef.current = {
+            connection,
+            runtimeId: runtimeIdRef.current,
+            terminal,
+            target,
+          };
+          if (hostRef.current) incrementDatasetCount(hostRef.current, "transientFocusCaptureCount");
+        }
+      }
+      return;
+    }
+
+    const intent = transientFocusIntentRef.current;
+    if (!intent) return;
+    if (
+      connectionStatus.state !== "active" ||
+      connectionStatus.surfaceRole !== "controller" ||
+      !mutationAllowed ||
+      currentPaneControl?.role !== "controller"
+    ) {
+      if (
+        connectionStatus.state === "revoked" ||
+        connectionStatus.state === "authentication-required" ||
+        connectionStatus.surfaceRole === "observer"
+      ) {
+        transientFocusIntentRef.current = null;
+      }
+      return;
+    }
+    if (
+      intent.connection !== connection ||
+      intent.runtimeId !== runtimeIdRef.current ||
+      intent.terminal !== terminalRef.current ||
+      !intent.target.isConnected ||
+      !document.hasFocus()
+    ) {
+      transientFocusIntentRef.current = null;
+      return;
+    }
+    if (document.activeElement === intent.target) {
+      transientFocusIntentRef.current = null;
+      return;
+    }
+    if (document.activeElement !== document.body && document.activeElement !== null) {
+      transientFocusIntentRef.current = null;
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (
+        transientFocusIntentRef.current !== intent ||
+        !active ||
+        connectionRef.current !== intent.connection ||
+        runtimeIdRef.current !== intent.runtimeId ||
+        terminalRef.current !== intent.terminal ||
+        !controlAllowedRef.current ||
+        !intent.target.isConnected ||
+        !document.hasFocus() ||
+        (document.activeElement !== document.body && document.activeElement !== null)
+      ) {
+        return;
+      }
+      transientFocusIntentRef.current = null;
+      intent.target.focus({ preventScroll: true });
+      if (hostRef.current) incrementDatasetCount(hostRef.current, "transientFocusRestoreCount");
+    });
+  }, [
+    active,
+    connection,
+    connectionStatus,
+    controlsPane,
+    currentPaneControl?.role,
+    lastPaneControl?.role,
+    mutationAllowed,
+    runtimeId,
+    transientConnection,
+  ]);
+
+  useEffect(() => {
     if (!connection) return;
     return connection.onPaneControl((frame) => {
       if (frame.type !== "pane.control.state" || frame.paneId !== pane.id) return;
@@ -1155,12 +1322,15 @@ export function TerminalPane({
       },
     );
     attachmentRef.current = attachment;
+    const attachmentHost = hostRef.current;
+    if (attachmentHost) incrementDatasetCount(attachmentHost, "attachmentCreateCount");
     return () => {
       const currentRuntimeId = runtimeIdRef.current;
       if (currentRuntimeId) {
         attachment.viewport(currentRuntimeId, desiredBottomOffsetRef.current);
       }
       attachment.dispose();
+      if (attachmentHost) incrementDatasetCount(attachmentHost, "attachmentDisposeCount");
       mobileImeRef.current?.cancelPending();
       if (attachmentRef.current === attachment) attachmentRef.current = null;
     };
@@ -1608,7 +1778,8 @@ function terminalDimensions(terminal: Terminal): { cols: number; rows: number } 
 }
 
 function incrementDatasetCount(host: HTMLElement, key: string): void {
-  host.dataset[key] = String(Number(host.dataset[key] ?? "0") + 1);
+  const current = Number(host.dataset[key] ?? "0");
+  host.dataset[key] = String(Math.min(Number.MAX_SAFE_INTEGER, current + 1));
 }
 
 function publishTerminalDimensions(host: HTMLElement, terminal: Terminal): void {

@@ -62,7 +62,7 @@ interface PendingClipboardImage {
 }
 
 export interface TerminalAttachment {
-  input(data: string): void;
+  input(data: string): boolean;
   pasteImage(image: Uint8Array): Promise<void>;
   resize(cols: number, rows: number): void;
   viewport(runtimeId: string, bottomOffset: number): void;
@@ -164,7 +164,7 @@ export class TerminalConnection {
     this.#sendAttach(paneId);
     return {
       input: (data) => {
-        this.input(paneId, data);
+        return this.input(paneId, data);
       },
       pasteImage: (image) => this.#pasteImage(paneId, image),
       resize: (nextCols, nextRows) => {
@@ -285,7 +285,7 @@ export class TerminalConnection {
 
   #connect(): void {
     if (this.#disposed) return;
-    this.#setStatus({ state: "connecting" });
+    this.#setTransitionalStatus("connecting");
     const url = new URL("/api/terminal", window.location.href);
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(url);
@@ -315,13 +315,13 @@ export class TerminalConnection {
       } else if (event.code === 4003 && isAuthenticationCloseReason(event.reason)) {
         this.#requireAuthentication();
       } else {
-        this.#setStatus({ state: "disconnected", message: "서버에 다시 연결하는 중입니다." });
+        this.#setTransitionalStatus("disconnected", "서버에 다시 연결하는 중입니다.");
         void this.#continueAfterAuthenticationCheck();
       }
     });
     socket.addEventListener("error", () => {
       if (this.#socket === socket) {
-        this.#setStatus({ state: "disconnected", message: "터미널 연결을 열지 못했습니다." });
+        this.#setTransitionalStatus("disconnected", "터미널 연결을 열지 못했습니다.");
       }
     });
   }
@@ -331,12 +331,12 @@ export class TerminalConnection {
     try {
       decoded = JSON.parse(raw) as unknown;
     } catch {
-      this.#setStatus({ state: "disconnected", message: "서버 응답 형식이 올바르지 않습니다." });
+      this.#setTransitionalStatus("disconnected", "서버 응답 형식이 올바르지 않습니다.");
       return;
     }
     const parsed = ServerWsFrameSchema.safeParse(decoded);
     if (!parsed.success) {
-      this.#setStatus({ state: "disconnected", message: "서버 응답을 검증하지 못했습니다." });
+      this.#setTransitionalStatus("disconnected", "서버 응답을 검증하지 못했습니다.");
       return;
     }
     const frame = parsed.data;
@@ -663,6 +663,17 @@ export class TerminalConnection {
     for (const listener of this.#statusListeners) listener(snapshot);
   }
 
+  #setTransitionalStatus(
+    state: Extract<ConnectionState, "connecting" | "disconnected">,
+    message?: string,
+  ): void {
+    this.#setStatus({
+      state,
+      ...(message === undefined ? {} : { message }),
+      ...(this.#status.surfaceRole === undefined ? {} : { surfaceRole: this.#status.surfaceRole }),
+    });
+  }
+
   readonly #handleOffline = (): void => {
     if (this.#disposed || this.#revoked) return;
     this.#offlineProbe?.abort();
@@ -688,7 +699,7 @@ export class TerminalConnection {
         this.#generation = undefined;
         this.#rejectClipboardImages("네트워크가 끊겨 이미지 붙여넣기를 중단했습니다.");
         oldSocket?.close(1000, "Local server unreachable");
-        this.#setStatus({ state: "disconnected", message: "네트워크 연결을 기다리는 중입니다." });
+        this.#setTransitionalStatus("disconnected", "네트워크 연결을 기다리는 중입니다.");
       })
       .finally(() => {
         clearTimeout(timeout);

@@ -60,8 +60,24 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
       construct(target, argumentsList, newTarget) {
         const socket = Reflect.construct(target, argumentsList, newTarget) as WebSocket;
         if (String(argumentsList[0]).includes("/api/terminal")) {
-          const state = globalThis as typeof globalThis & { __naruTerminalSocket?: WebSocket };
+          let blockTerminalOutput = false;
+          const state = globalThis as typeof globalThis & {
+            __naruTerminalSocket?: WebSocket;
+            __naruDropNextTerminalOutput?: boolean;
+          };
           state.__naruTerminalSocket = socket;
+          socket.addEventListener("message", (event) => {
+            if (typeof event.data !== "string") return;
+            const frame = JSON.parse(event.data) as { type?: unknown };
+            if (frame.type !== "terminal.output") return;
+            if (state.__naruDropNextTerminalOutput) {
+              state.__naruDropNextTerminalOutput = false;
+              blockTerminalOutput = true;
+              socket.close(1000, "fixture reconnect");
+            }
+            if (!blockTerminalOutput) return;
+            event.stopImmediatePropagation();
+          });
         }
         return socket;
       },
@@ -70,23 +86,66 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
   await openTerminal(page);
   const surface = page.getByLabel("Main Codex Codex");
   const input = surface.locator(".xterm-helper-textarea");
+  const host = surface.locator(".terminal-host");
   await input.focus();
   const instanceId = await surface.getAttribute("data-terminal-instance-id");
   const runtimeId = await surface.getAttribute("data-runtime-id");
+  for (let index = 0; index < 36; index += 1) {
+    await page.keyboard.insertText("a");
+    await page.keyboard.press("Enter");
+  }
+  const attachmentCreates = await host.getAttribute("data-attachment-create-count");
+  const attachmentDisposes = await host.getAttribute("data-attachment-dispose-count");
+  const sameRuntimeRestores = Number(
+    (await host.getAttribute("data-same-runtime-restore-count")) ?? "0",
+  );
+  await page.evaluate(() => {
+    const state = globalThis as typeof globalThis & { __naruDropNextTerminalOutput?: boolean };
+    state.__naruDropNextTerminalOutput = true;
+  });
+  await page.keyboard.insertText("z");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = globalThis as typeof globalThis & {
+          __naruDropNextTerminalOutput?: boolean;
+        };
+        return state.__naruDropNextTerminalOutput;
+      }),
+    )
+    .toBe(false);
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-connection-state", "disconnected");
+  await input.evaluate((element) => element.blur());
+  await surface.locator(".xterm-screen").hover();
+  await page.mouse.wheel(0, -2_000);
+  await expect
+    .poll(async () => Number(await surface.getAttribute("data-scroll-bottom-offset")))
+    .toBeGreaterThan(0);
+  const bottomOffset = await surface.getAttribute("data-scroll-bottom-offset");
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-connection-state", "active");
+  await expect(surface).toHaveAttribute("data-restore-phase", "ready");
+  await expect(input).toBeFocused();
+  await expect(host).toHaveAttribute(
+    "data-same-runtime-restore-count",
+    String(sameRuntimeRestores + 1),
+  );
+
+  const otherControl = page.getByRole("button", { name: "스크린 리더 모드" });
   await page.evaluate(() => {
     const state = globalThis as typeof globalThis & { __naruTerminalSocket?: WebSocket };
     if (!state.__naruTerminalSocket) throw new Error("Terminal socket is missing.");
     state.__naruTerminalSocket.close(1000, "fixture reconnect");
   });
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-connection-state", "disconnected");
+  await otherControl.focus();
+  await expect(otherControl).toBeFocused();
   await expect(page.locator(".app-shell")).toHaveAttribute("data-connection-state", "active");
-  await expect(surface).toHaveAttribute("data-restore-phase", "ready");
-  await expect(input).toBeFocused();
-  const closeButton = surface.getByRole("button", { name: "Main Codex 닫기" });
-  await closeButton.focus();
-  await page.waitForTimeout(500);
-  await expect(closeButton).toBeFocused();
+  await expect(otherControl).toBeFocused();
   await expect(surface).toHaveAttribute("data-runtime-id", runtimeId ?? "");
   await expect(surface).toHaveAttribute("data-terminal-instance-id", instanceId ?? "");
+  await expect(surface).toHaveAttribute("data-scroll-bottom-offset", bottomOffset ?? "");
+  expect(await host.getAttribute("data-attachment-create-count")).toBe(attachmentCreates);
+  expect(await host.getAttribute("data-attachment-dispose-count")).toBe(attachmentDisposes);
 });
 
 test("crosses the freeze boundary at most once per keyboard session", async ({ page }) => {

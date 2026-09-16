@@ -112,7 +112,7 @@ describe("TerminalConnection authentication recovery", () => {
     const frames: PaneFrame[] = [];
     const attachment = connection.attach(paneId, 80, 24, (frame) => frames.push(frame));
     const socket = FakeWebSocket.instances[0]!;
-    attachment.input("입력 큐 금지");
+    expect(attachment.input("입력 큐 금지")).toBe(false);
     socket.open();
     socket.receive({
       type: "lease.granted",
@@ -183,7 +183,7 @@ describe("TerminalConnection authentication recovery", () => {
       "terminal.output",
     ]);
 
-    attachment.input("한글");
+    expect(attachment.input("한글")).toBe(true);
     attachment.viewport(runtimeId, 23.4);
     expect(sentFrame(socket, "terminal.input")).toMatchObject({ data: "한글" });
     expect(sentFrame(socket, "terminal.viewport")).toMatchObject({
@@ -192,6 +192,48 @@ describe("TerminalConnection authentication recovery", () => {
       bottomOffset: 23,
     });
     attachment.dispose();
+    connection.dispose();
+  });
+
+  it("keeps one attachment and restore identity across heartbeat cadence and reconnect", async () => {
+    const connection = new TerminalConnection({ restoreProtocol: "staged-v1" });
+    const snapshots: ConnectionSnapshot[] = [];
+    connection.onStatus((snapshot) => snapshots.push(snapshot));
+    connection.attach(paneId, 80, 24, () => undefined);
+    const firstSocket = FakeWebSocket.instances[0]!;
+    firstSocket.open();
+    firstSocket.receive({
+      type: "lease.granted",
+      generation: 1,
+      replacedClient: false,
+      acquisition: "initial",
+    });
+    grantSurfaceControl(firstSocket);
+    grantPaneControl(firstSocket);
+    const firstRestoreId = sentFrame(firstSocket, "pane.attach").restoreId;
+    const activeSnapshots = snapshots.length;
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(
+      firstSocket.sent.filter((entry) => parseSentFrame(entry).type === "heartbeat"),
+    ).toHaveLength(4);
+    expect(snapshots).toHaveLength(activeSnapshots);
+
+    firstSocket.serverClose(1006, "transient network loss");
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "disconnected",
+      surfaceRole: "controller",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    const secondSocket = FakeWebSocket.instances[1]!;
+    secondSocket.open();
+    secondSocket.receive({
+      type: "lease.granted",
+      generation: 3,
+      replacedClient: false,
+      acquisition: "reconnect",
+    });
+    expect(sentFrame(secondSocket, "pane.attach").restoreId).toBe(firstRestoreId);
     connection.dispose();
   });
 
