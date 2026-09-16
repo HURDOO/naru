@@ -108,14 +108,18 @@ ownership과 integration gate를 지킨다.
 
 ### T56. 실기기 Pane blink·focus 유실과 첫 입력 전 본문 공백
 
-- [ ] T52에서 이관한 실기기 미완료 범위를 재현·해결한다. Windows Edge PWA와 Android
-      Samsung Internet PWA에서 보고된 유휴 중 반복 blink·focus 유실, 초기 로딩 blink·간헐적
-      waterfall, Pane resize의 오래 지속되는 blank/stun을 포함한다. 로컬 fixture에서는 주기적
-      유휴 blink가 수정 전에도 재현되지 않아 실기기 원인·개선 여부가 확인되지 않았다.
-- [ ] Android Samsung Internet에서 키보드를 연 상태로 여러 Terminal Pane을 오갈 때 특정
-      Pane의 본문만 비어 보이고, 그 Pane에 한 번 입력하면 이후 focus 전환에서도 정상으로 유지되는
-      증상을 재현·해결한다. T52의 viewport 가림 개선을 적용한 9443 테스트 서버에서도 재현됐다.
-      캡처는 브라우저 주소 표시줄이 보이는 상태였으므로 브라우저 탭과 설치 PWA를 구분해 확인한다.
+- [-] T52에서 이관한 실기기 미완료 범위를 재현·해결한다. Windows Edge PWA와 Android
+  Samsung Internet PWA에서 보고된 유휴 중 반복 blink·focus 유실, 초기 로딩 blink·간헐적
+  waterfall, Pane resize의 오래 지속되는 blank/stun을 포함한다. 로컬 fixture에서는 주기적
+  유휴 blink가 수정 전에도 재현되지 않아 실기기 원인·개선 여부가 확인되지 않았다.
+- [-] Android Samsung Internet에서 키보드를 연 상태로 여러 Terminal Pane을 오갈 때 특정
+  Pane의 본문만 비어 보이고, 그 Pane에 한 번 입력하면 이후 focus 전환에서도 정상으로 유지되는
+  증상을 재현·해결한다. T52의 viewport 가림 개선을 적용한 9443 테스트 서버에서도 재현됐다.
+  캡처는 브라우저 주소 표시줄이 보이는 상태였으므로 브라우저 탭과 설치 PWA를 구분해 확인한다.
+- 추가 보고(2026-09-16): 노란 active Pane 테두리는 유지되지만 실제 terminal 입력 상태가 약
+  10~40초 간격으로 반복 해제되어 다시 눌러야 입력할 수 있다. 같은 시점에 출력이 live tail로
+  이동하고 짧은 waterfall이 보이는 경우가 있어, 단순 DOM focus가 아니라 heartbeat·lease·WebSocket
+  reconnect, attachment 재생성, staged restore와 renderer lifecycle을 함께 조사한다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,
@@ -150,6 +154,24 @@ ownership과 integration gate를 지킨다.
   artifact의 read-only 비교에서도 web payload만 달랐고 새 계획 코드는 Naru만 재시작하도록
   선택했다. 기존 운영 계획 digest는 무효이며, 실제 배포는 새 committed artifact와 fresh plan의
   승인 경계에 남긴다.
+
+### T58. Gateway multi-app 경로와 dashboard
+
+- [-] 하나의 Gateway instance에서 여러 app을 겹치지 않는 경로에 등록하고, 인증된 사용자가
+  Gateway-owned dashboard에서 앱을 선택할 수 있게 한다. 기존 `appRegistrations`와
+  `routePrefix`를 재사용하되 Naru의 root-relative API·WebSocket·asset·PWA 가정을 명시적인
+  app base path 계약으로 바꾼다.
+- 1차 병렬 범위: `apps/workstation-gateway` 안에서 인증된 app inventory/dashboard, disabled·unavailable
+  상태, reserved/overlapping route 거부와 다중 upstream fixture를 구현한다. Browser에 upstream
+  origin·socket path와 실제 instance topology를 노출하지 않는다.
+- 2차 직렬 범위: T56 web 변경 통합 뒤 Naru base path, app별 service-worker scope/cache, server static
+  fallback, distribution config versioning·migration·rollback과 두 app의 HTTP/WSS/auth 격리를 구현한다.
+- 완료 조건: root Gateway dashboard와 path-scoped Naru를 포함한 두 개 이상의 app을 한 Gateway에서
+  사용하고, 한 app의 장애·cache·WebSocket·assertion audience가 다른 app을 침범하지 않는다. 기존
+  root Naru config의 migration과 rollback, 정상·미인증·disabled·unavailable 상태를 검증한다.
+- 선행 조건: PI-07. T56과 Gateway-only 1차 범위는 병렬이며, Naru web/base-path 2차 범위는 T56 통합
+  뒤 직렬로 수행한다. PI-10 multi-ingress와는 별도 Task다.
+- lane: Gateway/App routing; Naru web integration은 Mobile UI 뒤 직렬
 
 ### 기타 backlog
 
