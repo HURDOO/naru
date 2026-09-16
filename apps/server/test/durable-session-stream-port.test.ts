@@ -498,7 +498,7 @@ describe("Naru DurableSession UDS stream adapter", () => {
     }
   });
 
-  it("rotates expiring caller streams without abandoning the controller attachment", async () => {
+  it("rotates expiring caller streams without reprojecting the browser attachment", async () => {
     const fixture = createHostFixture();
     const hostConfig = {
       ...fixture.config,
@@ -517,10 +517,7 @@ describe("Naru DurableSession UDS stream adapter", () => {
     runningHosts.push(host);
 
     const config = { ...clientConfig(fixture, ["shell"]), callerTtlMs: 1_000 };
-    const nowOffsetMs = 44_500;
-    const stream = new UdsDurableSessionStreamPort(config, {
-      now: () => Date.now() + nowOffsetMs,
-    });
+    const stream = new UdsDurableSessionStreamPort(config);
     const repository = new NaruRepository(":memory:", { sessionOwner: "durable-host" });
     const project = repository.createProject(join(fixture.root, "projects", "sample"), "sample");
     const pane = repository
@@ -547,14 +544,13 @@ describe("Naru DurableSession UDS stream adapter", () => {
         { attachmentKey: "browser-controller", control: "controller" },
       );
       await waitForFrame(frames, "pane.snapshot");
-      await vi.waitFor(
-        () => {
-          expect(
-            frames.filter((frame) => frame.type === "pane.snapshot").length,
-          ).toBeGreaterThanOrEqual(2);
-        },
-        { timeout: 3_000 },
-      );
+      const controlFramesBeforeRotation = frames.filter(
+        (frame) => frame.type === "pane.control.state",
+      ).length;
+
+      // The first caller is expired by this point, so a successful write proves that the scheduled
+      // transport rotation resumed the same Host attachment with a fresh caller context.
+      await new Promise<void>((resolve) => setTimeout(resolve, 1_250));
 
       const latestControl = frames
         .filter(
@@ -565,6 +561,15 @@ describe("Naru DurableSession UDS stream adapter", () => {
       expect(latestControl).toMatchObject({ role: "controller" });
       await facade.write(pane.id, "after-caller-rotation", "browser-controller");
       expect(runtime.records[0]?.writes.at(-1)).toBe("after-caller-rotation");
+      const runtimeId = runtime.records[0]?.request.runtimeId;
+      if (runtimeId === undefined) throw new Error("Fixture Host runtime is missing.");
+      runtime.data(runtimeId, "after-rotation-output");
+      await waitForOutput(frames, "after-rotation-output");
+
+      expect(frames.filter((frame) => frame.type === "pane.snapshot")).toHaveLength(1);
+      expect(frames.filter((frame) => frame.type === "pane.control.state")).toHaveLength(
+        controlFramesBeforeRotation,
+      );
       detach();
     } finally {
       await facade.shutdown();

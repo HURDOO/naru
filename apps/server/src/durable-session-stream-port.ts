@@ -51,6 +51,8 @@ interface PaneAttachment {
   desiredControl: boolean;
   lease: AttachmentLease;
   connection: StreamConnection;
+  resumedConnection: StreamConnection | null;
+  projectedSequence: number | null;
   rotationTimer: ReturnType<typeof setTimeout> | null;
   recovery: Promise<void> | null;
   healthy: boolean;
@@ -132,6 +134,8 @@ export class UdsDurableSessionStreamPort implements DurableSessionStreamPort {
       desiredControl,
       lease,
       connection,
+      resumedConnection: null,
+      projectedSequence: null,
       rotationTimer: null,
       recovery: null,
       healthy: true,
@@ -436,7 +440,7 @@ export class UdsDurableSessionStreamPort implements DurableSessionStreamPort {
       }
       if (frame.attachmentId !== attachment.lease.attachmentId) continue;
       try {
-        await this.#handleEvent(attachment, frame.event);
+        await this.#handleEvent(attachment, connection, frame.event);
       } catch {
         if (!attachment.closed && attachment.connection === connection) {
           await this.#recover(attachment, connection);
@@ -446,25 +450,35 @@ export class UdsDurableSessionStreamPort implements DurableSessionStreamPort {
     }
   }
 
-  async #handleEvent(attachment: PaneAttachment, event: DurableSessionEvent): Promise<void> {
+  async #handleEvent(
+    attachment: PaneAttachment,
+    connection: StreamConnection,
+    event: DurableSessionEvent,
+  ): Promise<void> {
     if (event.sessionId !== attachment.binding.sessionId) return;
     switch (event.type) {
       case "terminal.snapshot":
         if (event.runtimeId !== attachment.binding.runtimeId) return;
         attachment.canonicalTerminal = event.terminal;
+        if (attachment.resumedConnection === connection) {
+          attachment.resumedConnection = null;
+          if (
+            attachment.projectedSequence !== null &&
+            event.sequence <= attachment.projectedSequence
+          ) {
+            return;
+          }
+          attachment.projectedSequence = event.sequence;
+          this.#emitSnapshot(attachment, event);
+          return;
+        }
         this.#emitControlState(attachment, event.terminal, "attached");
-        this.#emit(attachment, {
-          type: "pane.snapshot",
-          paneId: attachment.binding.paneId,
-          runtimeId: event.runtimeId,
-          sequence: event.sequence,
-          serializedState: event.serializedState,
-          cols: event.terminal.cols,
-          rows: event.terminal.rows,
-        });
+        attachment.projectedSequence = event.sequence;
+        this.#emitSnapshot(attachment, event);
         return;
       case "terminal.output":
         if (event.runtimeId !== attachment.binding.runtimeId) return;
+        attachment.projectedSequence = Math.max(attachment.projectedSequence ?? 0, event.sequence);
         this.#emit(attachment, {
           type: "terminal.output",
           paneId: attachment.binding.paneId,
@@ -551,6 +565,22 @@ export class UdsDurableSessionStreamPort implements DurableSessionStreamPort {
       rows: snapshot.terminal.rows,
     });
     attachment.canonicalTerminal = snapshot.terminal;
+    attachment.projectedSequence = snapshot.sequence;
+  }
+
+  #emitSnapshot(
+    attachment: PaneAttachment,
+    snapshot: Extract<DurableSessionEvent, { type: "terminal.snapshot" }>,
+  ): void {
+    this.#emit(attachment, {
+      type: "pane.snapshot",
+      paneId: attachment.binding.paneId,
+      runtimeId: snapshot.runtimeId,
+      sequence: snapshot.sequence,
+      serializedState: snapshot.serializedState,
+      cols: snapshot.terminal.cols,
+      rows: snapshot.terminal.rows,
+    });
   }
 
   #emitControlState(
@@ -632,6 +662,7 @@ export class UdsDurableSessionStreamPort implements DurableSessionStreamPort {
         });
         assertLeaseBinding(attachment.binding, resumed.attachment);
         attachment.lease = resumed.attachment;
+        attachment.resumedConnection = next;
         this.#activateRecoveredConnection(attachment, next);
         return;
       } catch (error) {
@@ -655,6 +686,7 @@ export class UdsDurableSessionStreamPort implements DurableSessionStreamPort {
       assertLeaseBinding(attachment.binding, opened.attachment);
       attachment.lease = opened.attachment;
       attachment.connection = replacement;
+      attachment.resumedConnection = null;
       if (attachment.desiredControl) await this.#acquireIfAvailable(attachment);
       this.#activateRecoveredConnection(attachment, replacement);
     } catch (error) {

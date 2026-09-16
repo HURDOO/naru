@@ -159,6 +159,7 @@ export function TerminalPane({
   const mobileImeRef = useRef<MobileTerminalImeBridge | null>(null);
   const previousConnectionStatusRef = useRef(connectionStatus);
   const transientFocusIntentRef = useRef<TransientFocusIntent | null>(null);
+  const paneTitleRef = useRef(pane.title);
   const keyboardHelpId = `${pane.id}-terminal-keyboard-help`;
   const composeInputId = `${pane.id}-terminal-compose-input`;
   const [runtimeStatus, setRuntimeStatus] = useState<PaneStatus>(pane.status);
@@ -514,7 +515,7 @@ export function TerminalPane({
       } else {
         terminal.open(host);
       }
-      terminal.textarea?.setAttribute("aria-label", `${pane.title} 명령 입력`);
+      terminal.textarea?.setAttribute("aria-label", `${paneTitleRef.current} 명령 입력`);
       terminal.textarea?.setAttribute("aria-describedby", keyboardHelpId);
       terminal.attachCustomKeyEventHandler((event) => {
         if (ctrlArmedRef.current) {
@@ -841,6 +842,47 @@ export function TerminalPane({
         return;
       }
       if (frame.type === "pane.snapshot") {
+        const terminal = terminalRef.current;
+        if (terminal && runtimeIdRef.current === frame.runtimeId) {
+          if (frame.sequence <= latestSequenceRef.current) return;
+          const targetBottomOffset = desiredBottomOffsetRef.current;
+          const releaseViewportReporting = suppressViewportReporting();
+          disposeCandidate();
+          preservedRestoreRef.current = null;
+          restoreIdRef.current = null;
+          previewAnchorRef.current = null;
+          latestSequenceRef.current = frame.sequence;
+          setRuntimeStatus("running");
+          mountedRendererRef.current?.freezeFrame();
+          incrementDatasetCount(host, "sameRuntimeSnapshotCount");
+          if (terminal.cols !== frame.cols || terminal.rows !== frame.rows) {
+            terminal.resize(frame.cols, frame.rows);
+            publishTerminalDimensions(host, terminal);
+          }
+          terminal.reset();
+          terminal.write(frame.serializedState, () => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                releaseViewportReporting();
+                if (
+                  disposed ||
+                  runtimeIdRef.current !== frame.runtimeId ||
+                  terminalRef.current !== terminal
+                ) {
+                  return;
+                }
+                desiredBottomOffsetRef.current = targetBottomOffset;
+                setScrollBottomOffset(targetBottomOffset);
+                scrollToBottomOffset(terminal, targetBottomOffset);
+                attachmentRef.current?.viewport(frame.runtimeId, targetBottomOffset);
+                setRestorePhase("ready");
+                revealTerminalFonts();
+                revealTerminalRestore();
+              });
+            });
+          });
+          return;
+        }
         touchSelectionRef.current?.cancel();
         if (runtimeIdRef.current !== frame.runtimeId) mobileIme?.cancelPending();
         disposeCandidate();
@@ -853,7 +895,6 @@ export function TerminalPane({
         setRuntimeId(frame.runtimeId);
         setRuntimeStatus("running");
         setRestorePhase("legacy");
-        const terminal = terminalRef.current;
         concealTerminalRestore();
         if (terminal && (terminal.cols !== frame.cols || terminal.rows !== frame.rows)) {
           terminal.resize(frame.cols, frame.rows);
@@ -1155,15 +1196,12 @@ export function TerminalPane({
       delete host.dataset.terminalFontsReady;
       delete host.dataset.terminalRestoreReady;
     };
-  }, [
-    keyboardHelpId,
-    pane.id,
-    pane.kind,
-    pane.title,
-    returnToLiveTail,
-    sendTerminalData,
-    updateCtrlArmed,
-  ]);
+  }, [keyboardHelpId, pane.id, pane.kind, returnToLiveTail, sendTerminalData, updateCtrlArmed]);
+
+  useLayoutEffect(() => {
+    paneTitleRef.current = pane.title;
+    terminalRef.current?.textarea?.setAttribute("aria-label", `${pane.title} 명령 입력`);
+  }, [pane.title, terminalInstanceId]);
 
   useEffect(() => {
     if (!clipboardNotice || clipboardNotice.message.endsWith("중…")) return;

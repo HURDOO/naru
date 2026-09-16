@@ -63,6 +63,7 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
           let blockTerminalOutput = false;
           const state = globalThis as typeof globalThis & {
             __naruTerminalSocket?: WebSocket;
+            __naruLatestTerminalSequence?: number;
             __naruDropNextTerminalOutput?: boolean;
             __naruDelayNextSurfaceState?: boolean;
           };
@@ -70,7 +71,19 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
           socket.addEventListener("message", (event) => {
             if (typeof event.data !== "string") return;
             const frameData = String(event.data);
-            const frame = JSON.parse(frameData) as { type?: unknown };
+            const frame = JSON.parse(frameData) as { type?: unknown; sequence?: unknown };
+            if (
+              (frame.type === "pane.snapshot" ||
+                frame.type === "pane.restore.preview" ||
+                frame.type === "pane.restore.full" ||
+                frame.type === "terminal.output") &&
+              typeof frame.sequence === "number"
+            ) {
+              state.__naruLatestTerminalSequence = Math.max(
+                state.__naruLatestTerminalSequence ?? 0,
+                frame.sequence,
+              );
+            }
             if (frame.type === "surface.state" && state.__naruDelayNextSurfaceState) {
               state.__naruDelayNextSurfaceState = false;
               event.stopImmediatePropagation();
@@ -161,6 +174,52 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
   await expect(surface).toHaveAttribute("data-scroll-bottom-offset", bottomOffset ?? "");
   expect(await host.getAttribute("data-attachment-create-count")).toBe(attachmentCreates);
   expect(await host.getAttribute("data-attachment-dispose-count")).toBe(attachmentDisposes);
+
+  const sameRuntimeSnapshots = Number(
+    (await host.getAttribute("data-same-runtime-snapshot-count")) ?? "0",
+  );
+  await input.focus();
+  await page.evaluate(() => {
+    const state = globalThis as typeof globalThis & {
+      __naruTerminalSocket?: WebSocket;
+      __naruLatestTerminalSequence?: number;
+    };
+    const surface = document.querySelector<HTMLElement>('[aria-label="Main Codex Codex"]');
+    const host = surface?.querySelector<HTMLElement>(".terminal-host");
+    if (!state.__naruTerminalSocket || !surface || !host) {
+      throw new Error("Terminal snapshot fixture is missing.");
+    }
+    const paneId = surface.dataset.paneId;
+    const runtimeId = surface.dataset.runtimeId;
+    const cols = Number(host.dataset.terminalCols);
+    const rows = Number(host.dataset.terminalRows);
+    if (!paneId || !runtimeId || !Number.isInteger(cols) || !Number.isInteger(rows)) {
+      throw new Error("Terminal snapshot identity is missing.");
+    }
+    state.__naruTerminalSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "pane.snapshot",
+          paneId,
+          runtimeId,
+          sequence: (state.__naruLatestTerminalSequence ?? 0) + 1,
+          serializedState: Array.from(
+            { length: 200 },
+            (_, index) => `rotation snapshot ${String(index).padStart(3, "0")}`,
+          ).join("\r\n"),
+          cols,
+          rows,
+        }),
+      }),
+    );
+  });
+  await expect(host).toHaveAttribute(
+    "data-same-runtime-snapshot-count",
+    String(sameRuntimeSnapshots + 1),
+  );
+  await expect(input).toBeFocused();
+  await expect(surface).toHaveAttribute("data-terminal-instance-id", instanceId ?? "");
+  await expect(surface).toHaveAttribute("data-scroll-bottom-offset", bottomOffset ?? "");
 });
 
 test("crosses the freeze boundary at most once per keyboard session", async ({ page }) => {
