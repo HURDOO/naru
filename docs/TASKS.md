@@ -196,7 +196,7 @@ ownership과 integration gate를 지킨다.
     동작에 영향을 주는 별도 설계·실기기 검증이 필요하다.
   - 선행 조건: PI-01, 다른 Mobile UI lane 작업과 직렬
 - [ ] T40 Docs/Tasks view state 보존
-- [-] T44 모바일 output 선택·복사
+- [x] T44 모바일 output 선택·복사
   - 모바일의 Codex·shell Pane에서 출력 텍스트를 길게 눌러 선택하고 범위를 조정해 명시적인
     복사 동작으로 일반 텍스트를 clipboard에 쓴다. 긴 누르기를 가로채는 브라우저를 위해
     선택 도구 진입점도 제공한다. 입력에 초점이 있어도 출력의 문자·공백 셀 긴 누르기는 선택을
@@ -252,8 +252,10 @@ ownership과 integration gate를 지킨다.
     남을 수 있다. textarea blur·DOM 선택 축소·일시적 disabled로는 실기기 ActionMode가 닫히지
     않았고, 효과 없는 우회는 xterm 입력·IME 회귀와 복잡도만 늘려 제거했다. 사용자가 현재 제한을
     수용해 후속 작업으로 남겼다.
-  - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
-    붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
-    실기기 인수로 간주하지 않는다. 운영 반영은 별도다.
+  - 실기기 인수·통합(2026-09-16): 9443 격리 테스트 서버의 Samsung Internet 실기기/PWA에서
+    문자·공백 긴 누르기, 네이티브 메뉴, 일반 텍스트 복사, 선택 해제와 키보드 복귀를 사용자가
+    확인했다. 선택 해제 뒤 네이티브 도구 모음이 다른 pane focus 전까지 남을 수 있는 제한은
+    후속 작업으로 수용했다. 효과 없는 해제 우회를 제거한 `e642078`까지 main에 fast-forward
+    통합했고 테스트 서버를 종료했다.
 - [ ] T46/T48 모바일 helper focus·draft lifecycle
 - [ ] T47/T37/T38/T39는 Private Ingress cutover 뒤 재검토
