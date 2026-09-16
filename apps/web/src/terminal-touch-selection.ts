@@ -29,7 +29,6 @@ interface BufferSpan {
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
 const HANDLE_EDGE_PX = 22;
 const NATIVE_COPY_RETENTION_MS = 10_000;
-const NATIVE_SELECTION_DISMISS_MS = 100;
 const NATIVE_SELECTION_PLACEHOLDER = "\u00a0";
 const nativeCopyOwners = new WeakMap<Document, object>();
 
@@ -113,9 +112,6 @@ export function attachTerminalTouchSelection(
   let focusAfterPaneTouch = false;
   let nativeCopyPrepared = false;
   let nativeCopyRetentionTimer: ReturnType<typeof setTimeout> | null = null;
-  let nativeSelectionDismissTimer: ReturnType<typeof setTimeout> | null = null;
-  let disabledTextareaForDismissal: { textarea: HTMLTextAreaElement; wasDisabled: boolean } | null =
-    null;
   const nativeCopyToken = {};
   const ownerDocument = screen.ownerDocument;
   const paneSurface = screen.closest<HTMLElement>(".pane-surface");
@@ -333,27 +329,6 @@ export function attachTerminalTouchSelection(
     claimNativeCopy();
   };
 
-  const restoreTextareaAfterNativeDismissal = (restoreFocus: boolean): void => {
-    if (nativeSelectionDismissTimer !== null) clearTimeout(nativeSelectionDismissTimer);
-    nativeSelectionDismissTimer = null;
-    const disabledTextarea = disabledTextareaForDismissal;
-    disabledTextareaForDismissal = null;
-    if (disabledTextarea && !disabledTextarea.wasDisabled) {
-      disabledTextarea.textarea.disabled = false;
-    }
-    if (restoreFocus) terminal.focus();
-  };
-
-  const scheduleTextareaRestore = (): void => {
-    const restoreFocus = focusAfterPaneTouch;
-    focusAfterPaneTouch = false;
-    if (nativeSelectionDismissTimer !== null) clearTimeout(nativeSelectionDismissTimer);
-    nativeSelectionDismissTimer = setTimeout(
-      () => restoreTextareaAfterNativeDismissal(restoreFocus),
-      NATIVE_SELECTION_DISMISS_MS,
-    );
-  };
-
   const prepareNativeCopy = (): void => {
     if (!active || selectedSpan() === null) return;
     const value = selectionText();
@@ -403,19 +378,16 @@ export function attachTerminalTouchSelection(
     const shouldRestoreInput = !target.closest(
       "button, input, textarea, select, a, [role='button']",
     );
-    terminal.blur();
-    ownerDocument.getSelection()?.removeAllRanges();
     cancelSelection(true);
-    const textarea = terminal.textarea;
-    if (textarea) {
-      disabledTextareaForDismissal = { textarea, wasDisabled: textarea.disabled };
-      textarea.disabled = true;
+    if (shouldRestoreInput) {
+      focusAfterPaneTouch = true;
+      terminal.focus();
     }
-    focusAfterPaneTouch = shouldRestoreInput;
   };
   const onPaneTouchEnd = (): void => {
-    if (!focusAfterPaneTouch && disabledTextareaForDismissal === null) return;
-    scheduleTextareaRestore();
+    if (!focusAfterPaneTouch) return;
+    focusAfterPaneTouch = false;
+    screen.ownerDocument.defaultView?.requestAnimationFrame(() => terminal.focus());
   };
 
   const selectionChange = terminal.onSelectionChange(() => {
@@ -438,7 +410,6 @@ export function attachTerminalTouchSelection(
   ownerDocument.addEventListener("copy", onCopy, true);
   paneSurface?.addEventListener("touchstart", onPaneTouchStart, { capture: true, passive: true });
   paneSurface?.addEventListener("touchend", onPaneTouchEnd, { capture: true, passive: true });
-  paneSurface?.addEventListener("touchcancel", onPaneTouchEnd, { capture: true, passive: true });
   handles.hidden = true;
 
   const cancelSelection = (preservePreparedCopy = false): void => {
@@ -467,7 +438,6 @@ export function attachTerminalTouchSelection(
     canLongPress: () => true,
     hasSelection: () => selectedSpan() !== null,
     enter: () => {
-      restoreTextareaAfterNativeDismissal(false);
       clearRetainedSelection();
       active = true;
       dragging = null;
@@ -478,7 +448,6 @@ export function attachTerminalTouchSelection(
       publish();
     },
     begin: (clientX, clientY, longPress = false) => {
-      restoreTextareaAfterNativeDismissal(false);
       if (!active) {
         clearRetainedSelection();
         active = true;
@@ -515,7 +484,6 @@ export function attachTerminalTouchSelection(
     dispose: () => {
       cancelSelection(false);
       clearRetainedSelection();
-      restoreTextareaAfterNativeDismissal(false);
       selectionChange.dispose();
       scrollChange.dispose();
       startHandle.removeEventListener("pointerdown", onHandlePointerDown);
@@ -537,7 +505,6 @@ export function attachTerminalTouchSelection(
       ownerDocument.removeEventListener("copy", onCopy, true);
       paneSurface?.removeEventListener("touchstart", onPaneTouchStart, true);
       paneSurface?.removeEventListener("touchend", onPaneTouchEnd, true);
-      paneSurface?.removeEventListener("touchcancel", onPaneTouchEnd, true);
       handles.remove();
     },
   };
