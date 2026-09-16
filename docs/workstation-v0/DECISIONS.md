@@ -42,3 +42,19 @@ remote push 승인으로 해석하지 않는다.
   혼합 pin을 기록한다. 이전 release는 참조되는 동안 보존한다. Reconfigure와 rollback은 새 plan에
   표시되는 영향 서비스만 재시작하되 rollback은 대상 receipt의 pin을 복원한다. 실패 복구는 중지한
   서비스만 이전 definition으로 되돌린다.
+
+## WV0-D008. Gateway가 여러 app의 path routing과 dashboard를 소유한다
+
+- 상태: accepted (T58, additive post-v0)
+- 결정: 각 managed app은 겹치지 않는 canonical route prefix와 assertion audience를 가지며 Gateway가
+  HTTP·WebSocket prefix 제거, 인증과 app availability를 소유한다. Enabled root app이 없으면 `/`와
+  `/_gateway/apps`가 인증된 app dashboard를 제공하고, root app이 있으면 `/`는 그 app에 유지한다.
+  Dashboard는 upstream origin·socket path와 실제 instance topology를 노출하지 않는다.
+- Naru 연동: `@naru/contracts/naru-app/v1`의 app base path를 distribution config/env, web metadata,
+  service-worker scope/cache와 receipt에 동일하게 결합한다. 새 CLI intent는 `/naru`, 값이 없는 기존
+  intent·receipt는 `/`로 해석한다. App-managed non-root 구성은 지원하지 않고 거부한다.
+- 호환성·migration: reconfigure는 Gateway registration과 Naru release를 한 transaction으로 옮기고,
+  rollback은 대상 receipt의 root/non-root 경로를 정확히 복원한다. Root를 비운 Gateway의 인증된
+  retirement worker는 과거 Naru root worker와 root cache만 회수하고 path-scoped app cache는 보존한다.
+  기존 browser profile·설치 PWA와 실제 production migration은 source/fixture 검증과 분리된 승인
+  경계다.

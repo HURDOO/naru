@@ -120,6 +120,19 @@ ownership과 integration gate를 지킨다.
   10~40초 간격으로 반복 해제되어 다시 눌러야 입력할 수 있다. 같은 시점에 출력이 live tail로
   이동하고 짧은 waterfall이 보이는 경우가 있어, 단순 DOM focus가 아니라 heartbeat·lease·WebSocket
   reconnect, attachment 재생성, staged restore와 renderer lifecycle을 함께 조사한다.
+- 로컬 원인·수정(2026-09-16): heartbeat는 안정적이었지만 transient reconnect 상태에서
+  `TerminalPane`이 active attachment를 dispose/recreate해 모바일 IME와 실제 DOM focus를 끊고 staged
+  restore·renderer lifecycle을 다시 실행했다. Reconnect와 `lease.granted` 뒤 `surface.state` 사이에도
+  attachment·renderer·restore identity를 보존하고, 현재 generation의 authority가 확인될 때까지 input은
+  fail closed한다. 같은 runtime의 최신 restore는 freeze 안에서 기존 local scroll offset을 보존해
+  적용하며, 동일 Pane·connection·runtime·control이고 사용자가 다른 곳으로 focus를 옮기지 않았을 때만
+  focus를 복구한다. 실패한 input은 compose를 소비하거나 live tail로 이동시키지 않는다.
+- 로컬 검증(2026-09-16, Node 24): terminal stability E2E의 120초 유휴와 120초 연속 입력에서
+  focus·renderer·hidden·frozen·connection·visibility 변화가 모두 0회였고 3건이 통과했다. 모바일
+  input/IME/image/keyboard/touch 4건과 responsive flow, web 단위 108건, typecheck·build·lint·format이
+  통과했다. 기존 Fold keyboard-close fixture의 기대 높이 차이와 hook 3건의 환경 실패는 변경 전
+  base에서도 동일하게 재현했다. 실제 Edge PWA와 Samsung Internet 브라우저 탭·설치 PWA 인수는
+  완료 조건으로 남긴다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,
@@ -157,10 +170,10 @@ ownership과 integration gate를 지킨다.
 
 ### T58. Gateway multi-app 경로와 dashboard
 
-- [-] 하나의 Gateway instance에서 여러 app을 겹치지 않는 경로에 등록하고, 인증된 사용자가
-  Gateway-owned dashboard에서 앱을 선택할 수 있게 한다. 기존 `appRegistrations`와
-  `routePrefix`를 재사용하되 Naru의 root-relative API·WebSocket·asset·PWA 가정을 명시적인
-  app base path 계약으로 바꾼다.
+- [x] 하나의 Gateway instance에서 여러 app을 겹치지 않는 경로에 등록하고, 인증된 사용자가
+      Gateway-owned dashboard에서 앱을 선택할 수 있게 한다. 기존 `appRegistrations`와
+      `routePrefix`를 재사용하되 Naru의 root-relative API·WebSocket·asset·PWA 가정을 명시적인
+      app base path 계약으로 바꾼다.
 - 1차 병렬 범위: `apps/workstation-gateway` 안에서 인증된 app inventory/dashboard, disabled·unavailable
   상태, reserved/overlapping route 거부와 다중 upstream fixture를 구현한다. Browser에 upstream
   origin·socket path와 실제 instance topology를 노출하지 않는다.
@@ -172,6 +185,17 @@ ownership과 integration gate를 지킨다.
 - 선행 조건: PI-07. T56과 Gateway-only 1차 범위는 병렬이며, Naru web/base-path 2차 범위는 T56 통합
   뒤 직렬로 수행한다. PI-10 multi-ingress와는 별도 Task다.
 - lane: Gateway/App routing; Naru web integration은 Mobile UI 뒤 직렬
+- 검증(2026-09-16, Node 24·격리 fixture): 새 CLI intent의 `/naru`와 기존 config/receipt의 `/` 호환,
+  app-managed non-root 거부, HTML metadata에서 파생하는 API·WebSocket·manifest·service worker·push
+  경로, app별 service-worker scope/cache를 확인했다. Root app 유무에 따른 dashboard 우선순위,
+  `/_gateway/apps`, 두 app의 HTTP/WSS와 assertion audience 격리, disabled·unavailable 상태, root
+  worker retirement, reconfigure·rollback·doctor의 경로 일치도 검증했다. 전체 단위 769건(5건 건너뜀),
+  distribution 71건, operations 64건과 production smoke 1건이 통과했다. Browser E2E 첫 실행은
+  21건 중 18건 통과·1건 선행 실패로 건너뜀·2건 timing/중복 renderer 실패였고, 실패 2건은 개별
+  재실행에서 통과했다. Terminal stability E2E 3건과 format·lint·typecheck·build도 통과했다. Main
+  통합 뒤 관련 회귀 132건과 typecheck·build를 다시 통과했다. 기존 실제
+  browser profile의 worker migration, 설치 PWA·실기기와 production instance 인수는 별도 승인 경계에
+  남기며 source/fixture 구현 완료를 막지 않는다.
 
 ### 기타 backlog
 

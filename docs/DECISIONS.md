@@ -91,3 +91,21 @@
   자동 심사를 fake CLI에서 직접 발생시키는 acceptance는 수행하지 않았다.
 - 후속 CLI의 실험적 notification/request protocol이 달라지면 그 버전의 source/schema와 격리 인수를
   다시 확인한다. 기존 hook-only runtime의 stale 표시 한계는 T54 migration에서 별도로 다룬다.
+
+## D011. Naru app base path는 명시적인 v1 계약이다
+
+- 상태: 승인·T58 구현·로컬 검증 완료
+- `@naru/contracts/naru-app/v1`과 `NARU_APP_BASE_PATH`가 Naru의 canonical app base path를 정의한다.
+  기존 intent·receipt에 값이 없으면 `/`로 읽고, 새 CLI-created distribution intent는 `/naru`를
+  명시한다. `/`가 아닌 Naru는 Gateway가 prefix를 제거하는 managed mode에서만 허용하며 app-managed
+  non-root 구성은 fail closed한다.
+- Web release는 HTML의 단일 `naru-app-base-path` metadata에서 API·WebSocket·manifest·service worker·
+  push target을 파생한다. Service worker scope와 cache namespace는 app path별로 격리하고 Gateway-owned
+  `/_gateway/*`는 root에 유지한다.
+- Gateway root `/`는 enabled root app이 없을 때 인증된 app dashboard를 제공하고, 기존 root app이
+  있으면 그 app의 우선권을 유지한다. `/_gateway/apps` dashboard는 두 구성에서 모두 유지한다.
+  Root app을 non-root로 옮긴 뒤에는 인증된 root retirement worker가 과거 Naru root worker와 root
+  cache만 회수하며 다른 app scope/cache를 건드리지 않는다.
+- Reconfigure와 rollback은 Gateway route, Naru env/config, web release metadata와 receipt의 exact app
+  path를 함께 이동·복원한다. 기존 실제 browser profile의 worker migration과 설치 PWA·운영 instance
+  인수는 별도 승인 경계에 남긴다.
