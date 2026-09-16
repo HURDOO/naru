@@ -252,6 +252,12 @@ ownership과 integration gate를 지킨다.
     `touchstart`에서 숨은 textarea를 먼저 blur하고 DOM 선택 범위를 제거한 뒤 선택 상태를
     해제하며, 입력 focus는 `touchend` 다음 animation frame에 복원한다. 메뉴 동작과 pane 터치가
     겹칠 때를 위한 짧은 copy 원문 보관은 유지한다.
+  - 네이티브 선택 해제 재보완(2026-09-16): blur 뒤 입력 focus와 키보드는 복원되지만 Android
+    네이티브 선택 도구 모음이 계속 남는다는 실기기 결과를 반영했다. 요소 blur만으로 브라우저
+    화면 focus가 끝나지 않는 Android Chromium 동작을 고려해, 선택 해제부터 `touchend` 후 100ms
+    동안 숨은 textarea를 disabled로 전환해 네이티브 편집 상태를 종료한다. 이후 textarea를 다시
+    활성화하고 입력 focus를 복원하며, `touchcancel`과 controller dispose에서도 반드시 원래 상태로
+    복구한다.
   - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
     붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
     실기기 인수로 간주하지 않는다. 운영 반영은 별도다.

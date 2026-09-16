@@ -33,6 +33,7 @@ describe("terminal touch selection", () => {
   });
 
   it("retains the selected span and dismisses it when xterm clears first", () => {
+    vi.useFakeTimers();
     const pane = document.createElement("section");
     pane.className = "pane-surface";
     const screen = document.createElement("div");
@@ -96,7 +97,14 @@ describe("terminal touch selection", () => {
     expect(controller.active).toBe(false);
     expect(blurCount).toBe(2);
     expect(focusCount).toBe(0);
+    expect(textarea.disabled).toBe(true);
+    const touchEnd = new Event("touchend", { bubbles: true, cancelable: true });
+    screen.dispatchEvent(touchEnd);
+    vi.advanceTimersByTime(100);
+    expect(textarea.disabled).toBe(false);
+    expect(focusCount).toBe(1);
     controller.dispose();
+    vi.useRealTimers();
   });
 
   it("selects a Korean word by cell width and keeps an emoji intact", () => {
@@ -211,6 +219,7 @@ describe("terminal touch selection", () => {
     expect(controller.active).toBe(false);
     expect(textarea.value).toBe("");
     expect(document.activeElement).not.toBe(textarea);
+    expect(textarea.disabled).toBe(true);
 
     const copy = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copy, "clipboardData", { value: { setData } });
@@ -220,6 +229,7 @@ describe("terminal touch selection", () => {
     expect(setData).toHaveBeenCalledWith("text/plain", "native terminal selection");
     expect(copied).toHaveBeenCalledWith("copied");
     controller.dispose();
+    expect(textarea.disabled).toBe(false);
   });
 
   it("creates a native textarea selection when a focused blank cell is long-pressed", () => {
