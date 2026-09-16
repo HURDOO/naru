@@ -349,6 +349,9 @@ export class TerminalConnection {
           state: "connecting",
           acquisition: frame.acquisition,
           message: acquisitionMessage(frame.acquisition),
+          ...(this.#status.surfaceRole === undefined
+            ? {}
+            : { surfaceRole: this.#status.surfaceRole }),
         });
         for (const paneId of this.#attachments.keys()) this.#sendAttach(paneId);
         this.#startHeartbeat();

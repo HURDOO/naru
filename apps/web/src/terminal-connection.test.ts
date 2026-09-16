@@ -233,6 +233,11 @@ describe("TerminalConnection authentication recovery", () => {
       replacedClient: false,
       acquisition: "reconnect",
     });
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "connecting",
+      surfaceRole: "controller",
+      acquisition: "reconnect",
+    });
     expect(sentFrame(secondSocket, "pane.attach").restoreId).toBe(firstRestoreId);
     connection.dispose();
   });

@@ -64,11 +64,22 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
           const state = globalThis as typeof globalThis & {
             __naruTerminalSocket?: WebSocket;
             __naruDropNextTerminalOutput?: boolean;
+            __naruDelayNextSurfaceState?: boolean;
           };
           state.__naruTerminalSocket = socket;
           socket.addEventListener("message", (event) => {
             if (typeof event.data !== "string") return;
-            const frame = JSON.parse(event.data) as { type?: unknown };
+            const frameData = String(event.data);
+            const frame = JSON.parse(frameData) as { type?: unknown };
+            if (frame.type === "surface.state" && state.__naruDelayNextSurfaceState) {
+              state.__naruDelayNextSurfaceState = false;
+              event.stopImmediatePropagation();
+              setTimeout(
+                () => socket.dispatchEvent(new MessageEvent("message", { data: frameData })),
+                50,
+              );
+              return;
+            }
             if (frame.type !== "terminal.output") return;
             if (state.__naruDropNextTerminalOutput) {
               state.__naruDropNextTerminalOutput = false;
@@ -100,8 +111,12 @@ test("keeps an unchanged renderer across a same-runtime reconnect", async ({ pag
     (await host.getAttribute("data-same-runtime-restore-count")) ?? "0",
   );
   await page.evaluate(() => {
-    const state = globalThis as typeof globalThis & { __naruDropNextTerminalOutput?: boolean };
+    const state = globalThis as typeof globalThis & {
+      __naruDropNextTerminalOutput?: boolean;
+      __naruDelayNextSurfaceState?: boolean;
+    };
     state.__naruDropNextTerminalOutput = true;
+    state.__naruDelayNextSurfaceState = true;
   });
   await page.keyboard.insertText("z");
   await expect
