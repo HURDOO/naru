@@ -1,6 +1,8 @@
 import { applyCtrlToTerminalData } from "./mobile-terminal-input";
 
 export const CODEX_SHIFT_ENTER_SEQUENCE = "\u001b[13;2u";
+const TERMINAL_FOCUS_IN_SEQUENCE = "\u001b[I";
+const TERMINAL_FOCUS_OUT_SEQUENCE = "\u001b[O";
 
 interface KeyGesture {
   readonly type: string;
@@ -37,4 +39,11 @@ export function codexShiftEnterSequence(event: KeyGesture): string | null {
     !event.altKey
     ? CODEX_SHIFT_ENTER_SEQUENCE
     : null;
+}
+
+export function isTerminalFocusReport(data: string, focusReportingEnabled: boolean): boolean {
+  return (
+    focusReportingEnabled &&
+    (data === TERMINAL_FOCUS_IN_SEQUENCE || data === TERMINAL_FOCUS_OUT_SEQUENCE)
+  );
 }

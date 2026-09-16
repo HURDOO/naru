@@ -36,7 +36,8 @@ describe("terminal touch selection", () => {
     const pane = document.createElement("section");
     pane.className = "pane-surface";
     const screen = document.createElement("div");
-    pane.appendChild(screen);
+    const paneChrome = document.createElement("div");
+    pane.append(screen, paneChrome);
     document.body.appendChild(pane);
     screen.getBoundingClientRect = () =>
       ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
@@ -89,7 +90,7 @@ describe("terminal touch selection", () => {
     expect(controller.hasSelection()).toBe(true);
     const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
     Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
-    screen.dispatchEvent(touchStart);
+    paneChrome.dispatchEvent(touchStart);
     expect(controller.active).toBe(false);
     expect(focusCount).toBe(1);
     controller.dispose();
@@ -138,8 +139,9 @@ describe("terminal touch selection", () => {
     const terminalElement = document.createElement("div");
     const textarea = document.createElement("textarea");
     const screen = document.createElement("div");
+    const paneChrome = document.createElement("div");
     terminalElement.append(textarea, screen);
-    pane.appendChild(terminalElement);
+    pane.append(terminalElement, paneChrome);
     document.body.appendChild(pane);
     screen.getBoundingClientRect = () =>
       ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
@@ -201,7 +203,7 @@ describe("terminal touch selection", () => {
 
     const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
     Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
-    screen.dispatchEvent(touchStart);
+    paneChrome.dispatchEvent(touchStart);
 
     expect(controller.active).toBe(false);
     expect(textarea.value).toBe("");

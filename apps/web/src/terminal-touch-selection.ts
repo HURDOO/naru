@@ -374,7 +374,10 @@ export function attachTerminalTouchSelection(
     const target = event.target;
     if (!(target instanceof Element)) return;
     if (target.closest(".terminal-selection-handle")) return;
-    if (screen.contains(target) && (selectedSpan() === null || dragging !== null)) return;
+    // Screen gestures are resolved by the touch-scroll controller: a short tap dismisses the
+    // selection, while a vertical drag scrolls without losing it. Pane chrome still dismisses
+    // immediately so its controls remain responsive.
+    if (screen.contains(target)) return;
     const shouldRestoreInput = !target.closest(
       "button, input, textarea, select, a, [role='button']",
     );

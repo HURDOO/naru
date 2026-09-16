@@ -2,6 +2,8 @@ import type { TerminalTouchSelectionController } from "./terminal-touch-selectio
 
 const TOUCH_SCROLL_ACTIVATION_PX = 8;
 const TOUCH_SELECTION_HOLD_MS = 500;
+const TOUCH_SELECTION_EDGE_PX = 22;
+const TOUCH_SELECTION_EDGE_INTERVAL_MS = 80;
 
 export interface TerminalTouchScrollGesture {
   pointerId: number;
@@ -130,16 +132,44 @@ export function attachTerminalTouchScroll(
   screen: HTMLElement,
   terminal: ScrollableTerminal,
   selection?: TerminalTouchSelectionController,
+  focusInput: () => void = () => terminal.focus(),
 ): () => void {
   let gesture: TerminalTouchScrollGesture | null = null;
   let selecting = false;
+  let cancelSelectionOnTap = false;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let selectionEdgeTimer: ReturnType<typeof setInterval> | null = null;
+  let lastSelectionPoint: { x: number; y: number } | null = null;
   screen.classList.add("naru-touch-scroll");
   const detachScrollbarTouchDrag = attachTerminalScrollbarTouchDrag(screen, terminal);
 
   const clearLongPress = (): void => {
     if (longPressTimer !== null) clearTimeout(longPressTimer);
     longPressTimer = null;
+  };
+
+  const clearSelectionEdgeScroll = (): void => {
+    if (selectionEdgeTimer !== null) clearInterval(selectionEdgeTimer);
+    selectionEdgeTimer = null;
+    lastSelectionPoint = null;
+  };
+
+  const updateSelectionEdgeScroll = (clientX: number, clientY: number): void => {
+    lastSelectionPoint = { x: clientX, y: clientY };
+    const bounds = screen.getBoundingClientRect();
+    const edge =
+      clientY < bounds.top + TOUCH_SELECTION_EDGE_PX
+        ? -1
+        : clientY > bounds.bottom - TOUCH_SELECTION_EDGE_PX
+          ? 1
+          : 0;
+    if (selectionEdgeTimer !== null) clearInterval(selectionEdgeTimer);
+    selectionEdgeTimer = null;
+    if (edge === 0) return;
+    selectionEdgeTimer = setInterval(() => {
+      terminal.scrollLines(edge);
+      if (lastSelectionPoint) selection?.move(lastSelectionPoint.x, lastSelectionPoint.y);
+    }, TOUCH_SELECTION_EDGE_INTERVAL_MS);
   };
 
   const releasePointer = (pointerId: number): void => {
@@ -160,21 +190,21 @@ export function attachTerminalTouchScroll(
     }
     gesture = beginTerminalTouchScroll(event.pointerId, event.clientX, event.clientY);
     selecting = selection?.active ?? false;
+    cancelSelectionOnTap = false;
     if (selecting) {
       if (selection?.hasSelection()) {
-        selection.cancel();
         selecting = false;
-        gesture = null;
-        terminal.focus();
-        return;
+        cancelSelectionOnTap = true;
+      } else {
+        selection?.begin(event.clientX, event.clientY);
       }
-      selection?.begin(event.clientX, event.clientY);
     } else if (selection?.canLongPress(event.clientX, event.clientY)) {
       clearLongPress();
       longPressTimer = setTimeout(() => {
         if (!gesture || gesture.pointerId !== event.pointerId || gesture.axis !== "pending") return;
         longPressTimer = null;
         selecting = true;
+        cancelSelectionOnTap = false;
         selection.begin(gesture.startX, gesture.startY, true);
       }, TOUCH_SELECTION_HOLD_MS);
     }
@@ -191,6 +221,7 @@ export function attachTerminalTouchScroll(
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
       selection?.move(event.clientX, event.clientY);
+      updateSelectionEdgeScroll(event.clientX, event.clientY);
       return;
     }
     const lineHeight = screen.getBoundingClientRect().height / Math.max(terminal.rows, 1);
@@ -212,11 +243,14 @@ export function attachTerminalTouchScroll(
   const finishPointer = (event: PointerEvent, canceled: boolean): void => {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
     clearLongPress();
+    clearSelectionEdgeScroll();
     const wasScrolling = gesture.axis === "vertical";
     const wasSelecting = selecting;
+    const shouldCancelSelection = cancelSelectionOnTap && !wasScrolling && !canceled;
     releasePointer(event.pointerId);
     gesture = null;
     selecting = false;
+    cancelSelectionOnTap = false;
     if (wasSelecting) {
       selection?.finish();
       if (event.cancelable) event.preventDefault();
@@ -227,7 +261,8 @@ export function attachTerminalTouchScroll(
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
     } else if (!canceled) {
-      terminal.focus();
+      if (shouldCancelSelection) selection?.cancel();
+      focusInput();
     }
   };
 
@@ -236,9 +271,11 @@ export function attachTerminalTouchScroll(
   const onLostPointerCapture = (event: PointerEvent): void => {
     if (gesture?.pointerId === event.pointerId) {
       clearLongPress();
+      clearSelectionEdgeScroll();
       if (selecting) selection?.finish();
       gesture = null;
       selecting = false;
+      cancelSelectionOnTap = false;
     }
   };
 
@@ -250,9 +287,11 @@ export function attachTerminalTouchScroll(
 
   return () => {
     clearLongPress();
+    clearSelectionEdgeScroll();
     detachScrollbarTouchDrag();
     if (gesture) releasePointer(gesture.pointerId);
     gesture = null;
+    cancelSelectionOnTap = false;
     screen.classList.remove("naru-touch-scroll");
     screen.removeEventListener("pointerdown", onPointerDown);
     screen.removeEventListener("pointermove", onPointerMove);

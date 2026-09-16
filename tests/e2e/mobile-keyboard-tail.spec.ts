@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type CDPSession } from "@playwright/test";
 
 const projectPath = "/private/tmp/naru-e2e-projects/public/editor";
 
@@ -12,6 +12,7 @@ test.use({
 
 test("keeps the live terminal tail visible while the visual viewport pans for a keyboard", async ({
   page,
+  context,
 }) => {
   test.setTimeout(90_000);
   await page.goto("/");
@@ -46,6 +47,28 @@ test("keeps the live terminal tail visible while the visual viewport pans for a 
   await page.keyboard.press("Enter");
   await expect(rows).toContainText("NARU_KB_TAIL");
   await expect(surface).toHaveAttribute("data-scroll-bottom-offset", "0");
+  const screenBounds = await surface.locator(".xterm-screen").boundingBox();
+  if (!screenBounds) throw new Error("Terminal screen has no bounds.");
+  const cdp = await context.newCDPSession(page);
+  const touchX = screenBounds.x + screenBounds.width / 2;
+  const touchY = screenBounds.y + screenBounds.height * 0.35;
+  await surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }).focus();
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  for (const delta of [30, 60, 90]) {
+    await dispatchTouch(cdp, "touchMove", touchX, touchY + delta);
+  }
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY + 90);
+  await expect
+    .poll(async () => Number(await surface.getAttribute("data-scroll-bottom-offset")))
+    .toBeGreaterThan(0);
+
+  // A normal terminal tap means "resume input". Return to the prompt before opening the soft
+  // keyboard so a resized scrollback viewport cannot leave only an empty terminal background.
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY);
+  await expect(input).toBeFocused();
+  await expect(surface).toHaveAttribute("data-scroll-bottom-offset", "0");
+  await expect(rows).toContainText("NARU_KB_TAIL");
   await page.waitForTimeout(200);
   const instanceId = await surface.getAttribute("data-terminal-instance-id");
 
@@ -227,3 +250,15 @@ test("keeps the live terminal tail visible while the visual viewport pans for a 
     expect(state.inputFocused).toBe(true);
   }
 });
+
+async function dispatchTouch(
+  cdp: CDPSession,
+  type: "touchStart" | "touchMove" | "touchEnd",
+  x: number,
+  y: number,
+): Promise<void> {
+  await cdp.send("Input.dispatchTouchEvent", {
+    type,
+    touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1, radiusX: 5, radiusY: 5, force: 1 }],
+  });
+}

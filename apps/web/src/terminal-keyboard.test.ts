@@ -3,6 +3,7 @@ import {
   CODEX_SHIFT_ENTER_SEQUENCE,
   codexShiftEnterSequence,
   ctrlSequenceForKeyboardEvent,
+  isTerminalFocusReport,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
 
@@ -34,5 +35,12 @@ describe("terminal keyboard boundary", () => {
       CODEX_SHIFT_ENTER_SEQUENCE,
     );
     expect(codexShiftEnterSequence({ ...keydown, key: "Enter" })).toBeNull();
+  });
+
+  it("distinguishes application focus reports from user input", () => {
+    expect(isTerminalFocusReport("\u001b[I", true)).toBe(true);
+    expect(isTerminalFocusReport("\u001b[O", true)).toBe(true);
+    expect(isTerminalFocusReport("\u001b[I", false)).toBe(false);
+    expect(isTerminalFocusReport("ordinary input", true)).toBe(false);
   });
 });

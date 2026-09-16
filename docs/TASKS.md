@@ -133,6 +133,17 @@ ownership과 integration gate를 지킨다.
   통과했다. 기존 Fold keyboard-close fixture의 기대 높이 차이와 hook 3건의 환경 실패는 변경 전
   base에서도 동일하게 재현했다. 실제 Edge PWA와 Samsung Internet 브라우저 탭·설치 PWA 인수는
   완료 조건으로 남긴다.
+- 실기기 확인·후속 수정(2026-09-17): Host credential rotation의 동일 sequence snapshot 재투영을
+  제거한 9443 빌드에서 반복 blink·키보드 유실·live-tail 이동이 사라졌음을 사용자가 확인했다.
+  이어 발견된 Codex 출력 긴 누르기의 live-tail 이동은 Codex TUI의 focus-reporting frame을 사용자
+  입력으로 취급한 것이 원인이었다. focus in/out frame은 Host로 전달하되 viewport와 mobile Ctrl
+  상태를 바꾸지 않도록 분리했다. 선택 범위가 있는 화면의 수직 drag는 선택을 유지한 채 scroll하고,
+  선택 drag가 화면 가장자리에 닿으면 자동 scroll하며 범위를 확장한다. 일반 Terminal 화면의 짧은
+  tap은 scrollback이 아니라 live prompt로 복귀한 뒤 focus해 키보드 resize 시 빈 배경만 보이는
+  상태를 방지한다. 관련 단위 18건, Samsung UA 선택·키보드·IME와 reconnect E2E 7건,
+  typecheck·lint·build가 통과했다. 전체 unit은 768건 통과·5건 skip이며, 실제 login shell이 hook
+  환경을 다시 주입하는 기존 hook 3건은 이번 변경과 무관하게 실패했다. 새 9443 빌드의 Samsung
+  Internet 브라우저/PWA 인수는 남아 있다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,

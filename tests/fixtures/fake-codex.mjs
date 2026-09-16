@@ -94,6 +94,12 @@ process.stdin.on("data", (data) => {
     if (submittedCommand === "/status") {
       process.stdout.write(`\u001b[2mSession ID:\u001b[0m ${sessionId}\r\n`);
     }
+    if (submittedCommand === "/naru-e2e-focus-reporting") {
+      process.stdout.write("\u001b[?1004h");
+      for (let index = 0; index < 120; index += 1) {
+        process.stdout.write(`FAKE_CODEX_SCROLL_${String(index).padStart(3, "0")}\r\n`);
+      }
+    }
     if (submittedCommand === "/naru-e2e-complete") {
       completedTurnSequence += 1;
       const turnId = `naru-e2e-completed-turn-${completedTurnSequence}`;

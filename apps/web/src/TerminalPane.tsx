@@ -26,6 +26,7 @@ import { isAndroidTouchInput, MobileTerminalImeBridge } from "./mobile-terminal-
 import {
   codexShiftEnterSequence,
   ctrlSequenceForKeyboardEvent,
+  isTerminalFocusReport,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
 import { canPromoteTerminalRestore, translatePreviewBottomOffset } from "./terminal-restore";
@@ -238,13 +239,13 @@ export function TerminalPane({
   }, []);
 
   const sendTerminalData = useCallback(
-    (data: string): void => {
+    (data: string, revealLiveTail = true): void => {
       const attachment = attachmentRef.current;
       if (!attachment) return;
-      const output = ctrlArmedRef.current ? applyCtrlToTerminalData(data) : data;
+      const output = revealLiveTail && ctrlArmedRef.current ? applyCtrlToTerminalData(data) : data;
       if (!attachment.input(output)) return;
-      if (ctrlArmedRef.current) updateCtrlArmed(false);
-      returnToLiveTail();
+      if (revealLiveTail && ctrlArmedRef.current) updateCtrlArmed(false);
+      if (revealLiveTail) returnToLiveTail();
     },
     [returnToLiveTail, updateCtrlArmed],
   );
@@ -574,10 +575,15 @@ export function TerminalPane({
         : null;
       touchSelectionRef.current = touchSelection;
       const detachTouchScroll = terminalScreen
-        ? attachTerminalTouchScroll(terminalScreen, terminal, touchSelection ?? undefined)
+        ? attachTerminalTouchScroll(terminalScreen, terminal, touchSelection ?? undefined, () => {
+            returnToLiveTail();
+            terminal.focus();
+          })
         : () => undefined;
       const onData = terminal.onData((data) => {
-        if (!mobileIme || mobileIme.allowNativeData(data)) sendTerminalData(data);
+        if (!mobileIme || mobileIme.allowNativeData(data)) {
+          sendTerminalData(data, !isTerminalFocusReport(data, terminal.modes.sendFocusMode));
+        }
       });
       const onScroll = terminal.onScroll(() => reportViewport(terminal));
       let rendererDisposed = false;

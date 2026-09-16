@@ -207,6 +207,64 @@ test("copies Codex Pane output with the explicit selection tool", async ({ page,
     .toContain("FAKE_CODEX_READY");
 });
 
+test("keeps Codex scrollback anchored and scrollable while selecting output", async ({
+  page,
+  context,
+}) => {
+  await openTerminal(page, "Main Codex");
+  const codex = page.getByLabel("Main Codex Codex");
+  const input = codex.locator(".xterm-helper-textarea");
+  const screen = codex.locator(".xterm-screen");
+  const rows = codex.locator(".xterm:not(.terminal-resize-freeze) .xterm-rows");
+  const selectionButton = codex.getByRole("button", {
+    name: "Main Codex 출력 선택",
+    exact: true,
+  });
+  const cdp = await context.newCDPSession(page);
+
+  await input.focus();
+  await page.keyboard.insertText("/naru-e2e-focus-reporting");
+  await page.keyboard.press("Enter");
+  await expect(rows).toContainText("FAKE_CODEX_SCROLL_119");
+  const screenBounds = await screen.boundingBox();
+  if (!screenBounds) throw new Error("Codex terminal screen has no bounds.");
+  const touchX = screenBounds.x + screenBounds.width * 0.45;
+  const touchY = screenBounds.y + screenBounds.height * 0.55;
+
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  for (const delta of [30, 60, 90]) {
+    await dispatchTouch(cdp, "touchMove", touchX, touchY + delta);
+  }
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY + 90);
+  const offsetBeforeSelection = await scrollBottomOffset(codex);
+  expect(offsetBeforeSelection).toBeGreaterThan(0);
+
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  await page.waitForTimeout(550);
+  await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY);
+  expect(await scrollBottomOffset(codex)).toBeGreaterThan(0);
+
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  await dispatchTouch(cdp, "touchMove", touchX, touchY + 45);
+  await dispatchTouch(cdp, "touchEnd", touchX, touchY + 45);
+  await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
+  expect(await scrollBottomOffset(codex)).toBeGreaterThan(offsetBeforeSelection);
+
+  await selectionButton.click();
+  await selectionButton.click();
+  const offsetBeforeEdgeSelection = await scrollBottomOffset(codex);
+  await dispatchTouch(cdp, "touchStart", touchX, touchY);
+  await dispatchTouch(cdp, "touchMove", touchX, screenBounds.y + 4);
+  await page.waitForTimeout(260);
+  await dispatchTouch(cdp, "touchEnd", touchX, screenBounds.y + 4);
+  await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
+  expect(await scrollBottomOffset(codex)).toBeGreaterThan(offsetBeforeEdgeSelection);
+  await expect(
+    codex.locator(".terminal-selection-handle").filter({ visible: true }),
+  ).not.toHaveCount(0);
+});
+
 async function openTerminal(
   page: Page,
   pane: "Dev Terminal" | "Main Codex" = "Dev Terminal",
@@ -267,4 +325,8 @@ async function dispatchTouch(
     type,
     touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1, radiusX: 5, radiusY: 5, force: 1 }],
   });
+}
+
+async function scrollBottomOffset(surface: ReturnType<Page["getByLabel"]>): Promise<number> {
+  return Number(await surface.getAttribute("data-scroll-bottom-offset"));
 }

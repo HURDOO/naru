@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { describe, expect, it, vi } from "vitest";
 import {
+  attachTerminalTouchScroll,
   beginTerminalScrollbarTouchDrag,
   beginTerminalTouchScroll,
   lineForTerminalScrollbarTouchDrag,
@@ -67,4 +70,68 @@ describe("terminal touch scroll", () => {
     expect(lineForTerminalScrollbarTouchDrag(drag, 16, 400)).toBe(80);
     expect(lineForTerminalScrollbarTouchDrag(drag, 99, 120)).toBeNull();
   });
+
+  it("scrolls an existing selection and reserves a stationary tap for dismissal", () => {
+    const screen = document.createElement("div");
+    document.body.appendChild(screen);
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    const scrollLines = vi.fn();
+    const focusInput = vi.fn();
+    const cancel = vi.fn();
+    const terminal = {
+      rows: 10,
+      buffer: { active: { baseY: 100, viewportY: 50 } },
+      focus: vi.fn(),
+      scrollLines,
+      scrollToLine: vi.fn(),
+    };
+    const selection = {
+      active: true,
+      hasSelection: () => true,
+      canLongPress: () => true,
+      enter: vi.fn(),
+      begin: vi.fn(),
+      move: vi.fn(),
+      finish: vi.fn(),
+      selectAll: vi.fn(),
+      getSelection: () => "selected",
+      cancel,
+      dispose: vi.fn(),
+    };
+    const detach = attachTerminalTouchScroll(screen, terminal, selection, focusInput);
+
+    screen.dispatchEvent(touchPointer("pointerdown", 1, 50, 40));
+    screen.dispatchEvent(touchPointer("pointermove", 1, 50, 70));
+    screen.dispatchEvent(touchPointer("pointerup", 1, 50, 70));
+
+    expect(scrollLines).toHaveBeenCalledWith(-3);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(focusInput).not.toHaveBeenCalled();
+
+    screen.dispatchEvent(touchPointer("pointerdown", 2, 50, 40));
+    screen.dispatchEvent(touchPointer("pointerup", 2, 50, 40));
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(focusInput).toHaveBeenCalledOnce();
+    detach();
+    screen.remove();
+  });
 });
+
+function touchPointer(
+  type: "pointerdown" | "pointermove" | "pointerup",
+  pointerId: number,
+  clientX: number,
+  clientY: number,
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    pointerId: { value: pointerId },
+    pointerType: { value: "touch" },
+    isPrimary: { value: true },
+    clientX: { value: clientX },
+    clientY: { value: clientY },
+  });
+  return event;
+}
