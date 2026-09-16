@@ -149,7 +149,10 @@ ownership과 integration gate를 지킨다.
   경로가 Android의 `contextmenu`에만 의존했고, helper textarea도 live cursor 위치에 남아
   scrollback 밖에 숨을 수 있었다. 선택·handle·scroll drag의 pointer-up에서도 DOM
   selection을 생성하고 helper textarea를 마지막 touch 좌표에 배치한 뒤 복사·취소 시
-  원래 위치로 복구한다. 관련 단위 14건과 Samsung UA 선택 E2E 3건, typecheck·lint·format·build가
+  원래 위치로 복구한다. 첫 9443 실기기 확인에서 pointer-up의 writable textarea focus가
+  Samsung Keyboard를 열어 선택을 깨뜨리는 회귀가 발견되었다. 네이티브 복사를 준비하는 동안만
+  textarea를 readonly로 전환하고 복사·취소 시 입력 상태를 복구한다. 관련 단위 14건과
+  Samsung UA 선택 E2E 3건, typecheck·lint·format·build가
   통과했다. 실제 Samsung Internet ActionMode toolbar 표시 인수는 9443 실기기에 남아
   있다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/

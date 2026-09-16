@@ -32,6 +32,7 @@ interface NativeTextareaStyle {
   readonly left: string;
   readonly top: string;
   readonly zIndex: string;
+  readonly readOnly: boolean;
 }
 
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
@@ -318,7 +319,9 @@ export function attachTerminalTouchSelection(
   const restoreNativeTextareaPosition = (): void => {
     const textarea = terminal.textarea;
     if (!textarea || nativeTextareaStyle === null) return;
-    Object.assign(textarea.style, nativeTextareaStyle);
+    const { readOnly, ...style } = nativeTextareaStyle;
+    Object.assign(textarea.style, style);
+    textarea.readOnly = readOnly;
     nativeTextareaStyle = null;
   };
 
@@ -369,6 +372,7 @@ export function attachTerminalTouchSelection(
           left: textarea.style.left,
           top: textarea.style.top,
           zIndex: textarea.style.zIndex,
+          readOnly: textarea.readOnly,
         };
       }
       const bounds = screen.getBoundingClientRect();
@@ -379,6 +383,10 @@ export function attachTerminalTouchSelection(
       textarea.style.zIndex = "1000";
     }
     const nativeSelection = value || NATIVE_SELECTION_PLACEHOLDER;
+    // A focused writable textarea opens Samsung Keyboard on pointer-up, which resizes the
+    // viewport and can destroy the xterm selection. Readonly inputs remain selectable and can
+    // host Android's copy ActionMode without asking the IME to appear.
+    textarea.readOnly = true;
     textarea.value = nativeSelection;
     textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(0, nativeSelection.length);

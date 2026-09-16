@@ -282,6 +282,7 @@ describe("terminal touch selection", () => {
     expect(textarea.style.left).toBe("5px");
     expect(textarea.style.top).toBe("-5px");
     expect(textarea.style.zIndex).toBe("1000");
+    expect(textarea.readOnly).toBe(true);
 
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
@@ -299,5 +300,6 @@ describe("terminal touch selection", () => {
     expect(setData).toHaveBeenCalledWith("text/plain", "");
     expect(copied).toHaveBeenCalledWith("empty");
     controller.dispose();
+    expect(textarea.readOnly).toBe(false);
   });
 });
