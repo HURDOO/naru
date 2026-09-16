@@ -43,6 +43,7 @@ describe("terminal touch selection", () => {
     let selection: { start: { x: number; y: number }; end: { x: number; y: number } } | null = null;
     let selectionListener: () => void = () => undefined;
     let focusCount = 0;
+    let blurCount = 0;
     const textarea = document.createElement("textarea");
     const terminal = {
       cols: 10,
@@ -73,7 +74,9 @@ describe("terminal touch selection", () => {
         selection = null;
         selectionListener();
       },
-      blur: () => undefined,
+      blur: () => {
+        blurCount += 1;
+      },
       focus: () => {
         focusCount += 1;
       },
@@ -91,7 +94,8 @@ describe("terminal touch selection", () => {
     Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
     screen.dispatchEvent(touchStart);
     expect(controller.active).toBe(false);
-    expect(focusCount).toBe(1);
+    expect(blurCount).toBe(2);
+    expect(focusCount).toBe(0);
     controller.dispose();
   });
 
@@ -175,8 +179,8 @@ describe("terminal touch selection", () => {
         selection = null;
         selectionListener();
       },
-      blur: () => undefined,
-      focus: () => undefined,
+      blur: () => textarea.blur(),
+      focus: () => textarea.focus(),
       scrollLines: () => undefined,
     } as unknown as Terminal;
     const copied = vi.fn();
@@ -198,6 +202,7 @@ describe("terminal touch selection", () => {
     expect(textarea.value).toBe("native terminal selection");
     expect(textarea.selectionStart).toBe(0);
     expect(textarea.selectionEnd).toBe(textarea.value.length);
+    expect(document.activeElement).toBe(textarea);
 
     const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
     Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
@@ -205,6 +210,7 @@ describe("terminal touch selection", () => {
 
     expect(controller.active).toBe(false);
     expect(textarea.value).toBe("");
+    expect(document.activeElement).not.toBe(textarea);
 
     const copy = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copy, "clipboardData", { value: { setData } });

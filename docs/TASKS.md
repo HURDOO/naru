@@ -247,6 +247,11 @@ ownership과 integration gate를 지킨다.
     clipboard에는 placeholder 대신 원래의 빈 값을 제공하고 빈 선택 알림을 표시한다. 관련 unit
     13건과 공백 긴 누르기를 포함한 shell·Codex 네이티브 copy 및 Samsung UA 입력 E2E 3건,
     lint·typecheck·web build가 통과했다.
+  - 네이티브 선택 해제 보완(2026-09-16): 선택되지 않은 pane 영역을 눌러 앱의 선택 모드는
+    해제되어도 Android 네이티브 선택 도구 모음이 남는다는 실기기 결과를 반영했다. pane
+    `touchstart`에서 숨은 textarea를 먼저 blur하고 DOM 선택 범위를 제거한 뒤 선택 상태를
+    해제하며, 입력 focus는 `touchend` 다음 animation frame에 복원한다. 메뉴 동작과 pane 터치가
+    겹칠 때를 위한 짧은 copy 원문 보관은 유지한다.
   - 남은 인수: 실제 Samsung Internet 브라우저 탭·설치 PWA에서 긴 누르기, 입력 중 이미지
     붙여넣기, 선택 핸들, clipboard 권한·focus를 확인한다. 로컬 Chromium UA fixture 통과를
     실기기 인수로 간주하지 않는다. 운영 반영은 별도다.

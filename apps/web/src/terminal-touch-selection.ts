@@ -378,10 +378,11 @@ export function attachTerminalTouchSelection(
     const shouldRestoreInput = !target.closest(
       "button, input, textarea, select, a, [role='button']",
     );
+    terminal.blur();
+    ownerDocument.getSelection()?.removeAllRanges();
     cancelSelection(true);
     if (shouldRestoreInput) {
       focusAfterPaneTouch = true;
-      terminal.focus();
     }
   };
   const onPaneTouchEnd = (): void => {
