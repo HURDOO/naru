@@ -252,13 +252,15 @@ export function attachTerminalTouchScroll(
     selecting = false;
     cancelSelectionOnTap = false;
     if (wasSelecting) {
-      selection?.finish();
+      selection?.finish(event.clientX, event.clientY);
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
       return;
     }
     if (wasScrolling) {
-      if (selection?.active && selection.hasSelection()) selection.finish();
+      if (selection?.active && selection.hasSelection()) {
+        selection.finish(event.clientX, event.clientY, true);
+      }
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
     } else if (!canceled) {
@@ -273,7 +275,7 @@ export function attachTerminalTouchScroll(
     if (gesture?.pointerId === event.pointerId) {
       clearLongPress();
       clearSelectionEdgeScroll();
-      if (selecting) selection?.finish();
+      if (selecting) selection?.finish(event.clientX, event.clientY);
       gesture = null;
       selecting = false;
       cancelSelectionOnTap = false;

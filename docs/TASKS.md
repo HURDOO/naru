@@ -150,8 +150,10 @@ ownership과 integration gate를 지킨다.
   scrollback 밖에 숨을 수 있었다. 선택·handle·scroll drag의 pointer-up에서도 DOM
   selection을 생성하고 helper textarea를 마지막 touch 좌표에 배치한 뒤 복사·취소 시
   원래 위치로 복구한다. 첫 9443 실기기 확인에서 pointer-up의 writable textarea focus가
-  Samsung Keyboard를 열어 선택을 깨뜨리는 회귀가 발견되었다. 네이티브 복사를 준비하는 동안만
-  textarea를 readonly로 전환하고 복사·취소 시 입력 상태를 복구한다. 관련 단위 14건과
+  Samsung Keyboard를 열어 선택을 깨뜨리는 회귀가 발견되었다. readonly로 막은 2차 빌드는
+  ActionMode의 editable selection 인식까지 약화했다. textarea는 writable로 유지하고 선택 중에만
+  `inputmode=none`으로 IME를 억제한다. `contextmenu`가 이미 네이티브 선택을 준비했으면 pointer-up은
+  다시 focus·selection을 설정하지 않고, 복사·취소 시 원래 input mode를 복구한다. 관련 단위 14건과
   Samsung UA 선택 E2E 3건, typecheck·lint·format·build가
   통과했다. 실제 Samsung Internet ActionMode toolbar 표시 인수는 9443 실기기에 남아
   있다.

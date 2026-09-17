@@ -7,7 +7,7 @@ export interface TerminalTouchSelectionController {
   enter(): void;
   begin(clientX: number, clientY: number, longPress?: boolean): void;
   move(clientX: number, clientY: number): void;
-  finish(): void;
+  finish(clientX?: number, clientY?: number, forceNativeCopy?: boolean): void;
   selectAll(): void;
   getSelection(): string;
   cancel(): void;
@@ -26,13 +26,13 @@ interface BufferSpan {
   end: number;
 }
 
-interface NativeTextareaStyle {
+interface NativeTextareaState {
   readonly width: string;
   readonly height: string;
   readonly left: string;
   readonly top: string;
   readonly zIndex: string;
-  readonly readOnly: boolean;
+  readonly inputMode: string;
 }
 
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
@@ -121,7 +121,7 @@ export function attachTerminalTouchSelection(
   let focusAfterPaneTouch = false;
   let nativeCopyPrepared = false;
   let nativeCopyAnchor: { x: number; y: number } | null = null;
-  let nativeTextareaStyle: NativeTextareaStyle | null = null;
+  let nativeTextareaState: NativeTextareaState | null = null;
   let nativeCopyRetentionTimer: ReturnType<typeof setTimeout> | null = null;
   const nativeCopyToken = {};
   const ownerDocument = screen.ownerDocument;
@@ -243,6 +243,7 @@ export function attachTerminalTouchSelection(
     if (!span) return;
     event.preventDefault();
     event.stopPropagation();
+    resetNativeCopyPreparation();
     handleDrag = { pointerId: event.pointerId, edge, span };
     try {
       (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -302,7 +303,7 @@ export function attachTerminalTouchSelection(
     stopEdgeScroll();
     handleDrag = null;
     lastHandlePoint = null;
-    prepareNativeCopy();
+    if (!nativeCopyPrepared) prepareNativeCopy();
   };
 
   const ownsNativeCopy = (): boolean => nativeCopyOwners.get(ownerDocument) === nativeCopyToken;
@@ -318,11 +319,12 @@ export function attachTerminalTouchSelection(
 
   const restoreNativeTextareaPosition = (): void => {
     const textarea = terminal.textarea;
-    if (!textarea || nativeTextareaStyle === null) return;
-    const { readOnly, ...style } = nativeTextareaStyle;
+    if (!textarea || nativeTextareaState === null) return;
+    const { inputMode, ...style } = nativeTextareaState;
+    if (ownerDocument.activeElement === textarea) textarea.blur();
     Object.assign(textarea.style, style);
-    textarea.readOnly = readOnly;
-    nativeTextareaStyle = null;
+    textarea.inputMode = inputMode;
+    nativeTextareaState = null;
   };
 
   const releaseNativeCopy = (): void => {
@@ -350,7 +352,6 @@ export function attachTerminalTouchSelection(
   const resetNativeCopyPreparation = (): void => {
     clearNativeCopyRetention();
     nativeCopyPrepared = false;
-    restoreNativeTextareaPosition();
     claimNativeCopy();
   };
 
@@ -365,14 +366,14 @@ export function attachTerminalTouchSelection(
         : { x: clientX, y: clientY };
     if (anchor) {
       nativeCopyAnchor = anchor;
-      if (nativeTextareaStyle === null) {
-        nativeTextareaStyle = {
+      if (nativeTextareaState === null) {
+        nativeTextareaState = {
           width: textarea.style.width,
           height: textarea.style.height,
           left: textarea.style.left,
           top: textarea.style.top,
           zIndex: textarea.style.zIndex,
-          readOnly: textarea.readOnly,
+          inputMode: textarea.inputMode,
         };
       }
       const bounds = screen.getBoundingClientRect();
@@ -383,10 +384,9 @@ export function attachTerminalTouchSelection(
       textarea.style.zIndex = "1000";
     }
     const nativeSelection = value || NATIVE_SELECTION_PLACEHOLDER;
-    // A focused writable textarea opens Samsung Keyboard on pointer-up, which resizes the
-    // viewport and can destroy the xterm selection. Readonly inputs remain selectable and can
-    // host Android's copy ActionMode without asking the IME to appear.
-    textarea.readOnly = true;
+    // Keep the textarea editable so Android can open its native selection ActionMode, but ask
+    // the IME not to appear when pointer-up focuses the hidden xterm input.
+    textarea.inputMode = "none";
     textarea.value = nativeSelection;
     textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(0, nativeSelection.length);
@@ -396,7 +396,7 @@ export function attachTerminalTouchSelection(
   const onContextMenu = (event: MouseEvent): void => {
     // xterm stores its selection outside the browser DOM. Mirror it into xterm's textarea and
     // leave the contextmenu default enabled so Android can show its native selection actions.
-    prepareNativeCopy(event.clientX, event.clientY);
+    if (!nativeCopyPrepared) prepareNativeCopy(event.clientX, event.clientY);
     if (nativeCopyPrepared) event.stopPropagation();
   };
   const onCopy = (event: ClipboardEvent): void => {
@@ -419,10 +419,7 @@ export function attachTerminalTouchSelection(
     event.stopPropagation();
     onNativeCopy?.(value ? "copied" : "empty");
     if (!active) clearRetainedSelection();
-    else {
-      nativeCopyPrepared = false;
-      restoreNativeTextareaPosition();
-    }
+    else nativeCopyPrepared = false;
   };
   const onPaneTouchStart = (event: TouchEvent): void => {
     if (!active || event.touches.length !== 1) return;
@@ -527,10 +524,14 @@ export function attachTerminalTouchSelection(
       nativeCopyAnchor = { x: clientX, y: clientY };
       selectSpan(touchSelectionSpan(dragging, pointAt(clientX, clientY), terminal.cols));
     },
-    finish: () => {
+    finish: (clientX, clientY, forceNativeCopy = false) => {
       dragging = null;
+      if (clientX !== undefined && clientY !== undefined) {
+        nativeCopyAnchor = { x: clientX, y: clientY };
+      }
       publish();
-      prepareNativeCopy();
+      if (forceNativeCopy) nativeCopyPrepared = false;
+      if (!nativeCopyPrepared) prepareNativeCopy();
     },
     selectAll: () => {
       if (!active) return;

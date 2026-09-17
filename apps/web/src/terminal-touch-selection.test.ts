@@ -270,6 +270,7 @@ describe("terminal touch selection", () => {
     const controller = attachTerminalTouchSelection(screen, terminal, () => undefined, copied);
 
     textarea.focus();
+    const nativeFocus = vi.spyOn(textarea, "focus");
     expect(controller.canLongPress(15, 5)).toBe(true);
     controller.begin(15, 5, true);
     controller.finish();
@@ -282,7 +283,9 @@ describe("terminal touch selection", () => {
     expect(textarea.style.left).toBe("5px");
     expect(textarea.style.top).toBe("-5px");
     expect(textarea.style.zIndex).toBe("1000");
-    expect(textarea.readOnly).toBe(true);
+    expect(textarea.readOnly).toBe(false);
+    expect(textarea.inputMode).toBe("none");
+    expect(nativeFocus).toHaveBeenCalledTimes(1);
 
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
@@ -291,6 +294,7 @@ describe("terminal touch selection", () => {
     expect(textarea.value).toBe("\u00a0");
     expect(textarea.selectionStart).toBe(0);
     expect(textarea.selectionEnd).toBe(1);
+    expect(nativeFocus).toHaveBeenCalledTimes(1);
 
     const copy = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copy, "clipboardData", { value: { setData } });
@@ -301,5 +305,6 @@ describe("terminal touch selection", () => {
     expect(copied).toHaveBeenCalledWith("empty");
     controller.dispose();
     expect(textarea.readOnly).toBe(false);
+    expect(textarea.inputMode).toBe("");
   });
 });

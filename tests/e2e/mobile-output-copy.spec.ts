@@ -214,6 +214,9 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   await openTerminal(page, "Main Codex");
   const codex = page.getByLabel("Main Codex Codex");
   const input = codex.locator(".xterm-helper-textarea");
+  const originalInputMode = await input.evaluate(
+    (element) => (element as HTMLTextAreaElement).inputMode,
+  );
   const screen = codex.locator(".xterm-screen");
   const rows = codex.locator(".xterm:not(.terminal-resize-freeze) .xterm-rows");
   const selectionButton = codex.getByRole("button", {
@@ -245,7 +248,8 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   expect(await scrollBottomOffset(codex)).toBeGreaterThan(0);
   await expect(input).toBeFocused();
-  await expect(input).toHaveJSProperty("readOnly", true);
+  await expect(input).toHaveJSProperty("readOnly", false);
+  await expect(input).toHaveJSProperty("inputMode", "none");
   await expect
     .poll(() => input.evaluate((element) => (element as HTMLTextAreaElement).selectionEnd))
     .toBeGreaterThan(0);
@@ -264,7 +268,7 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   expect(await scrollBottomOffset(codex)).toBeGreaterThan(offsetBeforeSelection);
 
   await selectionButton.click();
-  await expect(input).toHaveJSProperty("readOnly", false);
+  await expect(input).toHaveJSProperty("inputMode", originalInputMode);
   await selectionButton.click();
   const offsetBeforeEdgeSelection = await scrollBottomOffset(codex);
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
