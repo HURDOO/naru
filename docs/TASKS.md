@@ -145,18 +145,15 @@ ownership과 integration gate를 지킨다.
   환경을 다시 주입하는 기존 hook 3건은 이번 변경과 무관하게 실패했다. 새 9443 빌드의 Samsung
   Internet 브라우저/PWA 인수는 남아 있다.
 - 추가 보고·후속 수정(2026-09-17): Codex scrollback에서 드래그 선택해도 Android 네이티브
-  toolbar가 거의 뜨지 않았다. xterm 선택을 helper textarea의 DOM selection으로 반영하는
-  경로가 Android의 `contextmenu`에만 의존했고, helper textarea도 live cursor 위치에 남아
-  scrollback 밖에 숨을 수 있었다. 선택·handle·scroll drag의 pointer-up에서도 DOM
-  selection을 생성하고 helper textarea를 마지막 touch 좌표에 배치한 뒤 복사·취소 시
-  원래 위치로 복구한다. 첫 9443 실기기 확인에서 pointer-up의 writable textarea focus가
-  Samsung Keyboard를 열어 선택을 깨뜨리는 회귀가 발견되었다. readonly로 막은 2차 빌드는
-  ActionMode의 editable selection 인식까지 약화했다. textarea는 writable로 유지하고 선택 중에만
-  `inputmode=none`으로 IME를 억제한다. `contextmenu`가 이미 네이티브 선택을 준비했으면 pointer-up은
-  다시 focus·selection을 설정하지 않고, 복사·취소 시 원래 input mode를 복구한다. 관련 단위 14건과
-  Samsung UA 선택 E2E 3건, typecheck·lint·format·build가
-  통과했다. 실제 Samsung Internet ActionMode toolbar 표시 인수는 9443 실기기에 남아
-  있다.
+  toolbar가 거의 뜨지 않았다. xterm 선택은 DOM range가 아니고 브라우저에는 Android
+  ActionMode를 여는 public API가 없어, helper textarea의 focus·readonly·`inputmode`로 우회한
+  9443 빌드들은 툴바 누락을 해결하지 못하거나 Samsung Keyboard를 열어 선택을 깨뜨렸다.
+  실기기 결과와 사용자 결정에 따라 모바일 선택은 앱이 소유한 `복사 · 전체 · 취소` 툴바를
+  표시한다. 복사는 명시적 사용자 gesture에서 Clipboard API를 호출하고 성공·빈 선택·권한 거부를
+  구분한다. 선택 중 `contextmenu`와 Android compatibility `mousedown`을 xterm보다 먼저
+  차단해 helper textarea focus·IME 열림을 막고, 툴바·핸들 터치와 선택 상태 스크롤을 유지한다.
+  관련 단위 14건과 Samsung UA 선택 E2E 3건, typecheck·lint·format·build가 통과했다.
+  9443 Samsung Internet/PWA의 툴바 표시·복사 인수는 남아 있다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,

@@ -133,15 +133,19 @@ describe("terminal touch selection", () => {
     expect(touchWordSpan(terminal, { column: 0, row: 2 })).toBeNull();
   });
 
-  it("keeps native copy data after the pane touch dismisses the visual selection", () => {
+  it("keeps app toolbar touches inside selection and owns copy only while active", () => {
     const pane = document.createElement("section");
     pane.className = "pane-surface";
     const terminalElement = document.createElement("div");
     const textarea = document.createElement("textarea");
     const screen = document.createElement("div");
     const paneChrome = document.createElement("div");
+    const actionMenu = document.createElement("div");
+    const copyButton = document.createElement("button");
+    actionMenu.className = "terminal-selection-action-menu";
+    actionMenu.appendChild(copyButton);
     terminalElement.append(textarea, screen);
-    pane.append(terminalElement, paneChrome);
+    pane.append(terminalElement, paneChrome, actionMenu);
     document.body.appendChild(pane);
     screen.getBoundingClientRect = () =>
       ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }) as DOMRect;
@@ -195,18 +199,14 @@ describe("terminal touch selection", () => {
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
 
-    expect(contextMenu.defaultPrevented).toBe(false);
+    expect(contextMenu.defaultPrevented).toBe(true);
     expect(xtermContextMenu).not.toHaveBeenCalled();
-    expect(textarea.value).toBe("native terminal selection");
-    expect(textarea.selectionStart).toBe(0);
-    expect(textarea.selectionEnd).toBe(textarea.value.length);
-
-    const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
-    Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
-    paneChrome.dispatchEvent(touchStart);
-
-    expect(controller.active).toBe(false);
     expect(textarea.value).toBe("");
+
+    const menuTouchStart = new Event("touchstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(menuTouchStart, "touches", { value: [{ clientX: 50, clientY: 5 }] });
+    copyButton.dispatchEvent(menuTouchStart);
+    expect(controller.active).toBe(true);
 
     const copy = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copy, "clipboardData", { value: { setData } });
@@ -215,6 +215,18 @@ describe("terminal touch selection", () => {
     expect(copy.defaultPrevented).toBe(true);
     expect(setData).toHaveBeenCalledWith("text/plain", "native terminal selection");
     expect(copied).toHaveBeenCalledWith("copied");
+
+    const touchStart = new Event("touchstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(touchStart, "touches", { value: [{ clientX: 85, clientY: 5 }] });
+    paneChrome.dispatchEvent(touchStart);
+
+    expect(controller.active).toBe(false);
+    expect(textarea.value).toBe("");
+
+    const copyAfterCancel = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyAfterCancel, "clipboardData", { value: { setData } });
+    document.dispatchEvent(copyAfterCancel);
+    expect(copyAfterCancel.defaultPrevented).toBe(false);
     controller.dispose();
   });
 
@@ -275,26 +287,28 @@ describe("terminal touch selection", () => {
     controller.begin(15, 5, true);
     controller.finish();
 
-    // Pointer-up must create the real DOM selection even when Samsung Internet omits the
-    // contextmenu event after a long press or drag in scrollback.
-    expect(textarea.value).toBe("\u00a0");
-    expect(textarea.selectionStart).toBe(0);
-    expect(textarea.selectionEnd).toBe(1);
-    expect(textarea.style.left).toBe("5px");
-    expect(textarea.style.top).toBe("-5px");
-    expect(textarea.style.zIndex).toBe("1000");
+    // Pointer-up leaves the input blurred; the app toolbar is the reliable mobile action path.
+    expect(textarea.value).toBe("");
+    expect(textarea.style.left).toBe("");
+    expect(textarea.style.top).toBe("");
+    expect(textarea.style.zIndex).toBe("");
     expect(textarea.readOnly).toBe(false);
-    expect(textarea.inputMode).toBe("none");
-    expect(nativeFocus).toHaveBeenCalledTimes(1);
+    expect(textarea.inputMode).toBe("");
+    expect(nativeFocus).not.toHaveBeenCalled();
+
+    const compatibilityMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+    });
+    screen.dispatchEvent(compatibilityMouseDown);
+    expect(compatibilityMouseDown.defaultPrevented).toBe(true);
 
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
 
-    expect(contextMenu.defaultPrevented).toBe(false);
-    expect(textarea.value).toBe("\u00a0");
-    expect(textarea.selectionStart).toBe(0);
-    expect(textarea.selectionEnd).toBe(1);
-    expect(nativeFocus).toHaveBeenCalledTimes(1);
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(textarea.value).toBe("");
+    expect(nativeFocus).not.toHaveBeenCalled();
 
     const copy = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copy, "clipboardData", { value: { setData } });

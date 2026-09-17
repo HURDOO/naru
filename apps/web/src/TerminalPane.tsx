@@ -269,6 +269,44 @@ export function TerminalPane({
     });
   };
 
+  const copySelectedOutput = (): void => {
+    const selection = touchSelectionRef.current;
+    const value = selection?.getSelection() ?? "";
+    if (!selection || !value) {
+      setClipboardNotice({ kind: "error", message: "복사할 터미널 출력을 먼저 선택해 주세요." });
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setClipboardNotice({
+        kind: "error",
+        message: "이 브라우저에서 클립보드 쓰기를 사용할 수 없습니다.",
+      });
+      return;
+    }
+    try {
+      void navigator.clipboard.writeText(value).then(
+        () => {
+          if (touchSelectionRef.current !== selection) return;
+          selection.cancel();
+          setClipboardNotice({ kind: "status", message: "선택한 출력을 복사했습니다." });
+        },
+        () => {
+          if (touchSelectionRef.current === selection) {
+            setClipboardNotice({
+              kind: "error",
+              message: "클립보드에 복사하지 못했습니다. 브라우저 권한을 확인해 주세요.",
+            });
+          }
+        },
+      );
+    } catch {
+      setClipboardNotice({
+        kind: "error",
+        message: "클립보드에 복사하지 못했습니다. 브라우저 권한을 확인해 주세요.",
+      });
+    }
+  };
+
   const submitComposedText = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     const value = composeInputRef.current?.value ?? composeText;
@@ -1523,6 +1561,35 @@ export function TerminalPane({
         role={controlsPane ? undefined : "region"}
         aria-label={controlsPane ? undefined : `${pane.title} 보기 전용 터미널 출력`}
       />
+      {touchSelectionActive && (
+        <div
+          className="terminal-selection-action-menu"
+          role="toolbar"
+          aria-label={`${pane.title} 출력 선택 도구`}
+        >
+          <button
+            type="button"
+            aria-label={`${pane.title} 선택한 출력 복사`}
+            onClick={copySelectedOutput}
+          >
+            복사
+          </button>
+          <button
+            type="button"
+            aria-label={`${pane.title} 출력 전체 선택`}
+            onClick={() => touchSelectionRef.current?.selectAll()}
+          >
+            전체
+          </button>
+          <button
+            type="button"
+            aria-label={`${pane.title} 출력 선택 취소`}
+            onClick={() => touchSelectionRef.current?.cancel()}
+          >
+            취소
+          </button>
+        </div>
+      )}
       {clipboardNotice && (
         <div
           className={`terminal-clipboard-notice is-${clipboardNotice.kind}`}

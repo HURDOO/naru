@@ -42,7 +42,7 @@ test("selects and copies terminal output with touch without breaking scroll or f
   ).toHaveAttribute("aria-pressed", "true");
   await expect(input).not.toBeFocused();
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
-  await expect(surface.locator(".terminal-selection-action-menu")).toHaveCount(0);
+  await expect(surface.locator(".terminal-selection-action-menu")).toBeVisible();
   await expect(surface.locator(".terminal-selection-handle.is-start")).toBeVisible();
   const selectionScreenBounds = await surface.locator(".xterm-screen").boundingBox();
   if (!selectionScreenBounds) throw new Error("Terminal selection screen has no bounds.");
@@ -62,11 +62,10 @@ test("selects and copies terminal output with touch without breaking scroll or f
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await dispatchTouch(cdp, "touchEnd", blankX, touchY);
-  await openNativeSelectionMenu(surface, blankX, touchY);
-  await expect(input).toHaveValue("\u00a0");
-  await expect
-    .poll(() => input.evaluate((element) => (element as HTMLTextAreaElement).selectionEnd))
-    .toBe(1);
+  await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
+  await expect(surface.locator(".terminal-clipboard-notice")).toContainText(
+    "복사할 터미널 출력을 먼저 선택",
+  );
   await dispatchTouch(cdp, "touchStart", outsideX, outsideY);
   await dispatchTouch(cdp, "touchEnd", outsideX, outsideY);
   await expect(input).toBeFocused();
@@ -108,17 +107,15 @@ test("selects and copies terminal output with touch without breaking scroll or f
   await endHandle.focus();
   await expect(endHandle).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await copyTerminalSelectionWithNativeCommand(page, surface, touchX, touchY);
+  await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
   await expect
     .poll(() => page.evaluate(async () => navigator.clipboard.readText()))
     .toContain("T44_COPY_한글_😀");
   await expect(surface.locator(".terminal-clipboard-notice")).toContainText("복사했습니다");
   await expect(
     surface.getByRole("button", { name: "Dev Terminal 출력 선택", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await dispatchTouch(cdp, "touchStart", outsideX, outsideY);
-  await dispatchTouch(cdp, "touchEnd", outsideX, outsideY);
-  await expect(input).toBeFocused();
+  ).toHaveAttribute("aria-pressed", "false");
+  await expect(surface.locator(".terminal-selection-action-menu")).toBeHidden();
 
   const selectionButton = surface.getByRole("button", {
     name: "Dev Terminal 출력 선택",
@@ -128,7 +125,7 @@ test("selects and copies terminal output with touch without breaking scroll or f
   await dispatchTouch(cdp, "touchStart", rowBounds.x + 3, touchY);
   await dispatchTouch(cdp, "touchMove", rowBounds.x + 74, touchY);
   await dispatchTouch(cdp, "touchEnd", rowBounds.x + 74, touchY);
-  await copyTerminalSelectionWithNativeCommand(page, surface, touchX, touchY);
+  await surface.getByRole("button", { name: "Dev Terminal 선택한 출력 복사" }).click();
   await expect
     .poll(() => page.evaluate(async () => navigator.clipboard.readText()))
     .toContain("T44_COPY");
@@ -196,12 +193,7 @@ test("copies Codex Pane output with the explicit selection tool", async ({ page,
   await dispatchTouch(cdp, "touchStart", rowBounds.x + 3, rowBounds.y + rowBounds.height / 2);
   await dispatchTouch(cdp, "touchMove", rowBounds.x + 140, rowBounds.y + rowBounds.height / 2);
   await dispatchTouch(cdp, "touchEnd", rowBounds.x + 140, rowBounds.y + rowBounds.height / 2);
-  await copyTerminalSelectionWithNativeCommand(
-    page,
-    codex,
-    rowBounds.x + 24,
-    rowBounds.y + rowBounds.height / 2,
-  );
+  await codex.getByRole("button", { name: "Main Codex 선택한 출력 복사" }).click();
   await expect
     .poll(() => page.evaluate(async () => navigator.clipboard.readText()))
     .toContain("FAKE_CODEX_READY");
@@ -214,9 +206,6 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   await openTerminal(page, "Main Codex");
   const codex = page.getByLabel("Main Codex Codex");
   const input = codex.locator(".xterm-helper-textarea");
-  const originalInputMode = await input.evaluate(
-    (element) => (element as HTMLTextAreaElement).inputMode,
-  );
   const screen = codex.locator(".xterm-screen");
   const rows = codex.locator(".xterm:not(.terminal-resize-freeze) .xterm-rows");
   const selectionButton = codex.getByRole("button", {
@@ -241,34 +230,31 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   await dispatchTouch(cdp, "touchEnd", touchX, touchY + 90);
   const offsetBeforeSelection = await scrollBottomOffset(codex);
   expect(offsetBeforeSelection).toBeGreaterThan(0);
+  await input.evaluate((element) => {
+    element.setAttribute("data-test-focus-events", "0");
+    element.addEventListener("focus", () => {
+      const count = Number(element.getAttribute("data-test-focus-events") ?? "0");
+      element.setAttribute("data-test-focus-events", String(count + 1));
+    });
+  });
 
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
   await page.waitForTimeout(550);
   await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
   await dispatchTouch(cdp, "touchEnd", touchX, touchY);
   expect(await scrollBottomOffset(codex)).toBeGreaterThan(0);
-  await expect(input).toBeFocused();
-  await expect(input).toHaveJSProperty("readOnly", false);
-  await expect(input).toHaveJSProperty("inputMode", "none");
-  await expect
-    .poll(() => input.evaluate((element) => (element as HTMLTextAreaElement).selectionEnd))
-    .toBeGreaterThan(0);
-  await expect.poll(() => input.evaluate((element) => element.style.zIndex)).toBe("1000");
-  const nativeAnchorBounds = await input.boundingBox();
-  if (!nativeAnchorBounds) throw new Error("Native selection anchor has no bounds.");
-  expect(nativeAnchorBounds.x).toBeGreaterThanOrEqual(screenBounds.x - 1);
-  expect(nativeAnchorBounds.y).toBeGreaterThanOrEqual(screenBounds.y - 1);
-  expect(nativeAnchorBounds.x).toBeLessThan(screenBounds.x + screenBounds.width);
-  expect(nativeAnchorBounds.y).toBeLessThan(screenBounds.y + screenBounds.height);
+  await expect(input).toHaveAttribute("data-test-focus-events", "0");
+  await expect(codex.locator(".terminal-selection-action-menu")).toBeVisible();
 
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
   await dispatchTouch(cdp, "touchMove", touchX, touchY + 45);
   await dispatchTouch(cdp, "touchEnd", touchX, touchY + 45);
   await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
   expect(await scrollBottomOffset(codex)).toBeGreaterThan(offsetBeforeSelection);
+  await expect(codex.locator(".terminal-selection-action-menu")).toBeVisible();
 
   await selectionButton.click();
-  await expect(input).toHaveJSProperty("inputMode", originalInputMode);
+  await expect(codex.locator(".terminal-selection-action-menu")).toBeHidden();
   await selectionButton.click();
   const offsetBeforeEdgeSelection = await scrollBottomOffset(codex);
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
@@ -305,31 +291,6 @@ async function openTerminal(
   });
   if (await restart.isVisible()) await restart.click();
   await expect(surface).toHaveAttribute("data-restore-phase", "ready");
-}
-
-async function copyTerminalSelectionWithNativeCommand(
-  page: Page,
-  surface: ReturnType<Page["getByLabel"]>,
-  clientX: number,
-  clientY: number,
-): Promise<void> {
-  await openNativeSelectionMenu(surface, clientX, clientY);
-  const copied = await page.evaluate(() => document.execCommand("copy"));
-  expect(copied).toBe(true);
-}
-
-async function openNativeSelectionMenu(
-  surface: ReturnType<Page["getByLabel"]>,
-  clientX: number,
-  clientY: number,
-): Promise<void> {
-  await surface.locator(".xterm-screen").dispatchEvent("contextmenu", {
-    bubbles: true,
-    cancelable: true,
-    button: 2,
-    clientX,
-    clientY,
-  });
 }
 
 async function dispatchTouch(
