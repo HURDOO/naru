@@ -159,6 +159,13 @@ ownership과 integration gate를 지킨다.
   통과했다.
   9443 Samsung Internet/PWA의 커스텀 툴바 표시·복사·붙여넣기와 네이티브 툴바 미표시 인수는
   남아 있다.
+- 추가 실기기 보고·수정(2026-09-18): 선택 유지 상태의 일반 scroll은 동작하지만, 선택 gesture나
+  선택 핸들을 화면 위·아래 가장자리에 둬도 자동 scroll·범위 확장이 시작되지 않았다. Samsung
+  Internet이 정지한 손가락에도 미세한 `pointermove`를 연속 발생시키는데 두 edge-scroll 경로가
+  매번 80ms interval을 다시 만들어 발화를 영구 지연한 것이 원인이었다. 같은 edge 안의 jitter에는
+  기존 interval을 유지하고 방향이 바뀌거나 edge를 벗어날 때만 교체한다. 반복 jitter 중 위·아래
+  선택 gesture와 선택 핸들의 양방향 자동 scroll·범위 확장을 E2E에 추가했다. 관련 touch 단위
+  16건과 Samsung UA 선택 E2E 3건, 전체 typecheck·변경 파일 lint·format·web build가 통과했다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,

@@ -139,6 +139,7 @@ export function attachTerminalTouchScroll(
   let cancelSelectionOnTap = false;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let selectionEdgeTimer: ReturnType<typeof setInterval> | null = null;
+  let selectionEdgeDirection = 0;
   let lastSelectionPoint: { x: number; y: number } | null = null;
   screen.classList.add("naru-touch-scroll");
   const detachScrollbarTouchDrag = attachTerminalScrollbarTouchDrag(screen, terminal);
@@ -152,6 +153,7 @@ export function attachTerminalTouchScroll(
   const clearSelectionEdgeScroll = (): void => {
     if (selectionEdgeTimer !== null) clearInterval(selectionEdgeTimer);
     selectionEdgeTimer = null;
+    selectionEdgeDirection = 0;
     lastSelectionPoint = null;
   };
 
@@ -164,11 +166,13 @@ export function attachTerminalTouchScroll(
         : clientY > bounds.bottom - TOUCH_SELECTION_EDGE_PX
           ? 1
           : 0;
+    if (edge === selectionEdgeDirection) return;
     if (selectionEdgeTimer !== null) clearInterval(selectionEdgeTimer);
     selectionEdgeTimer = null;
-    if (edge === 0) return;
+    selectionEdgeDirection = edge;
+    if (selectionEdgeDirection === 0) return;
     selectionEdgeTimer = setInterval(() => {
-      terminal.scrollLines(edge);
+      terminal.scrollLines(selectionEdgeDirection);
       if (lastSelectionPoint) selection?.move(lastSelectionPoint.x, lastSelectionPoint.y);
     }, TOUCH_SELECTION_EDGE_INTERVAL_MS);
   };

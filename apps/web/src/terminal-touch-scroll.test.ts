@@ -159,6 +159,61 @@ describe("terminal touch scroll", () => {
     detach();
     screen.remove();
   });
+
+  it("keeps edge auto-scroll running through repeated touch jitter", () => {
+    vi.useFakeTimers();
+    const screen = document.createElement("div");
+    document.body.appendChild(screen);
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    const scrollLines = vi.fn();
+    const terminal = {
+      rows: 10,
+      buffer: { active: { baseY: 100, viewportY: 50 } },
+      focus: vi.fn(),
+      scrollLines,
+      scrollToLine: vi.fn(),
+    };
+    const selection = {
+      active: true,
+      hasSelection: () => false,
+      canLongPress: () => true,
+      enter: vi.fn(),
+      begin: vi.fn(),
+      move: vi.fn(),
+      finish: vi.fn(),
+      selectAll: vi.fn(),
+      getSelection: () => "",
+      cancel: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const detach = attachTerminalTouchScroll(screen, terminal, selection);
+
+    screen.dispatchEvent(touchPointer("pointerdown", 1, 50, 50));
+    screen.dispatchEvent(touchPointer("pointermove", 1, 50, 90));
+    vi.advanceTimersByTime(40);
+    screen.dispatchEvent(touchPointer("pointermove", 1, 51, 91));
+    vi.advanceTimersByTime(40);
+    screen.dispatchEvent(touchPointer("pointermove", 1, 50, 90));
+    vi.advanceTimersByTime(40);
+    expect(scrollLines).toHaveBeenCalledWith(1);
+    screen.dispatchEvent(touchPointer("pointerup", 1, 50, 90));
+
+    scrollLines.mockClear();
+    screen.dispatchEvent(touchPointer("pointerdown", 2, 50, 50));
+    screen.dispatchEvent(touchPointer("pointermove", 2, 50, 10));
+    vi.advanceTimersByTime(40);
+    screen.dispatchEvent(touchPointer("pointermove", 2, 49, 9));
+    vi.advanceTimersByTime(40);
+    screen.dispatchEvent(touchPointer("pointermove", 2, 50, 10));
+    vi.advanceTimersByTime(40);
+    expect(scrollLines).toHaveBeenCalledWith(-1);
+    screen.dispatchEvent(touchPointer("pointerup", 2, 50, 10));
+
+    detach();
+    screen.remove();
+    vi.useRealTimers();
+  });
 });
 
 function touchPointer(

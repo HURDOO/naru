@@ -106,6 +106,7 @@ export function attachTerminalTouchSelection(
   let retainedText = "";
   let handleDrag: { pointerId: number; edge: "start" | "end"; span: BufferSpan } | null = null;
   let edgeScrollTimer: ReturnType<typeof setInterval> | null = null;
+  let edgeScrollDirection = 0;
   let lastHandlePoint: { x: number; y: number } | null = null;
   let focusAfterPaneTouch = false;
   const touchCopyToken = {};
@@ -204,6 +205,7 @@ export function attachTerminalTouchSelection(
   const stopEdgeScroll = (): void => {
     if (edgeScrollTimer !== null) clearInterval(edgeScrollTimer);
     edgeScrollTimer = null;
+    edgeScrollDirection = 0;
   };
 
   const moveHandle = (clientX: number, clientY: number): void => {
@@ -272,10 +274,13 @@ export function attachTerminalTouchSelection(
         : event.clientY > bounds.bottom - HANDLE_EDGE_PX
           ? 1
           : 0;
-    stopEdgeScroll();
-    if (edge !== 0) {
+    if (edge !== edgeScrollDirection) {
+      stopEdgeScroll();
+      edgeScrollDirection = edge;
+    }
+    if (edgeScrollDirection !== 0 && edgeScrollTimer === null) {
       edgeScrollTimer = setInterval(() => {
-        terminal.scrollLines(edge);
+        terminal.scrollLines(edgeScrollDirection);
         if (lastHandlePoint) moveHandle(lastHandlePoint.x, lastHandlePoint.y);
       }, 80);
     }

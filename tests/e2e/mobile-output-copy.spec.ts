@@ -273,14 +273,39 @@ test("keeps Codex scrollback anchored and scrollable while selecting output", as
   await selectionButton.click();
   const offsetBeforeEdgeSelection = await scrollBottomOffset(codex);
   await dispatchTouch(cdp, "touchStart", touchX, touchY);
-  await dispatchTouch(cdp, "touchMove", touchX, screenBounds.y + 4);
-  await page.waitForTimeout(260);
+  for (const jitter of [4, 5, 3, 5, 4, 3]) {
+    await dispatchTouch(cdp, "touchMove", touchX + (jitter % 2), screenBounds.y + jitter);
+    await page.waitForTimeout(40);
+  }
   await dispatchTouch(cdp, "touchEnd", touchX, screenBounds.y + 4);
   await expect(selectionButton).toHaveAttribute("aria-pressed", "true");
-  expect(await scrollBottomOffset(codex)).toBeGreaterThan(offsetBeforeEdgeSelection);
+  const offsetAfterTopEdgeSelection = await scrollBottomOffset(codex);
+  expect(offsetAfterTopEdgeSelection).toBeGreaterThan(offsetBeforeEdgeSelection);
   await expect(
     codex.locator(".terminal-selection-handle").filter({ visible: true }),
   ).not.toHaveCount(0);
+
+  const endHandle = codex.locator(".terminal-selection-handle.is-end");
+  await expect(endHandle).toBeVisible();
+  const endHandleBounds = await endHandle.boundingBox();
+  if (!endHandleBounds) throw new Error("Codex selection end handle has no bounds.");
+  await dispatchTouch(
+    cdp,
+    "touchStart",
+    endHandleBounds.x + endHandleBounds.width / 2,
+    endHandleBounds.y + endHandleBounds.height / 2,
+  );
+  for (const jitter of [4, 3, 5, 3, 4, 5]) {
+    await dispatchTouch(
+      cdp,
+      "touchMove",
+      touchX + (jitter % 2),
+      screenBounds.y + screenBounds.height - jitter,
+    );
+    await page.waitForTimeout(40);
+  }
+  await dispatchTouch(cdp, "touchEnd", touchX, screenBounds.y + screenBounds.height - 4);
+  expect(await scrollBottomOffset(codex)).toBeLessThan(offsetAfterTopEdgeSelection);
 });
 
 async function openTerminal(
