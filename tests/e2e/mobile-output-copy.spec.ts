@@ -121,6 +121,21 @@ test("selects and copies terminal output with touch without breaking scroll or f
     name: "Dev Terminal 출력 선택",
     exact: true,
   });
+  await page.evaluate(async () => {
+    await navigator.clipboard.writeText("printf 'T56_CUSTOM_PASTE\\n'");
+  });
+  await selectionButton.click();
+  await surface.getByRole("button", { name: "Dev Terminal 클립보드 붙여넣기" }).click();
+  await expect(surface.locator(".terminal-clipboard-notice")).toContainText(
+    "클립보드 텍스트를 붙여넣었습니다.",
+  );
+  await expect(surface.locator(".terminal-selection-action-menu")).toBeHidden();
+  await input.focus();
+  await page.keyboard.press("Enter");
+  await expect(surface.locator(".xterm:not(.terminal-resize-freeze) .xterm-rows")).toContainText(
+    "T56_CUSTOM_PASTE",
+  );
+
   await selectionButton.click();
   await dispatchTouch(cdp, "touchStart", rowBounds.x + 3, touchY);
   await dispatchTouch(cdp, "touchMove", rowBounds.x + 74, touchY);

@@ -117,6 +117,48 @@ describe("terminal touch scroll", () => {
     detach();
     screen.remove();
   });
+
+  it("marks only a stationary long press as pending for native menu suppression", () => {
+    const screen = document.createElement("div");
+    document.body.appendChild(screen);
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    const terminal = {
+      rows: 10,
+      buffer: { active: { baseY: 100, viewportY: 50 } },
+      focus: vi.fn(),
+      scrollLines: vi.fn(),
+      scrollToLine: vi.fn(),
+    };
+    const selection = {
+      active: false,
+      hasSelection: () => false,
+      canLongPress: () => true,
+      enter: vi.fn(),
+      begin: vi.fn(),
+      move: vi.fn(),
+      finish: vi.fn(),
+      selectAll: vi.fn(),
+      getSelection: () => "",
+      cancel: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const detach = attachTerminalTouchScroll(screen, terminal, selection);
+
+    screen.dispatchEvent(touchPointer("pointerdown", 1, 50, 40));
+    expect(screen.dataset.naruTouchLongPress).toBe("pending");
+    screen.dispatchEvent(touchPointer("pointerup", 1, 50, 40));
+    expect(screen.dataset.naruTouchLongPress).toBeUndefined();
+
+    screen.dispatchEvent(touchPointer("pointerdown", 2, 50, 40));
+    expect(screen.dataset.naruTouchLongPress).toBe("pending");
+    screen.dispatchEvent(touchPointer("pointermove", 2, 50, 70));
+    expect(screen.dataset.naruTouchLongPress).toBeUndefined();
+    screen.dispatchEvent(touchPointer("pointerup", 2, 50, 70));
+
+    detach();
+    screen.remove();
+  });
 });
 
 function touchPointer(

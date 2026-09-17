@@ -29,6 +29,7 @@ import {
   isTerminalFocusReport,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
+import { readTerminalClipboard } from "./terminal-clipboard";
 import { canPromoteTerminalRestore, translatePreviewBottomOffset } from "./terminal-restore";
 import type {
   ConnectionSnapshot,
@@ -112,6 +113,9 @@ interface TransientFocusIntent {
   target: HTMLTextAreaElement;
 }
 
+// Reserve the two six-character bracketed-paste markers within terminal.input's 64 KiB contract.
+const MAX_TERMINAL_PASTE_CHARACTERS = 64 * 1_024 - 12;
+
 let nextTerminalInstanceId = 1;
 
 export function TerminalPane({
@@ -155,6 +159,10 @@ export function TerminalPane({
   const connectionRef = useRef(connection);
   const ctrlArmedRef = useRef(false);
   const clipboardBusyRef = useRef(false);
+  const clipboardReadBusyRef = useRef(false);
+  const clipboardImagePasteRef = useRef<(image: Blob) => Promise<boolean>>(() =>
+    Promise.resolve(false),
+  );
   const touchSelectionRef = useRef<TerminalTouchSelectionController | null>(null);
   const composeInputRef = useRef<HTMLTextAreaElement>(null);
   const mobileImeRef = useRef<MobileTerminalImeBridge | null>(null);
@@ -176,6 +184,7 @@ export function TerminalPane({
     kind: "status" | "error";
     message: string;
   } | null>(null);
+  const [clipboardReadBusy, setClipboardReadBusy] = useState(false);
   const [touchSelectionActive, setTouchSelectionActive] = useState(false);
   const [paneControlSource, setPaneControlSource] = useState<{
     connection: TerminalConnection | null;
@@ -307,6 +316,94 @@ export function TerminalPane({
     }
   };
 
+  const pasteClipboardIntoTerminal = (): void => {
+    if (clipboardReadBusyRef.current) return;
+    const attachment = attachmentRef.current;
+    const connectionAtRead = connectionRef.current;
+    const statusAtRead = connectionAtRead?.status();
+    const controlAtRead = connectionAtRead?.paneControl(pane.id);
+    if (
+      !attachment ||
+      !connectionAtRead ||
+      !controlAllowedRef.current ||
+      statusAtRead?.state !== "active" ||
+      statusAtRead.surfaceRole !== "controller" ||
+      controlAtRead?.role !== "controller"
+    ) {
+      setClipboardNotice({
+        kind: "error",
+        message: `현재 화면은 이 ${pane.kind === "codex" ? "Codex" : "Terminal"} Pane을 제어할 수 없습니다.`,
+      });
+      return;
+    }
+    const clipboard = navigator.clipboard;
+    if (!clipboard || (!clipboard.read && !clipboard.readText)) {
+      setClipboardNotice({
+        kind: "error",
+        message: "이 브라우저에서 클립보드 읽기를 사용할 수 없습니다.",
+      });
+      return;
+    }
+
+    clipboardReadBusyRef.current = true;
+    setClipboardReadBusy(true);
+    void readTerminalClipboard(clipboard)
+      .then(async ({ image, text }) => {
+        const statusNow = connectionAtRead.status();
+        const controlNow = connectionAtRead.paneControl(pane.id);
+        if (
+          attachmentRef.current !== attachment ||
+          connectionRef.current !== connectionAtRead ||
+          !controlAllowedRef.current ||
+          statusNow.state !== "active" ||
+          statusNow.surfaceRole !== "controller" ||
+          statusNow.generation !== statusAtRead.generation ||
+          controlNow?.role !== "controller" ||
+          controlNow.controllerGeneration !== controlAtRead.controllerGeneration
+        ) {
+          throw new Error("제어권이나 터미널 연결이 바뀌어 붙여넣기를 중단했습니다.");
+        }
+        if (pane.kind === "codex" && image) {
+          if (await clipboardImagePasteRef.current(image)) {
+            touchSelectionRef.current?.cancel();
+          }
+          return;
+        }
+        if (text) {
+          if (text.length > MAX_TERMINAL_PASTE_CHARACTERS) {
+            throw new Error("붙여넣을 텍스트는 65,524자 이하여야 합니다.");
+          }
+          const terminal = terminalRef.current;
+          if (!terminal) throw new Error("터미널 연결이 준비된 뒤 다시 붙여넣어 주세요.");
+          updateCtrlArmed(false);
+          terminal.paste(text);
+          touchSelectionRef.current?.cancel();
+          setClipboardNotice({ kind: "status", message: "클립보드 텍스트를 붙여넣었습니다." });
+          return;
+        }
+        if (image) {
+          throw new Error("이미지는 Codex Pane에만 붙여넣을 수 있습니다.");
+        }
+        setClipboardNotice({
+          kind: "error",
+          message: "클립보드에 붙여넣을 텍스트나 이미지가 없습니다.",
+        });
+      })
+      .catch((error: unknown) => {
+        setClipboardNotice({
+          kind: "error",
+          message:
+            error instanceof Error && error.message && error.name !== "NotAllowedError"
+              ? error.message
+              : "클립보드를 읽지 못했습니다. 브라우저 권한을 확인해 주세요.",
+        });
+      })
+      .finally(() => {
+        clipboardReadBusyRef.current = false;
+        setClipboardReadBusy(false);
+      });
+  };
+
   const submitComposedText = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     const value = composeInputRef.current?.value ?? composeText;
@@ -407,6 +504,90 @@ export function TerminalPane({
       if (!attachmentRef.current.input(sequence)) return;
       returnToLiveTail();
     };
+    const pasteClipboardImage = async (image: Blob): Promise<boolean> => {
+      if (pane.kind !== "codex") {
+        setClipboardNotice({
+          kind: "error",
+          message: "이미지는 Codex Pane에만 붙여넣을 수 있습니다.",
+        });
+        return false;
+      }
+      const attachment = attachmentRef.current;
+      if (!attachment) {
+        setClipboardNotice({
+          kind: "error",
+          message: "Codex 연결이 준비된 뒤 다시 붙여넣어 주세요.",
+        });
+        return false;
+      }
+      const connectionAtPaste = connectionRef.current;
+      const statusAtPaste = connectionAtPaste?.status();
+      const controlAtPaste = connectionAtPaste?.paneControl(pane.id);
+      if (
+        !connectionAtPaste ||
+        !controlAllowedRef.current ||
+        statusAtPaste?.state !== "active" ||
+        statusAtPaste.surfaceRole !== "controller" ||
+        controlAtPaste?.role !== "controller"
+      ) {
+        setClipboardNotice({
+          kind: "error",
+          message: "현재 화면은 이 Codex Pane을 제어할 수 없습니다.",
+        });
+        return false;
+      }
+      if (clipboardBusyRef.current) {
+        setClipboardNotice({
+          kind: "error",
+          message: "앞선 이미지를 붙여넣는 중입니다.",
+        });
+        return false;
+      }
+      const runtimeAtPaste = runtimeIdRef.current;
+      const terminalAtPaste = terminalRef.current;
+      const generationAtPaste = statusAtPaste.generation;
+      const paneControlGenerationAtPaste = controlAtPaste.controllerGeneration;
+      clipboardBusyRef.current = true;
+      setClipboardNotice({ kind: "status", message: "이미지를 Codex에 붙여넣는 중…" });
+      try {
+        const bytes = await prepareClipboardPng(image);
+        if (
+          disposed ||
+          !controlAllowedRef.current ||
+          attachmentRef.current !== attachment ||
+          runtimeIdRef.current !== runtimeAtPaste ||
+          terminalRef.current !== terminalAtPaste ||
+          connectionRef.current !== connectionAtPaste ||
+          connectionAtPaste.status().state !== "active" ||
+          connectionAtPaste.status().surfaceRole !== "controller" ||
+          connectionAtPaste.status().generation !== generationAtPaste ||
+          connectionAtPaste.paneControl(pane.id)?.role !== "controller" ||
+          connectionAtPaste.paneControl(pane.id)?.controllerGeneration !==
+            paneControlGenerationAtPaste
+        ) {
+          throw new Error("제어권이나 Codex 연결이 바뀌어 이미지 붙여넣기를 중단했습니다.");
+        }
+        await attachment.pasteImage(bytes);
+        if (!disposed) {
+          setClipboardNotice({
+            kind: "status",
+            message: "Codex에 이미지 붙여넣기 요청을 보냈습니다.",
+          });
+        }
+        return !disposed;
+      } catch (error: unknown) {
+        if (!disposed) {
+          setClipboardNotice({
+            kind: "error",
+            message: error instanceof Error ? error.message : "이미지를 붙여넣지 못했습니다.",
+          });
+        }
+        return false;
+      } finally {
+        clipboardBusyRef.current = false;
+      }
+    };
+    clipboardImagePasteRef.current = pasteClipboardImage;
     const handlePaste = (event: Event): void => {
       if (!(event instanceof ClipboardEvent)) return;
       if (
@@ -431,89 +612,7 @@ export function TerminalPane({
       if (pane.kind !== "codex" && event.clipboardData?.getData("text/plain")) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (pane.kind !== "codex") {
-        setClipboardNotice({
-          kind: "error",
-          message: "이미지는 Codex Pane에만 붙여넣을 수 있습니다.",
-        });
-        return;
-      }
-      const attachment = attachmentRef.current;
-      if (!attachment) {
-        setClipboardNotice({
-          kind: "error",
-          message: "Codex 연결이 준비된 뒤 다시 붙여넣어 주세요.",
-        });
-        return;
-      }
-      const connectionAtPaste = connectionRef.current;
-      const statusAtPaste = connectionAtPaste?.status();
-      const controlAtPaste = connectionAtPaste?.paneControl(pane.id);
-      if (
-        !connectionAtPaste ||
-        !controlAllowedRef.current ||
-        statusAtPaste?.state !== "active" ||
-        statusAtPaste.surfaceRole !== "controller" ||
-        controlAtPaste?.role !== "controller"
-      ) {
-        setClipboardNotice({
-          kind: "error",
-          message: "현재 화면은 이 Codex Pane을 제어할 수 없습니다.",
-        });
-        return;
-      }
-      if (clipboardBusyRef.current) {
-        setClipboardNotice({
-          kind: "error",
-          message: "앞선 이미지를 붙여넣는 중입니다.",
-        });
-        return;
-      }
-      const runtimeAtPaste = runtimeIdRef.current;
-      const terminalAtPaste = terminalRef.current;
-      const generationAtPaste = statusAtPaste.generation;
-      const paneControlGenerationAtPaste = controlAtPaste.controllerGeneration;
-      clipboardBusyRef.current = true;
-      setClipboardNotice({ kind: "status", message: "이미지를 Codex에 붙여넣는 중…" });
-      void prepareClipboardPng(image)
-        .then((bytes) => {
-          if (
-            disposed ||
-            !controlAllowedRef.current ||
-            attachmentRef.current !== attachment ||
-            runtimeIdRef.current !== runtimeAtPaste ||
-            terminalRef.current !== terminalAtPaste ||
-            connectionRef.current !== connectionAtPaste ||
-            connectionAtPaste.status().state !== "active" ||
-            connectionAtPaste.status().surfaceRole !== "controller" ||
-            connectionAtPaste.status().generation !== generationAtPaste ||
-            connectionAtPaste.paneControl(pane.id)?.role !== "controller" ||
-            connectionAtPaste.paneControl(pane.id)?.controllerGeneration !==
-              paneControlGenerationAtPaste
-          ) {
-            throw new Error("제어권이나 Codex 연결이 바뀌어 이미지 붙여넣기를 중단했습니다.");
-          }
-          return attachment.pasteImage(bytes);
-        })
-        .then(() => {
-          if (!disposed) {
-            setClipboardNotice({
-              kind: "status",
-              message: "Codex에 이미지 붙여넣기 요청을 보냈습니다.",
-            });
-          }
-        })
-        .catch((error: unknown) => {
-          if (!disposed) {
-            setClipboardNotice({
-              kind: "error",
-              message: error instanceof Error ? error.message : "이미지를 붙여넣지 못했습니다.",
-            });
-          }
-        })
-        .finally(() => {
-          clipboardBusyRef.current = false;
-        });
+      void pasteClipboardImage(image);
     };
 
     const syncCandidateViewport = (): void => {
@@ -1226,6 +1325,9 @@ export function TerminalPane({
       host.removeEventListener("input", handleLatchedInput, true);
       paneSurface?.removeEventListener("paste", handlePaste, true);
       clipboardBusyRef.current = false;
+      if (clipboardImagePasteRef.current === pasteClipboardImage) {
+        clipboardImagePasteRef.current = () => Promise.resolve(false);
+      }
       disposeCandidate();
       preservedRestoreRef.current = null;
       mountedRendererRef.current?.dispose();
@@ -1552,7 +1654,7 @@ export function TerminalPane({
       <p id={keyboardHelpId} className="sr-only">
         터미널에서 Shift+Tab을 누르면 Pane 도구 모음으로 초점을 이동합니다. 모바일에서는 아래 특수키
         도구와 한글 보조 입력을 사용할 수 있습니다. 출력을 길게 누르거나 선택 도구로 범위를 지정한
-        뒤 복사할 수 있습니다.
+        뒤 복사하거나 클립보드 내용을 붙여넣을 수 있습니다.
       </p>
       <div
         className={`terminal-host ${controlsPane ? "is-controller" : "is-observer"}`}
@@ -1573,6 +1675,14 @@ export function TerminalPane({
             onClick={copySelectedOutput}
           >
             복사
+          </button>
+          <button
+            type="button"
+            aria-label={`${pane.title} 클립보드 붙여넣기`}
+            onClick={pasteClipboardIntoTerminal}
+            disabled={clipboardReadBusy}
+          >
+            붙여넣기
           </button>
           <button
             type="button"

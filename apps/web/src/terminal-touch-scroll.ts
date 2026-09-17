@@ -146,6 +146,7 @@ export function attachTerminalTouchScroll(
   const clearLongPress = (): void => {
     if (longPressTimer !== null) clearTimeout(longPressTimer);
     longPressTimer = null;
+    delete screen.dataset.naruTouchLongPress;
   };
 
   const clearSelectionEdgeScroll = (): void => {
@@ -200,9 +201,11 @@ export function attachTerminalTouchScroll(
       }
     } else if (selection?.canLongPress(event.clientX, event.clientY)) {
       clearLongPress();
+      screen.dataset.naruTouchLongPress = "pending";
       longPressTimer = setTimeout(() => {
-        if (!gesture || gesture.pointerId !== event.pointerId || gesture.axis !== "pending") return;
         longPressTimer = null;
+        delete screen.dataset.naruTouchLongPress;
+        if (!gesture || gesture.pointerId !== event.pointerId || gesture.axis !== "pending") return;
         selecting = true;
         cancelSelectionOnTap = false;
         selection.begin(gesture.startX, gesture.startY, true);

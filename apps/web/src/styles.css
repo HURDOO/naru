@@ -1719,6 +1719,7 @@ button:disabled {
 
 .terminal-host .xterm-screen.naru-touch-scroll {
   touch-action: pan-x pinch-zoom;
+  -webkit-touch-callout: none;
 }
 
 .terminal-host .xterm-screen.naru-touch-select {
@@ -1796,6 +1797,10 @@ button:disabled {
 
 .terminal-selection-action-menu button:active {
   background: #344047;
+}
+
+.terminal-selection-action-menu button:disabled {
+  opacity: 0.55;
 }
 
 .terminal-selection-action-menu button:focus-visible {

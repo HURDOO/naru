@@ -301,7 +301,8 @@ export function attachTerminalTouchSelection(
   };
 
   const onContextMenu = (event: MouseEvent): void => {
-    if (!active || selectedSpan() === null) return;
+    const longPressPending = screen.dataset.naruTouchLongPress === "pending";
+    if (!longPressPending && (!active || selectedSpan() === null)) return;
     const target = event.target;
     if (!(target instanceof Element) || !screen.contains(target)) return;
     // xterm's selection is not a DOM range, so Android cannot reliably attach ActionMode to it.
@@ -310,7 +311,7 @@ export function attachTerminalTouchSelection(
     event.stopPropagation();
   };
   const onMouseDown = (event: MouseEvent): void => {
-    if (!active) return;
+    if (!active && screen.dataset.naruTouchLongPress !== "pending") return;
     const target = event.target;
     if (!(target instanceof Element) || !screen.contains(target)) return;
     // Android may emit a compatibility mousedown after the touch gesture. xterm focuses its

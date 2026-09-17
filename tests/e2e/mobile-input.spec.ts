@@ -599,6 +599,43 @@ test("Samsung Internet UA simulation of Android input and image paste", async ({
     "브라우저가 이미지 데이터를 제공하지 않았습니다.",
   );
 
+  await surface.getByRole("button", { name: "Main Codex 출력 선택", exact: true }).click();
+  await page.evaluate(() => {
+    const bytes = Uint8Array.from(
+      atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      ),
+      (character) => character.charCodeAt(0),
+    );
+    const image = new Blob([bytes], { type: "image/png" });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        read: () =>
+          Promise.resolve([
+            {
+              types: ["image/png"],
+              getType: () => Promise.resolve(image),
+            },
+          ]),
+      },
+    });
+  });
+  await surface.getByRole("button", { name: "Main Codex 클립보드 붙여넣기" }).click();
+  await expect(surface.locator(".terminal-clipboard-notice")).toContainText(
+    "Codex에 이미지 붙여넣기 요청을 보냈습니다.",
+  );
+  await expect(surface.locator(".terminal-selection-action-menu")).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __naruClipboardFrames: unknown[] }).__naruClipboardFrames
+            .length,
+      ),
+    )
+    .toBe(9);
+
   const observerContext = await browser.newContext({
     baseURL: new URL(page.url()).origin,
     hasTouch: true,
@@ -625,23 +662,8 @@ test("Samsung Internet UA simulation of Android input and image paste", async ({
     });
     expect(await sentInput(page)).toBe(inputBeforeHandoff);
 
-    await compose.evaluate((textarea) => {
-      const bytes = Uint8Array.from(
-        atob(
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-        ),
-        (character) => character.charCodeAt(0),
-      );
-      const clipboard = new DataTransfer();
-      clipboard.items.add(new File([bytes], "observer.png", { type: "image/png" }));
-      textarea.dispatchEvent(
-        new ClipboardEvent("paste", {
-          bubbles: true,
-          cancelable: true,
-          clipboardData: clipboard,
-        }),
-      );
-    });
+    await surface.getByRole("button", { name: "Main Codex 출력 선택", exact: true }).click();
+    await surface.getByRole("button", { name: "Main Codex 클립보드 붙여넣기" }).click();
     await expect(surface.locator(".terminal-clipboard-notice")).toContainText(
       "현재 화면은 이 Codex Pane을 제어할 수 없습니다.",
     );
@@ -651,7 +673,7 @@ test("Samsung Internet UA simulation of Android input and image paste", async ({
           (window as typeof window & { __naruClipboardFrames: unknown[] }).__naruClipboardFrames
             .length,
       ),
-    ).toBe(6);
+    ).toBe(9);
   } finally {
     await observerContext.close();
   }

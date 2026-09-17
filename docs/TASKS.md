@@ -148,12 +148,17 @@ ownership과 integration gate를 지킨다.
   toolbar가 거의 뜨지 않았다. xterm 선택은 DOM range가 아니고 브라우저에는 Android
   ActionMode를 여는 public API가 없어, helper textarea의 focus·readonly·`inputmode`로 우회한
   9443 빌드들은 툴바 누락을 해결하지 못하거나 Samsung Keyboard를 열어 선택을 깨뜨렸다.
-  실기기 결과와 사용자 결정에 따라 모바일 선택은 앱이 소유한 `복사 · 전체 · 취소` 툴바를
+  실기기 결과와 사용자 결정에 따라 모바일 선택은 앱이 소유한 `복사 · 붙여넣기 · 전체 · 취소` 툴바를
   표시한다. 복사는 명시적 사용자 gesture에서 Clipboard API를 호출하고 성공·빈 선택·권한 거부를
-  구분한다. 선택 중 `contextmenu`와 Android compatibility `mousedown`을 xterm보다 먼저
-  차단해 helper textarea focus·IME 열림을 막고, 툴바·핸들 터치와 선택 상태 스크롤을 유지한다.
-  관련 단위 14건과 Samsung UA 선택 E2E 3건, typecheck·lint·format·build가 통과했다.
-  9443 Samsung Internet/PWA의 툴바 표시·복사 인수는 남아 있다.
+  구분한다. 붙여넣기는 제어권을 먼저 확인한 뒤 Clipboard API의 텍스트를 xterm bracketed-paste로
+  보내고 Codex의 이미지는 기존 generation fencing·크기 제한 경로로 보낸다. 빈 clipboard·권한
+  거부·보기 전용 화면을 구분한다. 긴 누르기 대기 단계부터 선택 종료까지 `contextmenu`와 Android
+  compatibility `mousedown`을 xterm보다 먼저 차단하고 touch callout을 비활성화해 네이티브 툴바,
+  helper textarea focus·IME 열림을 막으며 툴바·핸들 터치와 선택 상태 스크롤을 유지한다.
+  관련 단위 20건과 Samsung UA 선택/입력 E2E 4건, typecheck·변경 파일 lint·format·전체 build가
+  통과했다.
+  9443 Samsung Internet/PWA의 커스텀 툴바 표시·복사·붙여넣기와 네이티브 툴바 미표시 인수는
+  남아 있다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,

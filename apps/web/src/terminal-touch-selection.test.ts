@@ -188,14 +188,24 @@ describe("terminal touch selection", () => {
     const copied = vi.fn();
     const setData = vi.fn();
     const controller = attachTerminalTouchSelection(screen, terminal, () => undefined, copied);
-
-    controller.begin(15, 5);
-    controller.finish();
-    terminal.clearSelection();
     const xtermContextMenu = vi.fn(() => {
       textarea.value = "";
     });
     terminalElement.addEventListener("contextmenu", xtermContextMenu);
+
+    screen.dataset.naruTouchLongPress = "pending";
+    const pendingContextMenu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    screen.dispatchEvent(pendingContextMenu);
+    expect(pendingContextMenu.defaultPrevented).toBe(true);
+    expect(xtermContextMenu).not.toHaveBeenCalled();
+    delete screen.dataset.naruTouchLongPress;
+
+    controller.begin(15, 5);
+    controller.finish();
+    terminal.clearSelection();
     const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     screen.dispatchEvent(contextMenu);
 
