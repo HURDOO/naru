@@ -1281,7 +1281,9 @@ function selectRuntimeReleases(
     gateway: candidate.summary,
     naru: candidate.summary,
   };
-  if (operation !== "upgrade" || current === undefined) return allCandidate;
+  if (current === undefined) return allCandidate;
+  if (operation === "reconfigure") return verifyReceiptRuntimeReleases(current, layout);
+  if (operation !== "upgrade") return allCandidate;
   const previous = verifyReceiptRuntimeReleases(current, layout);
   const previousHost = verifyDistributionArtifact(previous.host.root);
   const previousGateway = verifyDistributionArtifact(previous.gateway.root);

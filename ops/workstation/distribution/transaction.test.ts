@@ -422,6 +422,19 @@ describe("T14 deterministic maintenance transactions", () => {
       gateway: first.artifact.buildId,
       naru: "fixture-web-only-0002",
     });
+    const reconfigureIntent = parseInstallationIntent({
+      ...intent,
+      canonicalBrowserOrigin: "https://reconfigured.fixture.test:8443",
+    });
+    const reconfigurePlan = await planDistribution(reconfigureIntent, "reconfigure", runtime, {
+      probePorts: false,
+    });
+    expect(reconfigurePlan.restartServices).toEqual(["gateway", "naru"]);
+    expect(reconfigurePlan.runtimeReleases).toMatchObject({
+      host: { buildId: first.artifact.buildId },
+      gateway: { buildId: first.artifact.buildId },
+      naru: { buildId: "fixture-web-only-0002" },
+    });
     writeFileSync(join(first.artifact.root, "components", "host", "dist", "main.js"), "tampered\n");
     expect((await statusDistribution(intent, runtime)).status).toBe("degraded");
     await expect(doctorDistribution(intent, runtime)).rejects.toThrow(/manifest/);
