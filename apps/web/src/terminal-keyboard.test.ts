@@ -4,6 +4,7 @@ import {
   codexShiftEnterSequence,
   ctrlSequenceForKeyboardEvent,
   isTerminalFocusReport,
+  latchedModifierSequenceForKeyboardEvent,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
 
@@ -28,6 +29,17 @@ describe("terminal keyboard boundary", () => {
     expect(ctrlSequenceForKeyboardEvent(keydown)).toBe("\u0003");
     expect(ctrlSequenceForKeyboardEvent({ ...keydown, type: "keyup" })).toBeNull();
     expect(ctrlSequenceForKeyboardEvent({ ...keydown, key: "한" })).toBeNull();
+  });
+
+  it("encodes latched mobile Alt and Ctrl+Alt keys before xterm handles keydown", () => {
+    expect(latchedModifierSequenceForKeyboardEvent(keydown, false, true)).toBe("\u001bc");
+    expect(latchedModifierSequenceForKeyboardEvent(keydown, true, true)).toBe("\u001b\u0003");
+    expect(
+      latchedModifierSequenceForKeyboardEvent({ ...keydown, type: "keyup" }, false, true),
+    ).toBeNull();
+    expect(
+      latchedModifierSequenceForKeyboardEvent({ ...keydown, altKey: true }, false, true),
+    ).toBeNull();
   });
 
   it("encodes Codex Shift+Enter with the enhanced-key CSI-u sequence", () => {

@@ -377,6 +377,35 @@ test("Samsung Internet UA simulation of Android input and image paste", async ({
     );
   });
   await expect.poll(() => sentInput(page)).toBe("\u0003");
+  const altButton = surface
+    .getByRole("toolbar", { name: "Main Codex 모바일 터미널 키" })
+    .getByRole("button", { name: "Main Codex Alt 다음 키와 조합" });
+  await altButton.click();
+  await expect(altButton).toHaveAttribute("aria-pressed", "true");
+  await input.focus();
+  await input.evaluate((textarea) => {
+    const field = textarea as HTMLTextAreaElement;
+    const state = window as typeof window & { __naruInputFrames: unknown[] };
+    state.__naruInputFrames.length = 0;
+    const keydown = new KeyboardEvent("keydown", {
+      key: "b",
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(keydown, "keyCode", { value: 229 });
+    field.dispatchEvent(keydown);
+    field.value += "b";
+    field.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        composed: true,
+        inputType: "insertText",
+        data: "b",
+      }),
+    );
+  });
+  await expect.poll(() => sentInput(page)).toBe("\u001bb");
+  await expect(altButton).toHaveAttribute("aria-pressed", "false");
   await input.evaluate((textarea) => {
     const field = textarea as HTMLTextAreaElement;
     const state = window as typeof window & { __naruInputFrames: unknown[] };

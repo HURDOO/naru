@@ -18,15 +18,15 @@ import {
   useState,
 } from "react";
 import {
-  applyCtrlToTerminalData,
+  applyMobileModifiersToTerminalData,
   type MobileTerminalKey,
   mobileTerminalKeySequence,
 } from "./mobile-terminal-input";
 import { isAndroidTouchInput, MobileTerminalImeBridge } from "./mobile-terminal-ime";
 import {
   codexShiftEnterSequence,
-  ctrlSequenceForKeyboardEvent,
   isTerminalFocusReport,
+  latchedModifierSequenceForKeyboardEvent,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
 import { readTerminalClipboard } from "./terminal-clipboard";
@@ -158,6 +158,7 @@ export function TerminalPane({
   const attachmentRef = useRef<TerminalAttachment | null>(null);
   const connectionRef = useRef(connection);
   const ctrlArmedRef = useRef(false);
+  const altArmedRef = useRef(false);
   const clipboardBusyRef = useRef(false);
   const clipboardReadBusyRef = useRef(false);
   const clipboardImagePasteRef = useRef<(image: Blob) => Promise<boolean>>(() =>
@@ -178,6 +179,7 @@ export function TerminalPane({
   const [scrollBottomOffset, setScrollBottomOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  const [altArmed, setAltArmed] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
   const [clipboardNotice, setClipboardNotice] = useState<{
@@ -232,6 +234,16 @@ export function TerminalPane({
     setCtrlArmed(armed);
   }, []);
 
+  const updateAltArmed = useCallback((armed: boolean): void => {
+    altArmedRef.current = armed;
+    setAltArmed(armed);
+  }, []);
+
+  const clearMobileModifiers = useCallback((): void => {
+    updateCtrlArmed(false);
+    updateAltArmed(false);
+  }, [updateAltArmed, updateCtrlArmed]);
+
   const returnToLiveTail = useCallback((): void => {
     const terminal = terminalRef.current;
     const alreadyAtLiveTail =
@@ -251,27 +263,35 @@ export function TerminalPane({
     (data: string, revealLiveTail = true): void => {
       const attachment = attachmentRef.current;
       if (!attachment) return;
-      const output = revealLiveTail && ctrlArmedRef.current ? applyCtrlToTerminalData(data) : data;
+      const modifiersArmed = ctrlArmedRef.current || altArmedRef.current;
+      const output =
+        revealLiveTail && modifiersArmed
+          ? applyMobileModifiersToTerminalData(data, ctrlArmedRef.current, altArmedRef.current)
+          : data;
       if (!attachment.input(output)) return;
-      if (revealLiveTail && ctrlArmedRef.current) updateCtrlArmed(false);
+      if (revealLiveTail && modifiersArmed) clearMobileModifiers();
       if (revealLiveTail) returnToLiveTail();
     },
-    [returnToLiveTail, updateCtrlArmed],
+    [clearMobileModifiers, returnToLiveTail],
   );
 
   const sendSpecialKey = (key: MobileTerminalKey): void => {
     const attachment = attachmentRef.current;
     if (!attachment) return;
-    if (!attachment.input(mobileTerminalKeySequence(key, ctrlArmedRef.current))) return;
+    if (
+      !attachment.input(mobileTerminalKeySequence(key, ctrlArmedRef.current, altArmedRef.current))
+    ) {
+      return;
+    }
     returnToLiveTail();
-    updateCtrlArmed(false);
+    clearMobileModifiers();
     terminalRef.current?.focus();
   };
 
   const toggleComposeInput = (): void => {
     const next = !composeOpen;
     setComposeOpen(next);
-    updateCtrlArmed(false);
+    clearMobileModifiers();
     requestAnimationFrame(() => {
       if (next) composeInputRef.current?.focus();
       else terminalRef.current?.focus();
@@ -375,7 +395,7 @@ export function TerminalPane({
           }
           const terminal = terminalRef.current;
           if (!terminal) throw new Error("터미널 연결이 준비된 뒤 다시 붙여넣어 주세요.");
-          updateCtrlArmed(false);
+          clearMobileModifiers();
           terminal.paste(text);
           touchSelectionRef.current?.cancel();
           setClipboardNotice({ kind: "status", message: "클립보드 텍스트를 붙여넣었습니다." });
@@ -410,7 +430,7 @@ export function TerminalPane({
     if (!value || !attachmentRef.current) return;
     if (!attachmentRef.current.input(value)) return;
     returnToLiveTail();
-    updateCtrlArmed(false);
+    clearMobileModifiers();
     setComposeText("");
     requestAnimationFrame(() => composeInputRef.current?.focus());
   };
@@ -493,14 +513,24 @@ export function TerminalPane({
     };
 
     const handleLatchedInput = (event: Event): void => {
-      if (!ctrlArmedRef.current || !(event instanceof InputEvent) || !event.data) return;
-      const sequence = applyCtrlToTerminalData(event.data);
+      if (
+        (!ctrlArmedRef.current && !altArmedRef.current) ||
+        !(event instanceof InputEvent) ||
+        !event.data
+      ) {
+        return;
+      }
+      const sequence = applyMobileModifiersToTerminalData(
+        event.data,
+        ctrlArmedRef.current,
+        altArmedRef.current,
+      );
       if (sequence === event.data || !attachmentRef.current) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       const terminal = terminalRef.current;
       if (terminal?.textarea) terminal.textarea.value = "";
-      updateCtrlArmed(false);
+      clearMobileModifiers();
       if (!attachmentRef.current.input(sequence)) return;
       returnToLiveTail();
     };
@@ -596,7 +626,7 @@ export function TerminalPane({
       ) {
         return;
       }
-      updateCtrlArmed(false);
+      clearMobileModifiers();
       const image = clipboardImageFrom(event.clipboardData);
       if (!image) {
         if (pane.kind === "codex" && clipboardAdvertisesImage(event.clipboardData)) {
@@ -656,19 +686,23 @@ export function TerminalPane({
       terminal.textarea?.setAttribute("aria-label", `${paneTitleRef.current} 명령 입력`);
       terminal.textarea?.setAttribute("aria-describedby", keyboardHelpId);
       terminal.attachCustomKeyEventHandler((event) => {
-        if (ctrlArmedRef.current) {
-          const sequence = ctrlSequenceForKeyboardEvent(event);
+        if (ctrlArmedRef.current || altArmedRef.current) {
+          const sequence = latchedModifierSequenceForKeyboardEvent(
+            event,
+            ctrlArmedRef.current,
+            altArmedRef.current,
+          );
           if (sequence !== null) {
             event.preventDefault();
             event.stopPropagation();
-            updateCtrlArmed(false);
+            clearMobileModifiers();
             if (!attachmentRef.current?.input(sequence)) return false;
             returnToLiveTail();
             return false;
           }
         }
         if (shouldUseBrowserClipboard(event, terminal.hasSelection())) {
-          updateCtrlArmed(false);
+          clearMobileModifiers();
           return false;
         }
         if (pane.kind === "codex") {
@@ -676,7 +710,7 @@ export function TerminalPane({
           if (sequence !== null) {
             event.preventDefault();
             event.stopPropagation();
-            updateCtrlArmed(false);
+            clearMobileModifiers();
             if (!attachmentRef.current?.input(sequence)) return false;
             returnToLiveTail();
             return false;
@@ -1342,7 +1376,14 @@ export function TerminalPane({
       delete host.dataset.terminalFontsReady;
       delete host.dataset.terminalRestoreReady;
     };
-  }, [keyboardHelpId, pane.id, pane.kind, returnToLiveTail, sendTerminalData, updateCtrlArmed]);
+  }, [
+    clearMobileModifiers,
+    keyboardHelpId,
+    pane.id,
+    pane.kind,
+    returnToLiveTail,
+    sendTerminalData,
+  ]);
 
   useLayoutEffect(() => {
     paneTitleRef.current = pane.title;
@@ -1652,9 +1693,9 @@ export function TerminalPane({
         </div>
       </header>
       <p id={keyboardHelpId} className="sr-only">
-        터미널에서 Shift+Tab을 누르면 Pane 도구 모음으로 초점을 이동합니다. 모바일에서는 아래 특수키
-        도구와 한글 보조 입력을 사용할 수 있습니다. 출력을 길게 누르거나 선택 도구로 범위를 지정한
-        뒤 복사하거나 클립보드 내용을 붙여넣을 수 있습니다.
+        터미널에서 Shift+Tab을 누르면 Pane 도구 모음으로 초점을 이동합니다. 모바일에서는 아래 Ctrl,
+        Alt와 특수키 도구 및 한글 보조 입력을 사용할 수 있습니다. 출력을 길게 누르거나 선택 도구로
+        범위를 지정한 뒤 복사하거나 클립보드 내용을 붙여넣을 수 있습니다.
       </p>
       <div
         className={`terminal-host ${controlsPane ? "is-controller" : "is-observer"}`}
@@ -1773,6 +1814,20 @@ export function TerminalPane({
           }}
         >
           Ctrl
+        </button>
+        <button
+          type="button"
+          className={altArmed ? "is-active" : ""}
+          aria-pressed={altArmed}
+          aria-label={`${pane.title} Alt 다음 키와 조합`}
+          disabled={inputDisabled}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => {
+            updateAltArmed(!altArmedRef.current);
+            terminalRef.current?.focus();
+          }}
+        >
+          Alt
         </button>
         <MobileKeyButton
           label={`${pane.title} Escape 키`}

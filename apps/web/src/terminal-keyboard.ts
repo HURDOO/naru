@@ -1,4 +1,7 @@
-import { applyCtrlToTerminalData } from "./mobile-terminal-input";
+import {
+  applyCtrlToTerminalData,
+  applyMobileModifiersToTerminalData,
+} from "./mobile-terminal-input";
 
 export const CODEX_SHIFT_ENTER_SEQUENCE = "\u001b[13;2u";
 const TERMINAL_FOCUS_IN_SEQUENCE = "\u001b[I";
@@ -27,6 +30,24 @@ export function ctrlSequenceForKeyboardEvent(event: KeyGesture): string | null {
     return null;
   }
   const sequence = applyCtrlToTerminalData(event.key);
+  return sequence === event.key ? null : sequence;
+}
+
+export function latchedModifierSequenceForKeyboardEvent(
+  event: KeyGesture,
+  ctrl: boolean,
+  alt: boolean,
+): string | null {
+  if (
+    event.type !== "keydown" ||
+    event.metaKey ||
+    event.altKey ||
+    event.key.length !== 1 ||
+    (!ctrl && !alt)
+  ) {
+    return null;
+  }
+  const sequence = applyMobileModifiersToTerminalData(event.key, ctrl, alt);
   return sequence === event.key ? null : sequence;
 }
 
