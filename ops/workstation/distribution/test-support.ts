@@ -206,8 +206,15 @@ export function createArtifactFixture(
     },
     { path: "components/gateway/dist/main.js", contents: "export {};\n" },
     { path: "components/naru/dist/index.js", contents: "export {};\n" },
-    { path: "components/naru/dist/codex-integration-launcher.js", contents: "export {};\n" },
-    { path: "components/naru/dist/codex-session-hook-cli.js", contents: "export {};\n" },
+    {
+      path: "components/naru/dist/codex-integration-launcher.js",
+      contents: 'import "./chunk-codex-shared.js";\nexport {};\n',
+    },
+    {
+      path: "components/naru/dist/codex-session-hook-cli.js",
+      contents: 'import "./chunk-codex-shared.js";\nexport {};\n',
+    },
+    { path: "components/naru/dist/chunk-codex-shared.js", contents: "export {};\n" },
     {
       path: "components/host/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
       contents: "fixture-native",

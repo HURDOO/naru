@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { parseNaruAppBasePath } from "../../../packages/contracts/src/naru-app/v1/index.js";
 import {
@@ -85,6 +85,11 @@ import {
 export type DistributionOperation = "install" | "upgrade" | "reconfigure" | "rollback";
 export type DistributionPlanStatus = "ready" | "blocked" | "needs-input";
 export type DistributionCheckStatus = "ok" | "warning" | "blocked" | "unavailable";
+
+const HOST_CODEX_ENTRYPOINTS = [
+  "components/naru/dist/codex-integration-launcher.js",
+  "components/naru/dist/codex-session-hook-cli.js",
+] as const;
 
 export interface DistributionCheck {
   readonly id: string;
@@ -1278,19 +1283,20 @@ function selectRuntimeReleases(
   };
   if (operation !== "upgrade" || current === undefined) return allCandidate;
   const previous = verifyReceiptRuntimeReleases(current, layout);
-  const hostManifest = verifyDistributionArtifact(previous.host.root).manifest;
-  const gatewayManifest = verifyDistributionArtifact(previous.gateway.root).manifest;
+  const previousHost = verifyDistributionArtifact(previous.host.root);
+  const previousGateway = verifyDistributionArtifact(previous.gateway.root);
   const hostChanged =
     stableJson(previous.host.features) !== stableJson(candidate.summary.features) ||
-    artifactFilesChanged(hostManifest, candidate.manifest, [
+    artifactFilesChanged(previousHost.manifest, candidate.manifest, [
       "runtime/node/",
       "components/host/",
       "components/cli/",
-      // Host-owned Codex processes execute the Naru-packaged integration payload.
-      "components/naru/",
     ]) ||
-    artifactHasUnclassifiedChanges(hostManifest, candidate.manifest);
-  const gatewayChanged = artifactFilesChanged(gatewayManifest, candidate.manifest, [
+    // Host-owned Codex processes execute only these Naru-packaged entrypoints and
+    // their generated module graph, not the Naru server bundle as a whole.
+    artifactModuleGraphChanged(previousHost, candidate, HOST_CODEX_ENTRYPOINTS) ||
+    artifactHasUnclassifiedChanges(previousHost.manifest, candidate.manifest);
+  const gatewayChanged = artifactFilesChanged(previousGateway.manifest, candidate.manifest, [
     "runtime/node/",
     "components/gateway/",
   ]);
@@ -1337,6 +1343,63 @@ function artifactFilesChanged(
       manifest.files.filter((file) => prefixes.some((prefix) => file.path.startsWith(prefix))),
     );
   return selected(previous) !== selected(candidate);
+}
+
+function artifactModuleGraphChanged(
+  previous: VerifiedDistributionArtifact,
+  candidate: VerifiedDistributionArtifact,
+  entrypoints: readonly string[],
+): boolean {
+  const previousFiles = new Map(previous.manifest.files.map((file) => [file.path, file]));
+  const candidateFiles = new Map(candidate.manifest.files.map((file) => [file.path, file]));
+  const comparedPaths = new Set([
+    ...collectArtifactModuleGraph(previous, entrypoints),
+    ...collectArtifactModuleGraph(candidate, entrypoints),
+  ]);
+  for (const path of comparedPaths) {
+    if (stableJson(previousFiles.get(path)) !== stableJson(candidateFiles.get(path))) return true;
+  }
+  return false;
+}
+
+function collectArtifactModuleGraph(
+  artifact: VerifiedDistributionArtifact,
+  entrypoints: readonly string[],
+): ReadonlySet<string> {
+  const artifactPaths = new Set(artifact.manifest.files.map((file) => file.path));
+  const visited = new Set<string>();
+  const pending = [...entrypoints];
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (path === undefined || visited.has(path)) continue;
+    visited.add(path);
+    if (!artifactPaths.has(path)) continue;
+    const source = readFileSync(join(artifact.summary.root, path), "utf8");
+    for (const specifier of relativeModuleSpecifiers(source)) {
+      const dependency = normalize(join(dirname(path), specifier));
+      if (
+        dependency.startsWith("components/naru/dist/") &&
+        artifactPaths.has(dependency) &&
+        !visited.has(dependency)
+      ) {
+        pending.push(dependency);
+      }
+    }
+  }
+  return visited;
+}
+
+function relativeModuleSpecifiers(source: string): ReadonlySet<string> {
+  const specifiers = new Set<string>();
+  const staticPattern = /(?:\bfrom\s*|\bimport\s*)["'](\.{1,2}\/[^"'?#]+)["']/gu;
+  const dynamicPattern = /\bimport\s*\(\s*["'](\.{1,2}\/[^"'?#]+)["']\s*\)/gu;
+  for (const pattern of [staticPattern, dynamicPattern]) {
+    for (const match of source.matchAll(pattern)) {
+      const specifier = match[1];
+      if (specifier !== undefined) specifiers.add(specifier);
+    }
+  }
+  return specifiers;
 }
 
 function receiptRuntimeReleases(receipt: InstallationReceiptV1): RuntimeReleaseSelection {

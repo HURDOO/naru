@@ -427,6 +427,55 @@ describe("T14 deterministic maintenance transactions", () => {
     await expect(doctorDistribution(intent, runtime)).rejects.toThrow(/manifest/);
   });
 
+  it("restarts Host only when the Host-owned Codex module graph changes", async () => {
+    const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+    const runtime = new FakeWorkstationRuntime();
+    const install = await planDistribution(fixture.intent, "install", runtime, {
+      probePorts: false,
+    });
+    await executeMaintenanceRequest(
+      stageMaintenanceHandoff(install, install.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    const first = readCurrentReceipt(install.layout);
+    if (first === undefined) throw new Error("Fixture install receipt is missing.");
+
+    const naruRoot = createArtifactFixture(fixture.root, "fixture-naru-0002", {
+      packagedNodeRuntime: true,
+      fileOverrides: {
+        "components/naru/dist/index.js": "export const serverChanged = true;\n",
+      },
+    });
+    const naruIntent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot: naruRoot,
+      nodeExecutable: join(naruRoot, "runtime", "node", "bin", "node"),
+    });
+    const naruPlan = await planDistribution(naruIntent, "upgrade", runtime, {
+      probePorts: false,
+    });
+    expect(naruPlan.restartServices).toEqual(["naru"]);
+    expect(naruPlan.runtimeReleases.host.buildId).toBe(first.artifact.buildId);
+    expect(naruPlan.runtimeReleases.gateway.buildId).toBe(first.artifact.buildId);
+
+    const integrationRoot = createArtifactFixture(fixture.root, "fixture-codex-0003", {
+      packagedNodeRuntime: true,
+      fileOverrides: {
+        "components/naru/dist/chunk-codex-shared.js": "export const integrationChanged = true;\n",
+      },
+    });
+    const integrationIntent = parseInstallationIntent({
+      ...fixture.intent,
+      artifactRoot: integrationRoot,
+      nodeExecutable: join(integrationRoot, "runtime", "node", "bin", "node"),
+    });
+    const integrationPlan = await planDistribution(integrationIntent, "upgrade", runtime, {
+      probePorts: false,
+    });
+    expect(integrationPlan.restartServices).toEqual(["host", "gateway", "naru"]);
+  });
+
   it("promotes Gateway and then Host only when their verified runtime payload changes", async () => {
     const fixture = createDistributionFixture({ packagedNodeRuntime: true });
     const runtime = new FakeWorkstationRuntime();
