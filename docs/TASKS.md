@@ -108,14 +108,14 @@ ownership과 integration gate를 지킨다.
 
 ### T56. 실기기 Pane blink·focus 유실과 첫 입력 전 본문 공백
 
-- [-] T52에서 이관한 실기기 미완료 범위를 재현·해결한다. Windows Edge PWA와 Android
-  Samsung Internet PWA에서 보고된 유휴 중 반복 blink·focus 유실, 초기 로딩 blink·간헐적
-  waterfall, Pane resize의 오래 지속되는 blank/stun을 포함한다. 로컬 fixture에서는 주기적
-  유휴 blink가 수정 전에도 재현되지 않아 실기기 원인·개선 여부가 확인되지 않았다.
-- [-] Android Samsung Internet에서 키보드를 연 상태로 여러 Terminal Pane을 오갈 때 특정
-  Pane의 본문만 비어 보이고, 그 Pane에 한 번 입력하면 이후 focus 전환에서도 정상으로 유지되는
-  증상을 재현·해결한다. T52의 viewport 가림 개선을 적용한 9443 테스트 서버에서도 재현됐다.
-  캡처는 브라우저 주소 표시줄이 보이는 상태였으므로 브라우저 탭과 설치 PWA를 구분해 확인한다.
+- [x] T52에서 이관한 실기기 미완료 범위를 재현·해결한다. Windows Edge PWA와 Android
+      Samsung Internet PWA에서 보고된 유휴 중 반복 blink·focus 유실, 초기 로딩 blink·간헐적
+      waterfall, Pane resize의 오래 지속되는 blank/stun을 포함한다. 로컬 fixture에서는 주기적
+      유휴 blink가 수정 전에도 재현되지 않아 실기기 원인·개선 여부가 확인되지 않았다.
+- [x] Android Samsung Internet에서 키보드를 연 상태로 여러 Terminal Pane을 오갈 때 특정
+      Pane의 본문만 비어 보이고, 그 Pane에 한 번 입력하면 이후 focus 전환에서도 정상으로 유지되는
+      증상을 재현·해결한다. T52의 viewport 가림 개선을 적용한 9443 테스트 서버에서도 재현됐다.
+      캡처는 브라우저 주소 표시줄이 보이는 상태였으므로 브라우저 탭과 설치 PWA를 구분해 확인한다.
 - 추가 보고(2026-09-16): 노란 active Pane 테두리는 유지되지만 실제 terminal 입력 상태가 약
   10~40초 간격으로 반복 해제되어 다시 눌러야 입력할 수 있다. 같은 시점에 출력이 live tail로
   이동하고 짧은 waterfall이 보이는 경우가 있어, 단순 DOM focus가 아니라 heartbeat·lease·WebSocket
@@ -166,6 +166,9 @@ ownership과 integration gate를 지킨다.
   기존 interval을 유지하고 방향이 바뀌거나 edge를 벗어날 때만 교체한다. 반복 jitter 중 위·아래
   선택 gesture와 선택 핸들의 양방향 자동 scroll·범위 확장을 E2E에 추가했다. 관련 touch 단위
   16건과 Samsung UA 선택 E2E 3건, 전체 typecheck·변경 파일 lint·format·web build가 통과했다.
+- 실기기 완료(2026-09-23): 사용자가 production 설치 PWA를 실제 기기에 설치한 상태로 계속 사용
+  중이며 T56 수정 범위를 완료로 인수했다. 9월 17~18일 실기기 확인과 자동화 결과를 합쳐 반복 blink·
+  focus/키보드 유실, 첫 입력 전 본문 공백과 모바일 선택 후속 범위를 완료 처리한다.
 - 조사: 유휴·연속 입력·한글 조합·최초 로딩·Pane/split resize·keyboard 열기/닫기에서 focus/
   blur, renderer 생성·교체, attach/restore, reconnect·control generation, freeze/live 경계를
   계측해 반복 trigger를 구분한다. 첫 focus 전후에는 각 Pane 크기, xterm buffer와 렌더된 행,

@@ -4,8 +4,10 @@
 
 - Workstation v0: 완료·동결
 - PrivateIngress: PI-07 임시 private Origin 실기기 인수 완료
-- `PI-08` canonical production cutover와 실제 기기 인수 완료. Legacy service는 정지했고
-  repository·data·service definition은 rollback을 위해 보존한다. 다음 작업은 별도 승인 후 `PI-09`다.
+- `PI-08` canonical production cutover와 실제 기기 인수, `PI-09` soak·legacy 정리를 완료했다.
+  Package-owned Tailscale test route와 legacy live launchd 등록·definition, 미참조 release는 제거했고
+  unrelated route와 legacy repository·data·private definition archive·최종 rollback release는 보존한다.
+  다음 Private Ingress 작업은 `PI-10`이다.
 - Production과 remote repository는 각 task의 별도 승인 경계를 따른다.
 
 ## 상태 표기
@@ -272,10 +274,39 @@ shared delta가 필요하면 worker가 임의 수정하지 않고 integration ma
 
 ## PI-09. soak, Tailscale test route와 legacy 정리
 
-- [ ] **범위**: 3~7일 새 production을 사용한 뒤 package-owned Tailscale test route와 pre-existing
+- [x] **범위**: 3~7일 새 production을 사용한 뒤 package-owned Tailscale test route와 pre-existing
       deployment 처리안을 사용자에게 제시하고 승인된 항목만 정리한다.
 - **선행 조건**: PI-08, soak 기간의 사용자 승인
 - **산출물**: soak report, retained backup/archive, cleanup inventory, updated canonical deployment helper
+- **soak report(2026-09-23)**: 9월 13일 canonical cutover 뒤 10일, 9월 18일 현재 UI release 뒤
+  5일 동안 production을 사용했다. 사용자는 설치 PWA를 계속 실제 사용 중이며 T56까지 포함한 현재
+  동작을 인수했다. Inventory 당시 receipt sequence 19의 status는 healthy이고 Host·Gateway·Naru가 모두
+  running이며 doctor 29/29 checks가 통과했다. Cutover 뒤 maintenance 결과 8건은 모두 completed/
+  recovery not-needed이고 현재 certificate는 유효하며 약 54일이 남았다. Production backup SQLite
+  3개와 legacy live/backup SQLite 10개도 각각 read-only quick check를 통과했다. 이 기간의 restart와
+  실제 사용에서 지속되는 readiness·continuity 차단 결함은 확인되지 않았다.
+- **cleanup inventory(2026-09-24 정정)**: Tailscale backend는 `Stopped`이고 persisted private Serve
+  configuration에는 route 3개가 있다. Funnel은 0개이며 그중 1개만 8월 test route의 owner-only
+  `active` receipt와 정확히 일치하고, 나머지 2개는 unrelated resource다. 따라서 route가 없다는
+  9월 23일 집계에 근거한 receipt archive plan은 폐기했다. 검증된 network manager는 backend가
+  `Stopped`인 동안 exact route rollback도 안전상 `blocked`하므로 아직 network mutation을 수행하지
+  않았다. Legacy agent는 launchd에서 이미 내려가 있고 maintenance job만 실행 중이 아닌 등록
+  상태다. 두 LaunchAgent definition은 owner-only 동일 사본이 보존돼 있다. Legacy repository에는
+  미추적 파일 1개가 있어 repository와 data·backup·environment·TLS·현재 rollback release는 보존한다.
+  현재 rollback release 외에 참조되지 않는 legacy release directory 24개, 약 8.75 GiB는 별도 승인
+  시에만 삭제한다.
+- **정리 결과(2026-09-24)**: 사용자가 실행한 Tailscale backend에서 fresh plan digest를 승인받아
+  verified network manager로 package-owned private Serve route 1개만 rollback하고 receipt를
+  `rolled-back`으로 남겼다. Unrelated route 2개는 동일하게 보존됐고 Funnel은 0개이며 Tailscale
+  global/account state는 변경하지 않았다. Inactive legacy maintenance job을 unregister하고 identical
+  owner-only private archive가 있는 live LaunchAgent definition 2개를 제거했다. 마지막 rollback release
+  1개는 보존하고 미참조 legacy release directory 24개, 약 8.75 GiB를 삭제했다. Legacy repository와
+  미추적 파일 1개, data·backup·environment·TLS·private definition archive도 보존했다.
+- **최종 검증(2026-09-24)**: current receipt sequence 20의 status는 healthy이고 Host·Gateway·Naru는
+  running, maintenance는 completed/recovery not-needed이며 doctor 29/29 checks가 통과했다. Legacy
+  agent·maintenance는 모두 not-registered이고 live definition은 없다. Canonical `deploy-naru` helper는
+  package metadata 기반 discovery, 정리된 legacy 상태, stopped backend의 persisted Serve route 판별과
+  exact rollback 절차를 반영했으며 skill validator를 통과했다. Remote push는 요청·수행하지 않았다.
 - **완료 조건**:
   - 새 runtime의 continuity, renewal, restart와 actual usage에 차단 결함이 없다.
   - Tailscale global/account state가 아니라 package-owned test route만 rollback한다.
