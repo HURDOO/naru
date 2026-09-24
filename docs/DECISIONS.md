@@ -94,7 +94,7 @@
 
 ## D011. Naru app base path는 명시적인 v1 계약이다
 
-- 상태: 승인·T58 구현·로컬 검증 완료
+- 상태: 승인·T58 구현·로컬 검증·production 실사용 인수 완료
 - `@naru/contracts/naru-app/v1`과 `NARU_APP_BASE_PATH`가 Naru의 canonical app base path를 정의한다.
   기존 intent·receipt에 값이 없으면 `/`로 읽고, 새 CLI-created distribution intent는 `/naru`를
   명시한다. `/`가 아닌 Naru는 Gateway가 prefix를 제거하는 managed mode에서만 허용하며 app-managed
@@ -108,7 +108,8 @@
   cache만 회수하며 다른 app scope/cache를 건드리지 않는다.
 - Reconfigure와 rollback은 Gateway route, Naru env/config, web release metadata와 receipt의 exact app
   path를 함께 이동·복원한다. 기존 실제 browser profile의 worker migration과 설치 PWA·운영 instance
-  인수는 별도 승인 경계에 남긴다.
+  인수는 별도 승인 경계로 수행했으며, T58을 포함한 production 배포 뒤 Gateway와 설치 PWA의 지속적
+  실사용 확인으로 2026-09-24에 완료 수용했다.
 
 ## D012. Codex의 간접 endpoint는 고정된 보호 소켓만 가리킨다
 

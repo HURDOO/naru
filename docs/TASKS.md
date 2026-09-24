@@ -232,6 +232,10 @@ ownership과 integration gate를 지킨다.
   통합 뒤 관련 회귀 132건과 typecheck·build를 다시 통과했다. 기존 실제
   browser profile의 worker migration, 설치 PWA·실기기와 production instance 인수는 별도 승인 경계에
   남기며 source/fixture 구현 완료를 막지 않는다.
+- 운영 인수(2026-09-24): T58 구현을 포함한 source가 production에 배포됐고, 사용자가 기존 실제
+  browser profile의 Gateway와 설치 PWA에서 path-scoped Naru를 계속 사용하며 정상 동작을 확인했다.
+  별도 승인 경계였던 service-worker migration·설치 PWA·production instance 인수를 완료로 수용하며
+  추가 T58 후속 Task를 남기지 않는다.
 
 ### T59. Codex 0.156.1의 간접 Unix 소켓 지원과 시작 실패 진단
 
@@ -358,6 +362,52 @@ ownership과 integration gate를 지킨다.
   브라우저 권한의 동일 로컬 검사에서 해소됐다. T59/T60과 함께 main 통합 대상으로 정리했고
   기존 사용자 변경은 제외했다. 운영 배포·재시작·원격 push는 실행하지 않았다.
 
+### T62. 태블릿 다중 Pane keyboard resize stun·waterfall 해소
+
+- [>] 태블릿에서 소프트 키보드가 열리거나 닫힐 때 여러 visible Pane이 동시에 resize되며 입력과
+  화면 갱신이 잠시 멈추고 단계적인 waterfall처럼 보이는 성능 문제를 재현·계측하고 해소한다.
+  T52·T56에서 완료한 blank·focus·renderer lifecycle 안정화는 유지하며 완료 Task를 다시 열지 않는다.
+- 사용자 보고(2026-09-24): 태블릿의 다중 Pane 레이아웃에서 키보드가 열리면 각 Pane의 크기 변경이
+  한꺼번에 일어나고, 단일 Pane 모바일 화면보다 긴 stun과 resize waterfall이 체감된다.
+- 추가 보고(2026-09-24): 모바일 overlay 프로젝트 목록을 열어 다른 프로젝트를 선택하면 새 workspace가
+  열린 목록 뒤에서 먼저 load·resize되고, 이후 목록이 닫히며 다시 layout·resize되어 한 번의 전환이
+  두 번의 로딩처럼 보인다. 프로젝트 선택, target workspace commit, overlay 닫기와 focus 복구를 하나의
+  일관된 UI transition으로 묶어 최종 geometry가 아닌 중간 상태에서 Pane fit·Host resize를 시작하지
+  않게 한다. Desktop rail/pinned sidebar의 의도적인 폭 변경은 별도 동작으로 보존한다.
+- 조사·구현 범위:
+  - 실제 키보드 전환에서 `visualViewport`·window resize, workspace layout, Pane별 `ResizeObserver`,
+    fit 측정·적용, xterm reflow·render와 authoritative PTY resize의 순서·중복·소요 시간을 계측한다.
+    terminal 원문, project path와 실제 instance 식별자는 수집하거나 로그에 남기지 않는다.
+  - 여러 Pane의 같은-frame DOM read/write와 fit/reflow가 직렬 waterfall을 만드는지 확인하고, 원인에
+    맞춰 animation-frame 단위 batch/coalescing, 동일 geometry 중복 제거와 hidden/collapsed Pane 작업
+    억제를 적용한다. 중간 크기를 무조건 모두 Host에 보내지 않되 마지막 확정 크기와 controller
+    generation fencing은 보존한다.
+  - 모바일 프로젝트 선택 경로의 `flushWorkspace`·workspace load/commit·overlay close·focus 순서를
+    계측하고, 성공 시 target Pane을 최종 viewport에 한 번만 배치한다. load·flush 실패에서는 현재
+    workspace와 프로젝트 목록의 재시도 가능 상태를 보존하고 잘못된 프로젝트로 focus하거나 resize를
+    보내지 않는다.
+  - active Pane의 입력·focus·IME, terminal tail과 local scroll offset, 선택 범위, reconnect와 단일
+    controller handoff를 보존한다. 성능 개선을 위해 Pane·renderer·PTY를 재생성하지 않는다.
+- 완료 조건:
+  - Samsung Internet 설치 PWA의 태블릿에서 shell·Codex를 섞은 다중 visible Pane으로 키보드
+    열기·닫기를 반복해 수정 전후 event 수, frame gap/long task와 interactive recovery 시간을 비교한다.
+    마지막 viewport 변화 뒤 불필요한 후속 resize waterfall이 없고 사용자가 체감 stun 해소를 인수한다.
+  - 동일 geometry의 중복 fit·terminal·Host resize는 0건이고, 한 animation frame에서 같은 Pane의
+    resize 적용은 최대 1회다. 최종 terminal geometry와 Host authoritative geometry가 일치한다.
+  - 모바일 overlay에서 프로젝트를 선택하면 목록 닫기와 target workspace 표시가 중간 Pane geometry
+    노출 없이 한 전환으로 끝나고, target Pane별 최초 authoritative resize는 최종 geometry만 보낸다.
+    project flush/load 실패, 현재 프로젝트 재선택과 desktop rail navigation 회귀도 검증한다.
+  - 1440px·768px·360px와 동적 viewport 자동화에서 blank frame, focus·키보드 유실, live-tail 이동과
+    T29/T44/T52/T56 회귀가 없으며 관련 unit·browser E2E·typecheck·lint·format·web build가 통과한다.
+- ownership·병렬 경계: Mobile UI performance lane이 `TerminalPane`의 resize path,
+  `terminal-resize`, `App`의 모바일 project selection, `project-navigation`과 viewport/layout scheduler
+  및 전용 test를 소유한다. 같은 `TerminalPane`, `App`, `use-workspace-view`, `WorkspaceLayout` 또는
+  관련 shared style을 바꾸는 T46/T48 및 다른 UI 작업과는 직렬로 수행한다. T54 Activity와
+  distribution 작업은 이 파일 경계를 침범하지 않을 때만 병렬로 진행한다. Host·Gateway·distribution·
+  public protocol 변경은 범위 밖이며 필요하면 별도 Task와 integration gate를 만든다.
+- 선행 조건: T52, T56. 사용자가 다음 작업으로 지정했으므로 T46/T48보다 먼저 수행한다.
+- lane: Mobile UI performance
+
 ### 기타 backlog
 
 - [x] T29 모바일 prompt·image input 완성
@@ -454,15 +504,16 @@ ownership과 integration gate를 지킨다.
     clipboard에는 placeholder 대신 원래의 빈 값을 제공하고 빈 선택 알림을 표시한다. 관련 unit
     13건과 공백 긴 누르기를 포함한 shell·Codex 네이티브 copy 및 Samsung UA 입력 E2E 3건,
     lint·typecheck·web build가 통과했다.
-  - 후속 제한(2026-09-16): 선택되지 않은 pane 영역을 누르면 앱 선택은 해제되고 키보드 입력으로
-    돌아가지만, Samsung Internet의 네이티브 선택 도구 모음은 다른 pane에 focus를 옮길 때까지
-    남을 수 있다. textarea blur·DOM 선택 축소·일시적 disabled로는 실기기 ActionMode가 닫히지
-    않았고, 효과 없는 우회는 xterm 입력·IME 회귀와 복잡도만 늘려 제거했다. 사용자가 현재 제한을
-    수용해 후속 작업으로 남겼다.
+  - 네이티브 제한과 수용(2026-09-16, 2026-09-24 정리): Samsung Internet의 ActionMode는 앱 선택을
+    해제해도 다른 pane에 focus를 옮길 때까지 남을 수 있고, textarea blur·DOM 선택 축소·일시적
+    disabled로도 실기기 도구 모음을 안정적으로 닫을 수 없었다. 이후 네이티브 도구 모음에 의존하지
+    않고 앱 소유의 복사·붙여넣기·전체·취소 도구 모음을 사용하도록 바꿨으며, 사용자가 이 동작을
+    수용했다. 브라우저 ActionMode의 제어 한계는 알려진 플랫폼 제한으로 기록하되 T44의 미해결
+    기능 문제나 별도 후속 Task로 취급하지 않는다.
   - 실기기 인수·통합(2026-09-16): 9443 격리 테스트 서버의 Samsung Internet 실기기/PWA에서
     문자·공백 긴 누르기, 네이티브 메뉴, 일반 텍스트 복사, 선택 해제와 키보드 복귀를 사용자가
-    확인했다. 선택 해제 뒤 네이티브 도구 모음이 다른 pane focus 전까지 남을 수 있는 제한은
-    후속 작업으로 수용했다. 효과 없는 해제 우회를 제거한 `e642078`까지 main에 fast-forward
-    통합했고 테스트 서버를 종료했다.
+    확인했다. 효과 없는 네이티브 해제 우회를 제거한 `e642078`까지 main에 fast-forward 통합했고
+    테스트 서버를 종료했다. 이후 앱 소유 도구 모음, 붙여넣기와 선택 중 edge 자동 스크롤까지
+    실기기에서 확인해 위 플랫폼 제한을 수용하고 T44를 완료 상태로 유지한다.
 - [ ] T46/T48 모바일 helper focus·draft lifecycle
 - [ ] T47/T37/T38/T39는 Private Ingress cutover 뒤 재검토
