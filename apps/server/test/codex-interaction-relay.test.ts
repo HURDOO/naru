@@ -4,7 +4,7 @@ import { chmod } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   appServerArguments,
   remoteTuiArguments,
@@ -16,6 +16,46 @@ const SESSION = "11111111-1111-4111-8111-111111111111";
 const CWD = process.cwd();
 
 describe("Host-owned Codex interaction relay", () => {
+  it.each(["invalid-endpoint", "early-exit"])(
+    "reports a bounded %s error without child content",
+    async (kind) => {
+      const directory = mkdtempSync(join(tmpdir(), "naru-codex-failure-test-"));
+      const executable = join(directory, "fake-codex.cjs");
+      const guardianEntry = join(directory, "guardian.mjs");
+      writeFileSync(
+        guardianEntry,
+        `import { runCodexInteractionGuardianMode } from ${JSON.stringify(new URL("../src/codex-interaction-guardian.ts", import.meta.url).href)}; await runCodexInteractionGuardianMode();`,
+      );
+      writeFileSync(
+        executable,
+        `#!/usr/bin/env node\nconsole.error("private fixture child content");\n${kind === "early-exit" ? "process.exit(2);" : 'require("node:fs").writeFileSync(process.argv[process.argv.indexOf("--listen") + 1].slice(7), "not a socket"); setInterval(() => {}, 1000);'}`,
+        { mode: 0o700 },
+      );
+      const diagnostic = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        const result = await runCodexInteractionRelay({
+          executable,
+          args: [],
+          environment: process.env,
+          bootstrap: "x".repeat(64),
+          integrationSocketPath: join(directory, "unused.sock"),
+          cwd: directory,
+          guardianEntry,
+          guardianExecArgv: ["--import", "tsx"],
+        });
+        expect(result).toBe(1);
+        const output = diagnostic.mock.calls.map(([value]) => String(value)).join("");
+        expect(output).toBe(
+          kind === "early-exit"
+            ? "NARU_CODEX_APP_SERVER_EXITED\n"
+            : "NARU_CODEX_ENDPOINT_REJECTED\n",
+        );
+      } finally {
+        diagnostic.mockRestore();
+      }
+    },
+    15_000,
+  );
   it("preserves launch profile settings on the app-server side", () => {
     expect(
       appServerArguments(
@@ -72,99 +112,106 @@ describe("Host-owned Codex interaction relay", () => {
     ]);
   });
 
-  it("forwards early TUI frames and emits a resolved snapshot before item completion", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "naru-codex-relay-test-"));
-    const executable = join(directory, "fake-codex.cjs");
-    const guardianEntry = join(directory, "guardian.mjs");
-    const ipcPath = join(directory, "integration.sock");
-    writeFileSync(executable, fakeCodexScript(), { mode: 0o700 });
-    writeFileSync(
-      guardianEntry,
-      `import { runCodexInteractionGuardianMode } from ${JSON.stringify(new URL("../src/codex-interaction-guardian.ts", import.meta.url).href)};\nawait runCodexInteractionGuardianMode();\n`,
-    );
-    chmodSync(executable, 0o700);
-    const snapshots: CodexInteractionSnapshot[] = [];
-    const integration = createServer((socket) => {
-      let data = "";
-      socket.on("data", (chunk) => {
-        data += chunk.toString("utf8");
-        const newline = data.indexOf("\n");
-        if (newline === -1) return;
-        const request = JSON.parse(data.slice(0, newline)) as {
-          type: string;
-          snapshot: CodexInteractionSnapshot;
-        };
-        if (request.type === "interaction") snapshots.push(request.snapshot);
-        socket.end(JSON.stringify({ version: 1, ok: true, type: "interaction" }) + "\n");
-      });
-    });
-    await new Promise<void>((resolve, reject) => {
-      integration.once("error", reject);
-      integration.listen(ipcPath, resolve);
-    });
-    await chmod(ipcPath, 0o600);
-    try {
-      const result = await runCodexInteractionRelay({
-        executable,
-        args: [
-          "--model",
-          "gpt-5.6-sol",
-          "--sandbox",
-          "workspace-write",
-          "--ask-for-approval",
-          "on-request",
-        ],
-        environment: {
-          ...process.env,
-          NARU_FIXTURE_WS_MODULE: resolve("apps/server/node_modules/ws"),
-          NARU_FIXTURE_SESSION: SESSION,
-          NARU_FIXTURE_CWD: CWD,
-          NARU_FIXTURE_PICKER: "1",
-        },
-        bootstrap: "x".repeat(64),
-        integrationSocketPath: ipcPath,
-        cwd: process.cwd(),
+  it.each(["direct", "protected"])(
+    "forwards early TUI frames through %s sockets and resolves activity",
+    async (endpointKind) => {
+      const directory = mkdtempSync(join(tmpdir(), "naru-codex-relay-test-"));
+      const executable = join(directory, "fake-codex.cjs");
+      const guardianEntry = join(directory, "guardian.mjs");
+      const ipcPath = join(directory, "integration.sock");
+      writeFileSync(executable, fakeCodexScript(), { mode: 0o700 });
+      writeFileSync(
         guardianEntry,
-        guardianExecArgv: ["--import", "tsx"],
+        `import { runCodexInteractionGuardianMode } from ${JSON.stringify(new URL("../src/codex-interaction-guardian.ts", import.meta.url).href)};\nawait runCodexInteractionGuardianMode();\n`,
+      );
+      chmodSync(executable, 0o700);
+      const snapshots: CodexInteractionSnapshot[] = [];
+      const integration = createServer((socket) => {
+        let data = "";
+        socket.on("data", (chunk) => {
+          data += chunk.toString("utf8");
+          const newline = data.indexOf("\n");
+          if (newline === -1) return;
+          const request = JSON.parse(data.slice(0, newline)) as {
+            type: string;
+            snapshot: CodexInteractionSnapshot;
+          };
+          if (request.type === "interaction") snapshots.push(request.snapshot);
+          socket.end(JSON.stringify({ version: 1, ok: true, type: "interaction" }) + "\n");
+        });
       });
-      expect(result).toBe(0);
-      const relevant = snapshots.filter((snapshot) => snapshot.sessionId === SESSION);
-      const pendingIndex = relevant.findIndex(
-        (snapshot) => snapshot.phase === "running" && snapshot.pending.length === 1,
-      );
-      const resolvedIndex = relevant.findIndex(
-        (snapshot, index) =>
-          index > pendingIndex && snapshot.phase === "running" && snapshot.pending.length === 0,
-      );
-      expect(pendingIndex).toBeGreaterThanOrEqual(0);
-      expect(resolvedIndex).toBeGreaterThan(pendingIndex);
-      expect(
-        relevant
-          .slice(pendingIndex, resolvedIndex)
-          .every((snapshot) => snapshot.pending.length === 1),
-      ).toBe(true);
-      expect(
-        relevant.every((snapshot) =>
-          snapshot.pending.every((pending) => pending.kind === "command"),
-        ),
-      ).toBe(true);
-      expect(JSON.stringify(snapshots)).not.toContain("private command content");
-    } finally {
-      await new Promise<void>((resolve) => integration.close(() => resolve()));
-    }
-  }, 20_000);
+      await new Promise<void>((resolve, reject) => {
+        integration.once("error", reject);
+        integration.listen(ipcPath, resolve);
+      });
+      await chmod(ipcPath, 0o600);
+      try {
+        const result = await runCodexInteractionRelay({
+          executable,
+          args: [
+            "--model",
+            "gpt-5.6-sol",
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+          ],
+          environment: {
+            ...process.env,
+            NARU_FIXTURE_WS_MODULE: resolve("apps/server/node_modules/ws"),
+            NARU_FIXTURE_SESSION: SESSION,
+            NARU_FIXTURE_CWD: CWD,
+            NARU_FIXTURE_PICKER: "1",
+            NARU_FIXTURE_ENDPOINT_KIND: endpointKind,
+          },
+          bootstrap: "x".repeat(64),
+          integrationSocketPath: ipcPath,
+          cwd: process.cwd(),
+          guardianEntry,
+          guardianExecArgv: ["--import", "tsx"],
+        });
+        expect(result).toBe(0);
+        const relevant = snapshots.filter((snapshot) => snapshot.sessionId === SESSION);
+        const pendingIndex = relevant.findIndex(
+          (snapshot) => snapshot.phase === "running" && snapshot.pending.length === 1,
+        );
+        const resolvedIndex = relevant.findIndex(
+          (snapshot, index) =>
+            index > pendingIndex && snapshot.phase === "running" && snapshot.pending.length === 0,
+        );
+        expect(pendingIndex).toBeGreaterThanOrEqual(0);
+        expect(resolvedIndex).toBeGreaterThan(pendingIndex);
+        expect(
+          relevant
+            .slice(pendingIndex, resolvedIndex)
+            .every((snapshot) => snapshot.pending.length === 1),
+        ).toBe(true);
+        expect(
+          relevant.every((snapshot) =>
+            snapshot.pending.every((pending) => pending.kind === "command"),
+          ),
+        ).toBe(true);
+        expect(JSON.stringify(snapshots)).not.toContain("private command content");
+      } finally {
+        await new Promise<void>((resolve) => integration.close(() => resolve()));
+      }
+    },
+    20_000,
+  );
 
-  it("reaps both Codex children when the Host hard-kills its wrapper PID", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "naru-codex-hard-stop-test-"));
-    const executable = join(directory, "fake-codex.cjs");
-    const script = join(directory, "wrapper.mjs");
-    const pidFile = join(directory, "children.txt");
-    const ipcPath = join(directory, "integration.sock");
-    writeFileSync(executable, fakeCodexScript(), { mode: 0o700 });
-    chmodSync(executable, 0o700);
-    writeFileSync(
-      script,
-      `import { runCodexInteractionGuardianMode } from ${JSON.stringify(new URL("../src/codex-interaction-guardian.ts", import.meta.url).href)};
+  it.each(["direct", "protected"])(
+    "reaps both Codex children on wrapper hard death with %s sockets",
+    async (endpointKind) => {
+      const directory = mkdtempSync(join(tmpdir(), "naru-codex-hard-stop-test-"));
+      const executable = join(directory, "fake-codex.cjs");
+      const script = join(directory, "wrapper.mjs");
+      const pidFile = join(directory, "children.txt");
+      const ipcPath = join(directory, "integration.sock");
+      writeFileSync(executable, fakeCodexScript(), { mode: 0o700 });
+      chmodSync(executable, 0o700);
+      writeFileSync(
+        script,
+        `import { runCodexInteractionGuardianMode } from ${JSON.stringify(new URL("../src/codex-interaction-guardian.ts", import.meta.url).href)};
 import { runCodexInteractionRelay } from ${JSON.stringify(new URL("../src/codex-interaction-relay.ts", import.meta.url).href)};
 if (process.argv[2] === '--guardian') await runCodexInteractionGuardianMode();
 else await runCodexInteractionRelay({
@@ -174,49 +221,52 @@ else await runCodexInteractionRelay({
   integrationSocketPath: process.env.NARU_FIXTURE_IPC,
   cwd: process.cwd(),
 });\n`,
-    );
-    const integration = createServer((socket) => {
-      socket.once("data", () =>
-        socket.end(JSON.stringify({ version: 1, ok: true, type: "interaction" }) + "\n"),
       );
-    });
-    await new Promise<void>((resolve, reject) => {
-      integration.once("error", reject);
-      integration.listen(ipcPath, resolve);
-    });
-    await chmod(ipcPath, 0o600);
-    const wrapper = spawn(process.execPath, ["--import", "tsx", script], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        NARU_FIXTURE_CODEX: executable,
-        NARU_FIXTURE_IPC: ipcPath,
-        NARU_FIXTURE_WS_MODULE: resolve("apps/server/node_modules/ws"),
-        NARU_FIXTURE_SESSION: SESSION,
-        NARU_FIXTURE_CWD: CWD,
-        NARU_FIXTURE_PID_FILE: pidFile,
-        NARU_FIXTURE_HOLD: "1",
-      },
-      stdio: "ignore",
-    });
-    try {
-      await waitUntil(() => {
-        try {
-          return readFileSync(pidFile, "utf8").trim().split("\n").length >= 2;
-        } catch {
-          return false;
-        }
-      }, 10_000);
-      const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
-      expect(pids).toHaveLength(2);
-      wrapper.kill("SIGKILL");
-      await waitUntil(() => pids.every((pid) => !isProcessAlive(pid)), 5_000);
-      expect(pids.every((pid) => !isProcessAlive(pid))).toBe(true);
-    } finally {
-      wrapper.kill("SIGKILL");
-      await new Promise<void>((resolve) => integration.close(() => resolve()));
-    }
-  }, 20_000);
+      const integration = createServer((socket) => {
+        socket.once("data", () =>
+          socket.end(JSON.stringify({ version: 1, ok: true, type: "interaction" }) + "\n"),
+        );
+      });
+      await new Promise<void>((resolve, reject) => {
+        integration.once("error", reject);
+        integration.listen(ipcPath, resolve);
+      });
+      await chmod(ipcPath, 0o600);
+      const wrapper = spawn(process.execPath, ["--import", "tsx", script], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          NARU_FIXTURE_CODEX: executable,
+          NARU_FIXTURE_IPC: ipcPath,
+          NARU_FIXTURE_WS_MODULE: resolve("apps/server/node_modules/ws"),
+          NARU_FIXTURE_SESSION: SESSION,
+          NARU_FIXTURE_CWD: CWD,
+          NARU_FIXTURE_PID_FILE: pidFile,
+          NARU_FIXTURE_HOLD: "1",
+          NARU_FIXTURE_ENDPOINT_KIND: endpointKind,
+        },
+        stdio: "ignore",
+      });
+      try {
+        await waitUntil(() => {
+          try {
+            return readFileSync(pidFile, "utf8").trim().split("\n").length >= 2;
+          } catch {
+            return false;
+          }
+        }, 10_000);
+        const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
+        expect(pids).toHaveLength(2);
+        wrapper.kill("SIGKILL");
+        await waitUntil(() => pids.every((pid) => !isProcessAlive(pid)), 5_000);
+        expect(pids.every((pid) => !isProcessAlive(pid))).toBe(true);
+      } finally {
+        wrapper.kill("SIGKILL");
+        await new Promise<void>((resolve) => integration.close(() => resolve()));
+      }
+    },
+    20_000,
+  );
 });
 
 async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {
@@ -286,7 +336,18 @@ if (isServer) {
       } })), 1200);
     }
   }));
-  server.listen(path, () => require('node:fs').chmodSync(path, 0o600));
+  const fs = require('node:fs');
+  const physical = process.env.NARU_FIXTURE_ENDPOINT_KIND === 'protected'
+    ? require('node:path').join(fs.realpathSync('/tmp'), 'codex-daemon-' + process.getuid(), require('node:crypto').createHash('sha256').update(path).digest('hex'))
+    : path;
+  if (physical !== path) fs.mkdirSync(require('node:path').dirname(physical), {recursive: true, mode: 0o700});
+  server.listen(physical, () => {
+    if (physical === path) {
+      fs.chmodSync(physical, 0o700);
+      setTimeout(() => fs.chmodSync(physical, 0o600), 20);
+    } else fs.chmodSync(physical, 0o600);
+    if (physical !== path) fs.symlinkSync(physical, path);
+  });
 } else {
   const ws = new WS('ws://localhost/', { createConnection: () => net.createConnection(path) });
   ws.on('open', () => ws.send(JSON.stringify({ id: 1, method: 'thread/start', params: {} })));

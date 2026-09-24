@@ -69,6 +69,7 @@ import {
 } from "./security.js";
 import {
   handoffMaintenanceRequest,
+  RuntimeStopUnconfirmedError,
   startRuntimeTopology,
   stopRuntimeTopology,
   type GatewayVerifierKeySetV1,
@@ -709,7 +710,7 @@ export async function executeMaintenanceRequest(
     const activeLayout = plan.layout;
     if (plan.currentReceipt !== undefined) {
       runtimeRestartStarted = true;
-      stopRuntimeTopology(runtime, activeLayout, [...services].reverse());
+      await stopRuntimeTopology(runtime, activeLayout, [...services].reverse());
     }
     await startRuntimeTopology(
       runtime,
@@ -744,9 +745,23 @@ export async function executeMaintenanceRequest(
     return currentResult;
   } catch (error) {
     let recovery: MaintenanceResultV1["recovery"] = "manual-required";
-    if (plan !== undefined && plan.currentReceipt === undefined && runtimeConfigurationWritten) {
+    if (error instanceof RuntimeStopUnconfirmedError) {
+      // A missing label is not evidence that the previously observed process exited.
+      // Restore configuration only; never re-enter runtime recovery after an uncertain stop.
+      if (plan !== undefined && snapshots.length > 0) {
+        try {
+          restoreMutableFiles(plan.layout, snapshots);
+        } catch {
+          // Leave the failed result and retained receipt for independent operator recovery.
+        }
+      }
+    } else if (
+      plan !== undefined &&
+      plan.currentReceipt === undefined &&
+      runtimeConfigurationWritten
+    ) {
       try {
-        stopRuntimeTopology(runtime, plan.layout);
+        await stopRuntimeTopology(runtime, plan.layout);
         removeFreshRuntimePlists(plan.layout);
         recovery = "cleaned-fresh-install";
       } catch {

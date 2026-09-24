@@ -169,6 +169,13 @@ Gateway가 바뀌면 Gateway·Naru, Host가 바뀌면 세 runtime을 재시작�
 읽는다. 이후 plan·doctor·status는 모든 pin을 검증하며, rollback은 대상 receipt의 pin을 복원한다.
 최초 설치 readiness 실패는 새 runtime과 RunAtLoad plist를 제거하고, 기존 installation의 실패는
 mutable 설정을 복원한 뒤 실제 중지한 서비스만 이전 receipt topology로 다시 시작한다.
+Runtime 교체와 이 복구 경로는 `bootout` 전에 관찰한 exact label의 PID 종료와 label 해제를 bounded
+wait로 모두 확인한 뒤에만 같은 label을 bootstrap한다. 종료를 확인할 수 없으면 다음 bootstrap을
+실행하지 않는다. Host·Gateway·Naru plist는 `RunAtLoad=true`이므로 runtime bootstrap 뒤 별도
+`kickstart -k`를 하지 않으며 readiness가 시작 완료를 판정한다. `RunAtLoad=false`인 independent
+one-shot maintenance handoff의 kickstart만 유지한다.
+종료 확인 실패는 transaction 자동 복구로도 우회하지 않는다. 기존 설정 snapshot을 복원하되
+runtime bootstrap 없이 `manual-required`로 남기고 독립 operator 복구를 요구한다.
 
 실제 second-user/PWA/Push/private-ingress 인수는 production과 분리된 instance에서 수행한다. 최소한
 artifact/receipt digest, exact component readiness, browser-to-PTY chain, restart/rollback, PWA update와

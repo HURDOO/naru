@@ -33,6 +33,15 @@ immutable release의 실행 설정과 launchd definition을 유지한다. Additi
 기존 installation은 세 서비스가 receipt의 단일 artifact를 사용한 것으로 해석한다. Doctor는
 혼합 pin의 각 artifact와 실제 설정 파일을 검증하며, 실패 복구는 영향을 받은 서비스만 되돌린다.
 
+Runtime 교체와 실패 복구는 같은 launchd label을 즉시 재사용하지 않는다. 중지 전에 관찰한 exact
+label의 PID가 종료되고 label이 해제된 두 조건을 bounded wait로 확인한 뒤 새 plist를 bootstrap한다.
+확인할 수 없거나 timeout이면 다음 bootstrap을 거부한다. Host·Gateway·Naru는 `RunAtLoad=true`이므로
+bootstrap 뒤 별도 `kickstart -k` 없이 readiness를 기다리며, independent one-shot maintenance만
+명시적으로 kickstart한다.
+
+종료 미확인 오류는 transaction 복구까지 보존한다. Label이 이미 사라져도 종료 확인으로 해석하지
+않으며 기존 설정 snapshot만 복원하고 자동 runtime 재시작 없이 `manual-required`로 남긴다.
+
 ## Web release
 
 Canonical browser Origin은 instance intent에서 결정론적으로 렌더한다. Manifest, service worker, Passkey

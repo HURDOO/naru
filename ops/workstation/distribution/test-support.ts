@@ -318,12 +318,17 @@ export class FakeWorkstationRuntime implements WorkstationRuntimeController {
       ?.replace(/\.plist$/, "");
     if (label === undefined) throw new Error("Fixture plist label is missing.");
     this.operations.push(`bootstrap:${label}`);
-    this.#states.set(label, "loaded");
+    this.#states.set(label, label.endsWith(".maintenance") ? "loaded" : "running");
   }
 
   bootout(_uid: number, label: string): void {
     this.operations.push(`bootout:${label}`);
     this.#states.set(label, "unloaded");
+  }
+
+  async stopAndWait(uid: number, label: string): Promise<void> {
+    this.bootout(uid, label);
+    await Promise.resolve();
   }
 
   kickstart(_uid: number, label: string): void {

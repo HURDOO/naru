@@ -1,9 +1,14 @@
 import { chmod, lstat, mkdtemp, realpath } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import { createConnection } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import WebSocket, { WebSocketServer } from "ws";
+import {
+  CodexEndpointError,
+  connectCodexAppServer,
+  inspectCodexAppServerEndpoint,
+  type CodexAppServerEndpoint,
+} from "./codex-app-server-endpoint.js";
 import { CodexInteractionGuardian } from "./codex-interaction-guardian.js";
 import { CodexInteractionState } from "./codex-interaction-state.js";
 import { requestCodexIntegration } from "./integrations/codex/client.js";
@@ -53,12 +58,22 @@ export async function runCodexInteractionRelay(
   let retryTimer: NodeJS.Timeout | null = null;
   let transportCloseTimer: NodeJS.Timeout | null = null;
   let fatal: (() => void) | null = null;
+  let endpoint: CodexAppServerEndpoint | null = null;
+  let failureCode = "NARU_CODEX_RELAY_FAILED";
+  let reportedFailure = false;
+  const reportFailure = (): void => {
+    if (reportedFailure) return;
+    reportedFailure = true;
+    // Fixed codes only. Child stderr and private endpoint paths never enter diagnostics.
+    process.stderr.write(`${failureCode}\n`);
+  };
 
   const stopChildren = (): void => {
     if (guardian !== null) void guardian.stop();
   };
   const fail = (): void => {
     if (stopped) return;
+    reportFailure();
     stopped = true;
     stopChildren();
     fatal?.();
@@ -148,7 +163,13 @@ export async function runCodexInteractionRelay(
     source.on("close", closePair);
   };
 
-  const onSigterm = (): void => fail();
+  const onSigterm = (): void => {
+    // Host-requested shutdown is not a launch/transport failure.
+    if (stopped) return;
+    stopped = true;
+    stopChildren();
+    fatal?.();
+  };
   const onSigint = (): void => {
     // The TUI receives terminal interrupt input. A shell signal must not
     // terminate the wrapper while the interactive child is still running.
@@ -198,11 +219,26 @@ export async function runCodexInteractionRelay(
           }
           sockets.add(client);
           const server = new WebSocket("ws://localhost/", {
-            createConnection: () => createConnection(appSocket),
+            createConnection: () => {
+              if (endpoint === null) throw new CodexEndpointError();
+              try {
+                return connectCodexAppServer(endpoint);
+              } catch {
+                failureCode = "NARU_CODEX_ENDPOINT_REJECTED";
+                throw new CodexEndpointError();
+              }
+            },
+            handshakeTimeout: SERVER_READY_MS,
             perMessageDeflate: false,
             maxPayload: MAX_MESSAGE_BYTES,
           });
           sockets.add(server);
+          server.on("error", (error) => {
+            failureCode =
+              error instanceof CodexEndpointError
+                ? "NARU_CODEX_ENDPOINT_REJECTED"
+                : "NARU_CODEX_APP_SERVER_CONNECTION_FAILED";
+          });
           let closed = false;
           const closePair = (): void => {
             if (closed) return;
@@ -223,6 +259,7 @@ export async function runCodexInteractionRelay(
         });
       } catch {
         socket.destroy();
+        fail();
       }
     });
     await new Promise<void>((resolve, reject) => {
@@ -234,13 +271,20 @@ export async function runCodexInteractionRelay(
 
     const childEnvironment = { ...options.environment, [NARU_CODEX_INTERACTION_RELAY_ENV]: "1" };
     guardian = new CodexInteractionGuardian(fail, options.guardianEntry, options.guardianExecArgv);
-    guardian.onExit("app-server", () => fail());
+    guardian.onExit("app-server", () => {
+      failureCode = "NARU_CODEX_APP_SERVER_EXITED";
+      fail();
+    });
     let finishTui: ((code: number) => void) | null = null;
     const tuiExit = new Promise<number>((resolve) => {
       finishTui = resolve;
     });
     fatal = () => finishTui?.(1);
     guardian.onExit("tui", (code, signal) => {
+      if (!stopped && (code !== 0 || signal !== null)) {
+        failureCode = "NARU_CODEX_TUI_EXITED";
+        reportFailure();
+      }
       stopped = true;
       finishTui?.(signal === null ? (code ?? 1) : 1);
     });
@@ -251,7 +295,7 @@ export async function runCodexInteractionRelay(
       options.cwd,
       childEnvironment,
     );
-    await waitForSocket(appSocket, () => stopped);
+    endpoint = await waitForSocket(appSocket, () => stopped);
     if (stopped) throw new Error("Codex app server stopped.");
     state.start();
     retryTimer = setInterval(() => {
@@ -266,7 +310,10 @@ export async function runCodexInteractionRelay(
       childEnvironment,
     );
     return await tuiExit;
-  } catch {
+  } catch (error) {
+    if (error instanceof CodexEndpointError) failureCode = error.message;
+    else if (error instanceof Error && error.message === "NARU_CODEX_APP_SERVER_TIMEOUT")
+      failureCode = error.message;
     fail();
     return 1;
   } finally {
@@ -317,17 +364,29 @@ export function remoteTuiArguments(args: readonly string[]): string[] {
   return remote;
 }
 
-async function waitForSocket(path: string, stopped: () => boolean): Promise<void> {
+async function waitForSocket(
+  path: string,
+  stopped: () => boolean,
+): Promise<CodexAppServerEndpoint> {
   const deadline = Date.now() + SERVER_READY_MS;
+  let publicationObserved = false;
   while (!stopped() && Date.now() < deadline) {
     try {
-      await assertPrivateSocket(path);
-      return;
-    } catch {
+      if (!publicationObserved) {
+        // Older CLIs bind first, then publish final permissions asynchronously.
+        // Do not declare readiness in that publication window; never connect until validated.
+        await lstat(path);
+        publicationObserved = true;
+        await delay(50);
+        continue;
+      }
+      return inspectCodexAppServerEndpoint(path);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       await delay(50);
     }
   }
-  throw new Error("Codex app-server socket unavailable.");
+  throw new Error("NARU_CODEX_APP_SERVER_TIMEOUT");
 }
 
 async function assertPrivateDirectory(path: string): Promise<void> {

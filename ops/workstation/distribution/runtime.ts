@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import type { ServiceName } from "./constants.js";
 import type { WorkstationInstanceLayout } from "./model.js";
 
@@ -7,8 +8,30 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_MAX_BUFFER = 512 * 1024;
 const READINESS_TIMEOUT_MS = 30_000;
 const READINESS_INTERVAL_MS = 250;
+const SERVICE_STOP_TIMEOUT_MS = 30_000;
+const SERVICE_STOP_INTERVAL_MS = 100;
 
 export type ServiceRuntimeState = "unloaded" | "loaded" | "running" | "unknown";
+
+// Preserve uncertainty across transaction recovery even after launchd forgets the label.
+export class RuntimeStopUnconfirmedError extends Error {
+  constructor(cause: unknown) {
+    super("Runtime stop could not be confirmed; manual recovery required.", { cause });
+    this.name = "RuntimeStopUnconfirmedError";
+  }
+}
+
+async function stopConfirmed(
+  runtime: WorkstationRuntimeController,
+  uid: number,
+  label: string,
+): Promise<void> {
+  try {
+    await runtime.stopAndWait(uid, label);
+  } catch (error) {
+    throw new RuntimeStopUnconfirmedError(error);
+  }
+}
 
 export interface GatewayVerifierKeySetV1 {
   readonly version: 1;
@@ -23,6 +46,7 @@ export interface WorkstationRuntimeController {
   serviceState(uid: number, label: string): ServiceRuntimeState;
   bootstrap(uid: number, plistPath: string): void;
   bootout(uid: number, label: string): void;
+  stopAndWait(uid: number, label: string): Promise<void>;
   kickstart(uid: number, label: string): void;
   waitForUdsReady(socketPath: string, path: "/readyz"): Promise<void>;
   waitForHttpReady(origin: string, path: "/readyz"): Promise<void>;
@@ -31,12 +55,7 @@ export interface WorkstationRuntimeController {
 
 export class MacOsLaunchctlRuntimeController implements WorkstationRuntimeController {
   serviceState(uid: number, label: string): ServiceRuntimeState {
-    const result = runLaunchctl(["print", serviceTarget(uid, label)], true);
-    if (result.status === 0) {
-      return /\bstate\s*=\s*running\b/.test(result.stdout) ? "running" : "loaded";
-    }
-    if (isServiceNotFound(result.stderr)) return "unloaded";
-    return "unknown";
+    return inspectLaunchctlService(uid, label).state;
   }
 
   bootstrap(uid: number, plistPath: string): void {
@@ -48,6 +67,28 @@ export class MacOsLaunchctlRuntimeController implements WorkstationRuntimeContro
     const result = runLaunchctl(["bootout", serviceTarget(uid, label)], true);
     if (result.status === 0 || isServiceNotFound(result.stderr)) return;
     throw launchctlFailure("bootout", result.stderr);
+  }
+
+  async stopAndWait(uid: number, label: string): Promise<void> {
+    const previous = inspectLaunchctlService(uid, label);
+    if (previous.state === "unknown") {
+      throw new Error("launchd service state is unknown; refusing stop.");
+    }
+    if (previous.state === "running" && previous.pid === undefined) {
+      throw new Error("launchd running service PID is unavailable; refusing stop.");
+    }
+    this.bootout(uid, label);
+    const deadline = Date.now() + SERVICE_STOP_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const current = inspectLaunchctlService(uid, label);
+      if (
+        current.state === "unloaded" &&
+        (previous.pid === undefined || !processExists(previous.pid))
+      )
+        return;
+      await delay(SERVICE_STOP_INTERVAL_MS);
+    }
+    throw new Error("launchd service did not fully stop before timeout.");
   }
 
   kickstart(uid: number, label: string): void {
@@ -82,28 +123,28 @@ export async function startRuntimeTopology(
   services: readonly ServiceName[] = ["host", "gateway", "naru"],
 ): Promise<void> {
   if (services.includes("host")) {
-    replaceAndStart(runtime, layout, "host");
+    await replaceAndStart(runtime, layout, "host");
     await runtime.waitForUdsReady(layout.sockets.host, "/readyz");
   } else {
     await runtime.waitForUdsReady(layout.sockets.host, "/readyz");
   }
 
-  if (services.includes("gateway")) replaceAndStart(runtime, layout, "gateway");
+  if (services.includes("gateway")) await replaceAndStart(runtime, layout, "gateway");
   await runtime.waitForUdsReady(layout.sockets.gatewayAdmin, "/readyz");
   writeVerifierKeys(await runtime.readGatewayVerifierKeys(layout.sockets.gatewayAdmin));
 
-  if (services.includes("naru")) replaceAndStart(runtime, layout, "naru");
+  if (services.includes("naru")) await replaceAndStart(runtime, layout, "naru");
   await runtime.waitForHttpReady(layout.loopback.naruOrigin, "/readyz");
 }
 
-export function stopRuntimeTopology(
+export async function stopRuntimeTopology(
   runtime: WorkstationRuntimeController,
   layout: WorkstationInstanceLayout,
   services: readonly ServiceName[] = ["naru", "gateway", "host"],
-): void {
+): Promise<void> {
   for (const service of services) {
     if (service === "maintenance") continue;
-    runtime.bootout(layout.uid, layout.labels[service]);
+    await stopConfirmed(runtime, layout.uid, layout.labels[service]);
   }
 }
 
@@ -152,16 +193,44 @@ export function parseVerifierKeys(value: unknown): GatewayVerifierKeySetV1 {
   return { version: 1, keys };
 }
 
-function replaceAndStart(
+async function replaceAndStart(
   runtime: WorkstationRuntimeController,
   layout: WorkstationInstanceLayout,
   service: "host" | "gateway" | "naru",
-): void {
+): Promise<void> {
   const state = runtime.serviceState(layout.uid, layout.labels[service]);
   if (state === "unknown") throw new Error(`launchd state is unknown for ${service}.`);
-  if (state !== "unloaded") runtime.bootout(layout.uid, layout.labels[service]);
+  if (state !== "unloaded") await stopConfirmed(runtime, layout.uid, layout.labels[service]);
   runtime.bootstrap(layout.uid, layout.launchAgentFiles[service]);
-  runtime.kickstart(layout.uid, layout.labels[service]);
+}
+
+function inspectLaunchctlService(
+  uid: number,
+  label: string,
+): { readonly state: ServiceRuntimeState; readonly pid?: number } {
+  const result = runLaunchctl(["print", serviceTarget(uid, label)], true);
+  if (result.status === 0) {
+    const pidMatch = /\bpid\s*=\s*(\d+)\b/.exec(result.stdout);
+    const pid = pidMatch?.[1] === undefined ? undefined : Number.parseInt(pidMatch[1], 10);
+    return {
+      state: /\bstate\s*=\s*running\b/.test(result.stdout) ? "running" : "loaded",
+      ...(pid === undefined || pid < 1 ? {} : { pid }),
+    };
+  }
+  return { state: isServiceNotFound(result.stderr) ? "unloaded" : "unknown" };
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ESRCH"
+    );
+  }
 }
 
 function runLaunchctl(arguments_: readonly string[], tolerateFailure = false) {

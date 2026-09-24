@@ -230,6 +230,131 @@ ownership과 integration gate를 지킨다.
   browser profile의 worker migration, 설치 PWA·실기기와 production instance 인수는 별도 승인 경계에
   남기며 source/fixture 구현 완료를 막지 않는다.
 
+### T59. Codex 0.156.1의 간접 Unix 소켓 지원과 시작 실패 진단
+
+- [x] 기존 직접 Unix 소켓과 Codex 0.156.1의 symlink endpoint를 모두 안전하게 지원하고,
+      새 Codex Pane의 시작·재개와 실패 원인 표시를 검증한다. 구현·격리 테스트 서버 인수와
+      배포 후보 준비까지 진행하며 운영 배포는 실행하지 않는다.
+- 조사 근거(2026-09-24, 격리 재현): `codex-cli 0.155.0`은 지정 endpoint에 실제 소켓을 만들고,
+  `0.156.1`은 실제 소켓으로 향하는 symlink를 만든다. 기존 relay의 `lstat().isSocket()` 및
+  canonical path 검사가 이를 거부해 10초 readiness timeout과 child 정리 뒤 약 13초에 종료한다.
+  app-server stderr 무시와 relay catch의 일반 종료 처리 때문에 구체적인 원인이 표시되지 않는다.
+  설치·인증·기본 설정 검사는 통과하며, `--no-daemon`만 추가해도 간접 endpoint는 유지됐다.
+- 선행 조건: T53/D009의 relay·guardian 계약과 T57의 runtime 의존성별 배포 경계를 따른다.
+  T54의 approval protocol 확장과 T55의 active-turn rolling refresh 전체 완료는 요구하지 않는다.
+- 구현 계획:
+  1. 지원할 CLI의 고정 버전 source/help와 격리 실행으로 endpoint 생성·해석 규칙, daemon 공유 여부,
+     child 종료와 실제 server 수명 관계를 확인한다. 검증할 버전은 기존 인수 기준 `0.154.0`,
+     직접 소켓 대조군 `0.155.0`, 대상 `0.156.1`이며 이후 버전을 자동으로 호환으로 간주하지 않는다.
+     D009를 소급 변경하지 않고 새 결정에 신뢰할 endpoint root·연결 검증·소유 프로세스 회수 규칙을
+     기록한 뒤 이에 의존하는 구현을 진행한다. 관찰된 링크 목적지를 그대로 승인 root로 삼지 않는다.
+  2. Naru Codex adapter 안에 endpoint 해석·검증을 분리한다. 직접 소켓 검사를 보존하고 간접 endpoint는
+     예상 위치의 링크, 제한된 링크 해석, 사전에 확정한 canonical root 내부의 최종 소켓과 ancestor의
+     owner·mode·type을 확인한다. root escape, 예기치 않은 중간 링크와 순환·과도한 링크 체인을
+     거부한다. 연결 직전 재검증과 대상 교체 경쟁의 처리, 실제 peer/예상 app-server 확인 수단을
+     명시하고 보장할 수 없는 경우 fail closed한다. 단순 `lstat`→`stat` 교체나 임의 symlink 허용은
+     하지 않으며 Naru-owned relay/Host/Gateway 소켓의 기존 검증은 유지한다.
+  3. guardian·relay의 준비/연결/종료를 검증된 endpoint와 lifecycle에 맞춘다. 준비 전 누락만 제한된
+     시간 동안 재시도하고 정책 위반·child 조기 종료·handshake 실패를 구분한다. 한 Pane 종료나
+     launcher 강제 종료로 다른 Pane·외부 Codex daemon을 종료하거나 타 소유 소켓을 삭제하지 않는다.
+     동시에 Task가 소유한 child·연결이 누수되지 않는지 확인한다.
+  4. 시작 단계별 제한된 오류 코드를 Naru의 기존 오류 경로에 연결해 원인 없이 종료되는 상태를
+     없앤다. child stderr·terminal/Codex 원문·실제 path·credential을 영구 저장하거나 그대로
+     표시하지 않는다. 새 runtime의 오류가 정확한 Pane에 반영되고 늦은 이전 runtime 오류가
+     새 상태를 덮지 않도록 한다. private IPC 확장이 필요하면 version/consumer 호환과 migration을
+     명시하며 Core/Host public protocol에 Codex 전용 상태를 넣지 않는다.
+  5. 새 결정과 architecture, 지원 버전·실패 진단·migration 설명을 갱신한다. 기존 runtime을 자동
+     재시작하지 않는다. 변경된 launcher/guardian은 Host 의존 payload이므로 현재 distribution에서
+     Host/Gateway/Naru 재시작이 예상됨을 배포 계획에 밝히고 실제 artifact의 `restartServices`로
+     확인한다. Host restart 뒤 기존 PTY 연속성을 약속하지 않는다.
+- 완료 조건·검증 gate:
+  - endpoint fixture: 직접 소켓·승인된 간접 소켓 성공, 지연 생성·누락·깨진 링크·순환·root escape·
+    잘못된 owner/mode/type·중간 링크·연결 직전 대상 교체·다른 peer·조기 종료의 안전한 거부와
+    redacted 오류 분류를 검증한다. 실제 플랫폼에서 검증 가능한 항목과 모의 검증을 구분한다.
+  - relay/guardian 및 integration fixture: 신규 시작, 저장 session 재개·`/new`·`/resume`, 승인·질문
+    lifecycle, Naru 재연결, 단일 controller handoff와 stale generation 거부, 두 Pane 격리,
+    정상 종료·launcher 강제 종료·app-server 장애의 child/연결 회수 및 오류 표시를 확인한다.
+  - Node 24·pnpm으로 관련 unit/integration, lint·typecheck·build, 변경 파일 format을 통과한다.
+    격리된 실제 CLI 버전별 PTY→guardian→relay→TUI 인수를 fake model/MCP로 수행하고 인증/설정
+    거부와 시작 실패도 확인한다. 실제 CLI 인수 없이 fixture 통과만으로 버전 지원 완료를 선언하지 않는다.
+    관련 browser reconnect/control/오류 표시 E2E, `pnpm test:operations`,
+    `pnpm workstation:distribution:test`, `pnpm test:production-smoke`를 통과한다.
+  - 지원 버전별 결과와 미지원 조건, 보안 결정, 배포/rollback 영향이 문서에 남으면 구현 완료로
+    처리한다. 실제 운영 인수·배포는 새 artifact와 fresh plan digest 승인 후 별도로 기록한다.
+- 범위 제외: Codex 자동 update/downgrade, 기존 active turn의 강제 refresh, global Codex 설정 변경,
+  운영 service restart와 배포 실행. 이 Task 등록은 해당 운영 변경의 승인이 아니다.
+- lane: Naru Codex integration / Distribution verification
+- 진행 결과(2026-09-24): endpoint·relay 구현과 고정 오류 코드, D012 및 architecture를 반영했다.
+  실제 CLI 0.154.0·0.155.0·0.156.1의 local synthetic model 인수에서 두 Pane 시작·응답·attachment
+  재연결·저장 session 재개·sibling 유지가 통과했다. 운영 관련 64건, distribution 72건,
+  browser core-flow 8건·controller handoff 1건·production smoke 1건이 통과했다.
+  [지원 경계와 재현 명령](codex-socket-compatibility.md)을 기록했으며 운영 배포는 실행하지 않는다.
+  세 버전의 실제 fake MCP 질문→입력 필요→확인 제출→완료 인수도 통과했다. 구버전 bind 직후
+  권한 공개 경쟁을 별도 fixture로 고정했고 정상 Host 종료에는 오류 코드를 출력하지 않는다.
+  최종 후보 `t59-codex-20260924-r2`의 bundled launcher로 0.156.1 MCP·재개 인수도 통과했다.
+  읽기 전용 upgrade plan은 모든 필수 검사 통과, hook trust 경고로 `needs-input`이다.
+  준비 당시 restart 대상은 Host/Gateway/Naru였으며 운영 실행은 별도 승인으로 분리했다.
+  이후 승인된 r2 배포는 독립 maintenance에서 실행됐으나 launchd 종료 경합으로 실패했고
+  자동 복구도 `manual-required`로 끝났다. 독립 SSH 복구와 T60의 r4 배포 뒤 실제 Codex 실행을
+  사용자가 확인했다. 원격 push는 하지 않았다.
+
+### T60. Workstation launchd 재시작 종료 경합 방지
+
+- [x] Host·Gateway·Naru upgrade와 실패 복구에서 이전 launchd process의 종료를
+      제한 시간 내 확인한 뒤 같은 label을 다시 bootstrap하고, `RunAtLoad` runtime을
+      불필요하게 `kickstart -k`하지 않도록 배포 transaction을 보완한다.
+- 배경: T59 production upgrade에서 Naru→Gateway→Host `bootout` 직후 Host가 아직
+  종료 중인데 같은 label을 bootstrap해 candidate 시작과 이전 receipt 복구가 모두
+  즉시 실패했다. Maintenance는 `manual-required`로 종료됐고 종료 완료 시각은
+  worker 실패 기록보다 느렸다. 기존 fake runtime은 `bootout`을 즉시 `unloaded`로
+  바꾸어 이 경합을 재현하지 못했다.
+- 완료 조건:
+  - 중지 전 exact service PID와 launchd label을 관찰하고, `bootout` 뒤 label 해제와
+    이전 PID 종료가 모두 확인될 때까지 bounded wait한다. PID 재사용·권한 불명·
+    timeout은 fail-closed하고 다음 bootstrap을 실행하지 않는다.
+  - `RunAtLoad=true`인 세 runtime은 bootstrap 후 readiness로 시작을 확인하고,
+    one-shot maintenance에 필요한 kickstart만 유지한다.
+  - 지연된 종료를 모사한 unit/integration과 실제 macOS launchd fixture에서 종료 전
+    bootstrap이 없고, 정상 upgrade·readiness 실패 후 이전 receipt 복구·timeout 거부를
+    확인한다.
+  - Node 24의 format·lint·typecheck·변경 범위 test·build,
+    `pnpm workstation:distribution:test`, `pnpm test:operations`,
+    `pnpm test:production-smoke`를 통과한다. T59의 실제 Codex 0.156.1·MCP 인수를
+    candidate bundled launcher로 다시 통과한다.
+  - 검증된 clean committed artifact와 fresh upgrade plan을 준비하고 Host 재시작·PTY
+    중단, exact digest, source admission과 rollback 경계를 운영 실행 전 다시 검토한다.
+- 선행 조건: T59, WV0-D004, WV0-D007
+- lane: Workstation distribution / production recovery
+- 완료(2026-09-24, Node 24.20.0): same-label 재시작 전에 이전 label 해제와 PID 종료를 함께
+  기다리고, 확인 불가·timeout은 다음 bootstrap 없이 거부하도록 구현했다. `RunAtLoad` runtime의
+  중복 kickstart를 제거하고 maintenance kickstart만 유지했다. 지연 종료 unit·timeout 및 정상
+  upgrade·readiness 실패 복구를 포함한 distribution 74건, 전체 unit 804건(6 skip), format·lint·
+  typecheck·build, operations 64건과 production smoke 1건이 통과했다. 격리된 실제 launchd job은
+  종료 요청 뒤 약 4.2초 후 `unloaded`로 완료됐고 조기 반환하지 않았다. Clean commit의 `r3`
+  artifact bundled launcher로 실제 Codex 0.156.1·fake MCP 질문/확인·재개 인수를 통과했으며,
+  fresh plan에서 Host·Gateway·Naru 재시작과 hook trust 경고를 확인했다.
+- 운영 결과(2026-09-24): 독립 SSH 복구 후 `t60-launchd-20260924-r4`가 receipt sequence 20으로
+  배포됐다. Maintenance 완료, 승인 target 일치와 status/doctor의 전체 필수 검사 정상을 확인했고
+  사용자가 Naru 및 실제 Codex 실행 정상을 확인했다. 당시 배포 source는 `9556d37`이다.
+- 후속 검토: label이 사라졌지만 이전 PID 종료가 미확인인 timeout 뒤 transaction의 자동 복구가
+  bootstrap을 재시도하는 누락을 격리 재현했다. 다음 보완 항목에서 다룬다.
+
+### T61. 종료 미확인 상태의 자동 복구 재시작 차단
+
+- [x] T60의 stop 오류를 transaction 복구까지 보존해 candidate와 이전 release 모두 bootstrap을
+      거부한다. 기존 설정·receipt는 보존하고 `manual-required`로 남긴다. 정상 readiness 실패의
+      자동 복구는 유지한다. Public protocol·receipt schema·migration 변경은 없다.
+- 완료 조건: Host/Gateway/Naru 각각 label 해제 뒤 PID 종료 미확인 상황을 transaction fixture로
+  검증하고, distribution·operations·production smoke·lint·typecheck·build·format을 통과한다.
+  T59/T60과 이번 보완을 main에 정리하되 사용자 기존 변경을 분리하고 운영 재배포·원격 push는 하지 않는다.
+- 선행 조건: T60. 운영 r4는 그대로 유지하고 이번 보완은 다음 승인된 배포부터 적용한다.
+- 완료(2026-09-24, Node 24.20.0): 내부 종료 미확인 오류를 보존해 설정 snapshot만 복원하고
+  runtime 재시작 없이 `manual-required`로 종료한다. 세 서비스별 transaction 회귀를 포함해
+  distribution 77건, operations 64건, production smoke 1건, lint·typecheck·build·변경 파일
+  format과 공개 scan(0 findings)이 통과했다. Smoke의 최초 sandbox Chrome SIGABRT는 정상
+  브라우저 권한의 동일 로컬 검사에서 해소됐다. T59/T60과 함께 main 통합 대상으로 정리했고
+  기존 사용자 변경은 제외했다. 운영 배포·재시작·원격 push는 실행하지 않았다.
+
 ### 기타 backlog
 
 - [x] T29 모바일 prompt·image input 완성

@@ -44,6 +44,11 @@ Gateway assertion, Naru app authorization과 Host capability는 서로 대체할
 - 새 Codex runtime의 Host PTY 안에서는 bundled launcher와 guardian이 TUI 및 app-server를 함께 소유한다.
   같은 PTY에 둔 TUI WebSocket을 private owner-only UDS relay로 app-server에 투명 중계한다. guardian은
   launcher IPC가 끊기면 두 child를 회수하며 Naru/Gateway restart와는 독립적으로 살아 있다.
+- Codex app-server endpoint는 직접 owner-only socket 또는 D012의 단일 deterministic alias만
+  허용한다. advertised path의 SHA-256으로 계산한 canonical system tmp의 same-user protected
+  socket을 검증하고 연결 전후 identity를 재확인한다. 공유 디렉터리의 sibling 생성은 endpoint 교체로
+  취급하지 않으며, global daemon이나 다른 Pane의 socket은 정리하지 않는다. 시작 실패는 경로·원문
+  대신 고정 `NARU_CODEX_*` 코드만 해당 runtime의 PTY에 표시한다. Host/relay 자체 UDS 정책은 불변이다.
 - relay는 주 user thread의 JSON-RPC request ID, `serverRequest/resolved`, turn lifecycle만 메모리에서
   추적한다. `item/autoApprovalReview/started`·`completed`는 사용자 응답을 요구하지 않는 notification이므로
   pending request에 넣지 않는다. 실제 `requestApproval` RPC가 발행되면 별도 미해소 요청으로 센다.

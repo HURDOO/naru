@@ -109,3 +109,35 @@
 - Reconfigure와 rollback은 Gateway route, Naru env/config, web release metadata와 receipt의 exact app
   path를 함께 이동·복원한다. 기존 실제 browser profile의 worker migration과 설치 PWA·운영 instance
   인수는 별도 승인 경계에 남긴다.
+
+## D012. Codex의 간접 endpoint는 고정된 보호 소켓만 가리킨다
+
+- 상태: T59 endpoint 구현·직접/간접 소켓 및 실제 CLI 기본 인수 완료, 운영 적용 전
+- `rust-v0.156.1`의 `codex-rs/uds/src/daemon_directory.rs`와
+  `codex-rs/app-server-transport/src/transport/unix_socket.rs`를 확인했다
+  (source commit `b412ff32c417f855c2b2d1581b77058eed87c84b`). Foreground `app-server --listen`
+  역시 사용자별 보호 디렉터리의 소켓을 사용한다. 공유되는 것은 디렉터리이며, listener와 프로세스는
+  요청한 canonical endpoint별로 분리된다. 명시적인 daemon start/stop 명령은 사용하지 않는다.
+- Naru가 만든 canonical owner-only 임시 디렉터리의 endpoint에 직접 소켓이 있으면 기존 방식으로
+  연결한다. 링크인 경우에는 `realpath("/tmp")/codex-daemon-<effective uid>/SHA256(endpoint)`와
+  정확히 일치하는 absolute 단일 링크만 허용한다. 보호 디렉터리는 same-user `0700`, 최종 대상은
+  canonical same-user 실제 소켓 `0600`이어야 한다. 다른 대상·중간 링크·체인·순환은 거부한다.
+- 구버전의 bind 직후 `0700` → `0600` 권한 공개 구간을 readiness로 오인하지 않도록 첫 entry를
+  관찰한 다음 한 polling 간격을 기다린다. 이 구간에는 연결하지 않고, 이후 엄격한 정책 위반은
+  재시도하지 않는다. fixture와 실제 0.154.0에서 해당 전환을 확인했다.
+- 검증한 물리 경로에 연결하고, 매 연결 직전과 연결 직후에 alias·private directory·socket의
+  device/inode/owner/mode를 다시 확인하고 alias·socket의 change-time도 비교한다. 교체된 endpoint로
+  자동 재연결하지 않는다. root-owned sticky system temporary directory는 검증하되 다른 정상
+  프로세스나 Pane이 파일을 만들 때 바뀌는 directory timestamp는 고정하지 않는다.
+- 신뢰 경계는 기존과 동일한 OS 사용자다. 예상 peer는 Naru가 생성한 무작위 private endpoint와
+  그 경로의 고정 hash, owner/mode 및 WebSocket handshake로 결합한다. Node의 portable UDS API는
+  peer PID를 인증하지 않으므로 악성 same-UID process에 대한 격리나 완전한 TOCTOU 제거를 주장하지
+  않는다. 다른 UID의 교체는 private directory와 sticky system ancestor로 차단한다.
+- D009의 guardian 자식 소유권을 유지한다. Naru는 전역 daemon 종료·공유 directory 삭제·Codex가
+  소유한 alias/physical socket 삭제를 하지 않는다. Codex 자신의 socket guard가 종료 시 회수한다.
+- 실패는 제한된 `NARU_CODEX_*` 코드로 기존 PTY 출력 경로에 표시한다. 원문 stderr와 private path는
+  출력·구조화 로그에 추가하지 않는다. Host의 runtime/generation fencing이 늦은 오류 출력을 격리하며
+  private IPC 및 Core/Host public protocol은 변경하지 않는다.
+- 새 launcher부터 적용하며 구 runtime은 변경하지 않는다. 패키지 배포는 Host payload 변경으로
+  세 runtime 재시작을 수반할 수 있고 PTY 연속성을 보장하지 않는다. 지원 버전은 실제 인수 결과로
+  한정하며 이후 버전의 동일한 파일 형태만으로 전체 protocol 호환을 주장하지 않는다.

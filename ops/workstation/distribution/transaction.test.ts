@@ -190,9 +190,9 @@ describe("T14 deterministic maintenance transactions", () => {
       artifact: { buildId: "fixture-build-0001" },
     });
     expect(receipt?.supersedesReceiptId).toBeUndefined();
-    expect(runtime.operations).toContain(`kickstart:${plan.layout.labels.host}`);
-    expect(runtime.operations).toContain(`kickstart:${plan.layout.labels.gateway}`);
-    expect(runtime.operations).toContain(`kickstart:${plan.layout.labels.naru}`);
+    expect(runtime.operations).toContain(`bootstrap:${plan.layout.labels.host}`);
+    expect(runtime.operations).toContain(`bootstrap:${plan.layout.labels.gateway}`);
+    expect(runtime.operations).toContain(`bootstrap:${plan.layout.labels.naru}`);
 
     const duplicate = await planDistribution(fixture.intent, "install", runtime, {
       probePorts: false,
@@ -391,10 +391,10 @@ describe("T14 deterministic maintenance transactions", () => {
     expect(result.status).toBe("completed");
     const operations = runtime.operations.slice(before);
     expect(operations).toContain(`bootout:${plan.layout.labels.naru}`);
-    expect(operations).toContain(`kickstart:${plan.layout.labels.naru}`);
+    expect(operations).toContain(`bootstrap:${plan.layout.labels.naru}`);
     for (const service of ["host", "gateway"] as const) {
       expect(operations).not.toContain(`bootout:${plan.layout.labels[service]}`);
-      expect(operations).not.toContain(`kickstart:${plan.layout.labels[service]}`);
+      expect(operations).not.toContain(`bootstrap:${plan.layout.labels[service]}`);
       expect(readFileSync(plan.layout.launchAgentFiles[service], "utf8")).toContain(
         createInstanceLayout(first.intent, first.artifact).runtime.nodeExecutable,
       );
@@ -624,10 +624,10 @@ describe("T14 deterministic maintenance transactions", () => {
         `bootout:${plan.layout.labels[service]}`,
       );
       expect(runtime.operations.slice(before)).not.toContain(
-        `kickstart:${plan.layout.labels[service]}`,
+        `bootstrap:${plan.layout.labels[service]}`,
       );
     }
-    expect(runtime.operations.slice(before)).toContain(`kickstart:${plan.layout.labels.naru}`);
+    expect(runtime.operations.slice(before)).toContain(`bootstrap:${plan.layout.labels.naru}`);
   });
 
   it("permits only a settings-preserving legacy external-to-packaged runtime upgrade", async () => {
@@ -801,6 +801,63 @@ describe("T14 deterministic maintenance transactions", () => {
       parseEnv(readFileSync(plan.layout.files.naruEnvironment, "utf8")).NARU_ALLOWED_ORIGINS,
     ).toBe(fixture.intent.canonicalBrowserOrigin);
   });
+
+  it.each(["host", "gateway", "naru"] as const)(
+    "does not bootstrap any recovery runtime after %s unloads but its PID stop is unconfirmed",
+    async (service) => {
+      const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+      class UnconfirmedStopRuntime extends FakeWorkstationRuntime {
+        armed = false;
+        override async stopAndWait(uid: number, label: string): Promise<void> {
+          await super.stopAndWait(uid, label);
+          if (this.armed && label.endsWith(`.${service}`)) {
+            this.armed = false;
+            throw new Error("Fixture label unloaded but prior PID is still alive.");
+          }
+        }
+      }
+      const runtime = new UnconfirmedStopRuntime();
+      const install = await planDistribution(fixture.intent, "install", runtime, {
+        probePorts: false,
+      });
+      expect(
+        (
+          await executeMaintenanceRequest(
+            stageMaintenanceHandoff(install, install.planDigest, runtime),
+            runtime,
+            { inspectNative: () => [] },
+          )
+        ).status,
+      ).toBe("completed");
+      const previous = readCurrentReceipt(install.layout);
+      const previousConfig = readFileSync(install.layout.files.hostConfig, "utf8");
+      const root = createArtifactFixture(fixture.root, "fixture-unconfirmed-stop", {
+        packagedNodeRuntime: true,
+        fileOverrides: { "components/host/dist/main.js": "export const changed = true;\n" },
+      });
+      const intent = parseInstallationIntent({
+        ...fixture.intent,
+        artifactRoot: root,
+        nodeExecutable: join(root, "runtime/node/bin/node"),
+      });
+      const plan = await planDistribution(intent, "upgrade", runtime, { probePorts: false });
+      const request = stageMaintenanceHandoff(plan, plan.planDigest, runtime);
+      const before = runtime.operations.length;
+      runtime.armed = true;
+      const result = await executeMaintenanceRequest(request, runtime, { inspectNative: () => [] });
+      expect(result).toMatchObject({ status: "failed", recovery: "manual-required" });
+      expect(runtime.serviceState(plan.layout.uid, plan.layout.labels[service])).toBe("unloaded");
+      expect(
+        runtime.operations
+          .slice(before)
+          .some(
+            (operation) => operation.startsWith("bootstrap:") || operation.startsWith("kickstart:"),
+          ),
+      ).toBe(false);
+      expect(readCurrentReceipt(plan.layout)?.receiptId).toBe(previous?.receiptId);
+      expect(readFileSync(plan.layout.files.hostConfig, "utf8")).toBe(previousConfig);
+    },
+  );
 
   it("rolls back by superseding current state with an earlier immutable receipt", async () => {
     const fixture = createDistributionFixture();

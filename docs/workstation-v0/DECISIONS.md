@@ -58,3 +58,27 @@ remote push 승인으로 해석하지 않는다.
   retirement worker는 과거 Naru root worker와 root cache만 회수하고 path-scoped app cache는 보존한다.
   기존 browser profile·설치 PWA와 실제 production migration은 source/fixture 검증과 분리된 승인
   경계다.
+
+## WV0-D009. 같은 launchd label의 재시작은 이전 process의 완전한 종료 뒤에만 허용한다
+
+- 상태: accepted (T60)
+- 결정: Host·Gateway·Naru를 중지하기 전에 exact launchd label의 PID를 관찰한다. `bootout` 뒤에는
+  label이 해제되고 그 PID가 더는 존재하지 않는 조건을 bounded wait로 함께 확인한 뒤에만 같은
+  label을 bootstrap한다. PID 재사용 가능성, 조회 권한 실패와 timeout은 종료 미확인으로 취급해
+  fail-closed한다.
+- 시작 계약: 세 runtime plist는 `RunAtLoad=true`이므로 bootstrap 자체가 시작 요청이다. 별도의
+  `kickstart -k`로 새 process를 다시 교체하지 않고 readiness로 기동 완료를 확인한다.
+  `RunAtLoad=false`인 independent one-shot maintenance job의 bootstrap 뒤 kickstart는 유지한다.
+- 복구: candidate readiness 실패 뒤 이전 receipt topology를 복원할 때도 같은 quiescence 계약을
+  적용한다. 중지 확인 실패 시 다음 candidate 또는 rollback bootstrap을 시도하지 않고
+  `manual-required`로 남긴다.
+
+## WV0-D010. 종료 미확인 오류는 transaction 복구에서도 재시작을 차단한다
+
+- 상태: accepted (T61)
+- 배경: T60의 종료 대기 실패 뒤 복구가 launchd label 부재만 보고 bootstrap을 재시도할 수 있었다.
+- 결정: stop 실패를 내부 typed error로 전달하고 transaction은 설정 snapshot만 복원한다.
+  이전 PID 종료를 확인하지 못했으므로 candidate·rollback runtime을 시작하지 않고
+  `manual-required`로 종료한다. 정상적인 readiness 실패는 기존 자동 복구를 유지한다.
+- 호환성: 기존 결과 상태와 receipt schema를 그대로 사용하며 데이터 migration은 없다.
+  이미 가동 중인 runtime에는 영향이 없고 새 maintenance 실행기 배포 이후 적용된다.
