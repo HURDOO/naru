@@ -61,6 +61,8 @@ const RawConfigSchema = z.object({
   NARU_WEB_DIST: z.string().optional(),
   NARU_APP_BASE_PATH: z.string().default("/"),
   NARU_CODEX_PATH: z.string().min(1).optional(),
+  NARU_CLAUDE_PATH: z.string().min(1).optional(),
+  NARU_DEFAULT_AGENT_PANE_KIND: z.enum(["codex", "claude"]).default("codex"),
   NARU_CODEX_INTEGRATION_SOCKET_PATH: z.string().min(1).optional(),
   NARU_TLS_STATE_DIR: z.string().min(1).optional(),
   NARU_TLS_RELOAD_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).optional(),
@@ -130,6 +132,8 @@ interface AppConfigBase {
   webDist?: string;
   appBasePath: string;
   codexExecutable?: string;
+  claudeExecutable?: string;
+  defaultAgentPaneKind?: "codex" | "claude";
   codexIntegrationSocketPath?: string;
   tls?: TlsConfig;
   push?: PushConfig;
@@ -202,6 +206,9 @@ export function loadConfig(
     throw new Error("NARU_PROJECT_ROOTS must contain at least one directory.");
   }
   const sessionRuntime = parseSessionRuntime(raw, projectRoots, baseDirectory);
+  if (raw.NARU_DEFAULT_AGENT_PANE_KIND === "claude" && raw.NARU_CLAUDE_PATH === undefined) {
+    throw new Error("Claude default Pane requires NARU_CLAUDE_PATH.");
+  }
   const codexIntegrationSocketPath = parseCodexIntegrationSocketPath(
     raw.NARU_CODEX_INTEGRATION_SOCKET_PATH,
     sessionRuntime,
@@ -218,9 +225,13 @@ export function loadConfig(
       ? {}
       : { webDist: resolve(baseDirectory, raw.NARU_WEB_DIST) }),
     appBasePath: parseNaruAppBasePath(raw.NARU_APP_BASE_PATH),
+    defaultAgentPaneKind: raw.NARU_DEFAULT_AGENT_PANE_KIND,
     ...(raw.NARU_CODEX_PATH === undefined
       ? {}
-      : { codexExecutable: validateExecutablePath(raw.NARU_CODEX_PATH) }),
+      : { codexExecutable: validateExecutablePath(raw.NARU_CODEX_PATH, "NARU_CODEX_PATH") }),
+    ...(raw.NARU_CLAUDE_PATH === undefined
+      ? {}
+      : { claudeExecutable: validateExecutablePath(raw.NARU_CLAUDE_PATH, "NARU_CLAUDE_PATH") }),
     ...(codexIntegrationSocketPath === undefined ? {} : { codexIntegrationSocketPath }),
     ...(tls === undefined ? {} : { tls }),
     ...(push === undefined ? {} : { push }),
@@ -529,8 +540,8 @@ function parseTlsConfig(
   };
 }
 
-function validateExecutablePath(value: string): string {
-  if (!isAbsolute(value)) throw new Error("NARU_CODEX_PATH must be an absolute path.");
+function validateExecutablePath(value: string, name: string): string {
+  if (!isAbsolute(value)) throw new Error(`${name} must be an absolute path.`);
   return value;
 }
 

@@ -107,9 +107,17 @@ export function createInstanceConfiguration(
   artifact: DistributionArtifactSummary,
   layout: WorkstationInstanceLayout,
 ): GeneratedInstanceConfiguration {
+  if (
+    intent.additionalGatewayApps?.some(
+      (app) => app.upstreamPort === layout.ports.gateway || app.upstreamPort === layout.ports.naru,
+    )
+  ) {
+    throw new Error("Additional Gateway app cannot target a package-owned listener port.");
+  }
   const pathValue = uniqueDirectories([
     dirname(layout.runtime.nodeExecutable),
     dirname(intent.codexExecutable),
+    ...(intent.claudeExecutable === undefined ? [] : [dirname(intent.claudeExecutable)]),
     dirname(intent.shellExecutable),
     "/usr/bin",
     "/bin",
@@ -126,7 +134,14 @@ export function createInstanceConfiguration(
     "CODEX_HOME",
   ];
   const rootIds = layout.rootMappings.map((root) => root.rootId);
-  const profileIds = ["shell", "codex-main", "codex-quick"];
+  const naruCallerAppId = intent.externalGateway?.appId ?? layout.gatewayAppId;
+  const naruCallerSubject = intent.externalGateway?.ownerSubject ?? layout.ownerSubject;
+  const profileIds = [
+    "shell",
+    "codex-main",
+    "codex-quick",
+    ...(intent.claudeExecutable === undefined ? [] : ["claude-code"]),
+  ];
   const localSessionCli = artifact.features.includes(ARTIFACT_FEATURE_LOCAL_SESSION_CLI)
     ? {
         executable: layout.runtime.nodeExecutable,
@@ -145,15 +160,26 @@ export function createInstanceConfiguration(
       HOME: layout.homeDirectory,
       SHELL: intent.shellExecutable,
       PATH: pathValue,
+      ...(intent.claudeExecutable === undefined ? {} : { NARU_PTY_HOSTED: "1" }),
       COLORTERM: "truecolor",
       NARU_CODEX_INTEGRATION_SOCKET: layout.sockets.naruIntegration,
       NARU_CODEX_HOOK_RUNNER: layout.runtime.nodeExecutable,
       NARU_CODEX_HOOK_ENTRY: layout.entrypoints.codexHook,
+      ...(intent.claudeExecutable === undefined
+        ? {}
+        : {
+            NARU_CLAUDE_HOOK_RUNNER: layout.runtime.nodeExecutable,
+            NARU_CLAUDE_HOOK_ENTRY: layout.entrypoints.claudeIntegrationHook,
+          }),
     },
   };
   const resourcePolicy = {
     resourcePolicyId: "naru-user-processes",
-    allowedExecutables: [intent.shellExecutable, layout.runtime.nodeExecutable],
+    allowedExecutables: [
+      intent.shellExecutable,
+      layout.runtime.nodeExecutable,
+      ...(intent.claudeExecutable === undefined ? [] : [intent.claudeExecutable]),
+    ],
     maxCols: 500,
     maxRows: 200,
     scrollbackRows: 5_000,
@@ -180,15 +206,26 @@ export function createInstanceConfiguration(
         envPolicyId: environmentPolicy.envPolicyId,
         resourcePolicyId: resourcePolicy.resourcePolicyId,
       })),
+      ...(intent.claudeExecutable === undefined
+        ? []
+        : [
+            {
+              profileId: "claude-code",
+              executable: layout.runtime.nodeExecutable,
+              args: [layout.entrypoints.claudeIntegrationLauncher],
+              envPolicyId: environmentPolicy.envPolicyId,
+              resourcePolicyId: resourcePolicy.resourcePolicyId,
+            },
+          ]),
     ],
     environmentPolicies: [environmentPolicy],
     resourcePolicies: [resourcePolicy],
     appRegistrations: [
       {
-        appId: layout.gatewayAppId,
+        appId: naruCallerAppId,
         credentialFile: layout.files.hostCredential,
         capabilities: [...NARU_APP_CAPABILITIES],
-        subjectScope: { kind: "ids", ids: [layout.ownerSubject] },
+        subjectScope: { kind: "ids", ids: [naruCallerSubject] },
         sessionScope: { kind: "all" },
         profileScope: { kind: "ids", ids: profileIds },
         rootScope: { kind: "ids", ids: rootIds },
@@ -212,11 +249,22 @@ export function createInstanceConfiguration(
     integrationPolicies: [
       {
         policyRef: "naru-codex-v0",
-        appId: layout.gatewayAppId,
+        appId: naruCallerAppId,
         integrationKind: "codex",
         profileIds: ["codex-main", "codex-quick"],
         configKeys: ["policyRef", "bindingId"],
       },
+      ...(intent.claudeExecutable === undefined
+        ? []
+        : [
+            {
+              policyRef: "naru-claude-v0",
+              appId: naruCallerAppId,
+              integrationKind: "claude",
+              profileIds: ["claude-code"],
+              configKeys: ["policyRef", "bindingId"],
+            },
+          ]),
     ],
   };
   const gatewayCommon = {
@@ -237,6 +285,14 @@ export function createInstanceConfiguration(
         includeCredentialRef: true,
         enabled: true,
       },
+      ...(intent.additionalGatewayApps ?? []).map((app) => ({
+        appId: app.appId,
+        mode: "gateway-managed" as const,
+        routePrefix: app.routePrefix,
+        upstream: { kind: "loopback" as const, origin: `http://127.0.0.1:${app.upstreamPort}` },
+        includeCredentialRef: true,
+        enabled: true,
+      })),
     ],
   };
   const gateway = isPrivateIngressInstallationIntent(intent)
@@ -264,16 +320,19 @@ export function createInstanceConfiguration(
     NARU_DATA_DIR: layout.directories.naruData,
     NARU_WEB_DIST: layout.webReleaseRoot,
     NARU_APP_BASE_PATH: layout.appBasePath,
+    NARU_DEFAULT_AGENT_PANE_KIND: intent.defaultAgentPaneKind ?? "codex",
     NARU_CODEX_PATH: intent.codexExecutable,
-    NARU_GATEWAY_INSTANCE_ID: layout.namespace,
-    NARU_GATEWAY_APP_ID: layout.gatewayAppId,
-    NARU_GATEWAY_OWNER_SUBJECT: layout.ownerSubject,
-    NARU_GATEWAY_VERIFIER_KEYS_FILE: layout.files.gatewayVerifierKeys,
+    ...(intent.claudeExecutable === undefined ? {} : { NARU_CLAUDE_PATH: intent.claudeExecutable }),
+    NARU_GATEWAY_INSTANCE_ID: intent.externalGateway?.instanceId ?? layout.namespace,
+    NARU_GATEWAY_APP_ID: intent.externalGateway?.appId ?? layout.gatewayAppId,
+    NARU_GATEWAY_OWNER_SUBJECT: intent.externalGateway?.ownerSubject ?? layout.ownerSubject,
+    NARU_GATEWAY_VERIFIER_KEYS_FILE:
+      intent.externalGateway?.verifierKeysFile ?? layout.files.gatewayVerifierKeys,
     NARU_SESSION_OWNER: "durable-host",
     NARU_DURABLE_SESSION_SOCKET_PATH: layout.sockets.host,
     NARU_DURABLE_SESSION_CREDENTIAL_FILE: layout.files.hostCredential,
-    NARU_DURABLE_SESSION_APP_ID: layout.gatewayAppId,
-    NARU_DURABLE_SESSION_SUBJECT: layout.ownerSubject,
+    NARU_DURABLE_SESSION_APP_ID: naruCallerAppId,
+    NARU_DURABLE_SESSION_SUBJECT: naruCallerSubject,
     NARU_DURABLE_SESSION_CALLER_TTL_MS: "60000",
     NARU_DURABLE_SESSION_IDEMPOTENCY_TTL_MS: "600000",
     NARU_DURABLE_SESSION_PROFILE_IDS: stableJson(profileIds),

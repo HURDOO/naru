@@ -4,6 +4,8 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { ClaudeActivityEventSchema, type ClaudeActivityEvent } from "./claude-activity-events.js";
+import { CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS } from "./claude-activity-hook-client.js";
 import {
   CodexHookEventSchema,
   type CodexHookEvent,
@@ -40,6 +42,14 @@ const HookMessageSchema = z
   })
   .strict();
 
+const ClaudeHookMessageSchema = z.strictObject({
+  version: z.literal(3),
+  paneId: z.string().uuid(),
+  runtimeId: z.string().uuid(),
+  token: z.string().min(32).max(128),
+  event: ClaudeActivityEventSchema,
+});
+
 export interface CodexSessionHookEvent {
   readonly sessionId: string;
   readonly source: CodexSessionHookSource;
@@ -57,6 +67,12 @@ export interface CodexSessionHookBridge {
     cwd: string;
     onEvent: (event: CodexHookEvent) => void;
   }): CodexSessionHookRegistration;
+  registerClaude?(options: {
+    paneId: string;
+    runtimeId: string;
+    cwd: string;
+    onEvent: (event: ClaudeActivityEvent) => void;
+  }): CodexSessionHookRegistration;
   close(): Promise<void>;
 }
 
@@ -68,6 +84,14 @@ interface RegistrationRecord {
   readonly onEvent: (event: CodexHookEvent) => void;
 }
 
+interface ClaudeRegistrationRecord {
+  readonly paneId: string;
+  readonly runtimeId: string;
+  readonly cwd: string;
+  readonly token: string;
+  readonly onEvent: (event: ClaudeActivityEvent) => void;
+}
+
 interface SocketIdentity {
   readonly device: number;
   readonly inode: number;
@@ -77,6 +101,7 @@ export interface CodexSessionHookServerOptions {
   readonly dataDirectory: string;
   readonly runner: string;
   readonly entrypoint: string;
+  readonly claudeEntrypoint?: string;
 }
 
 /**
@@ -88,7 +113,9 @@ export class CodexSessionHookServer implements CodexSessionHookBridge {
   readonly #socketPath: string;
   readonly #runner: string;
   readonly #entrypoint: string;
+  readonly #claudeEntrypoint: string | undefined;
   readonly #registrations = new Map<string, RegistrationRecord>();
+  readonly #claudeRegistrations = new Map<string, ClaudeRegistrationRecord>();
   readonly #connections = new Set<Socket>();
   #server: Server | null = null;
   #socketIdentity: SocketIdentity | null = null;
@@ -103,6 +130,7 @@ export class CodexSessionHookServer implements CodexSessionHookBridge {
     this.#socketPath = join(this.#runtimeDirectory, SOCKET_FILENAME);
     this.#runner = options.runner;
     this.#entrypoint = options.entrypoint;
+    this.#claudeEntrypoint = options.claudeEntrypoint;
     if (Buffer.byteLength(this.#socketPath) > SOCKET_PATH_MAX_BYTES) {
       throw new Error("Naru data directory is too long for the Codex hook socket.");
     }
@@ -142,8 +170,8 @@ export class CodexSessionHookServer implements CodexSessionHookBridge {
     onEvent: (event: CodexHookEvent) => void;
   }): CodexSessionHookRegistration {
     if (this.#server === null) throw new Error("Codex session hook server is not running.");
-    if (this.#registrations.has(options.paneId)) {
-      throw new Error("A Codex hook capability already exists for this Pane.");
+    if (this.#registrations.has(options.paneId) || this.#claudeRegistrations.has(options.paneId)) {
+      throw new Error("A hook capability already exists for this Pane.");
     }
     const record: RegistrationRecord = {
       ...options,
@@ -170,8 +198,46 @@ export class CodexSessionHookServer implements CodexSessionHookBridge {
     };
   }
 
+  registerClaude(options: {
+    paneId: string;
+    runtimeId: string;
+    cwd: string;
+    onEvent: (event: ClaudeActivityEvent) => void;
+  }): CodexSessionHookRegistration {
+    if (this.#server === null || this.#claudeEntrypoint === undefined) {
+      throw new Error("Claude activity hook server is not configured.");
+    }
+    if (this.#registrations.has(options.paneId) || this.#claudeRegistrations.has(options.paneId)) {
+      throw new Error("A hook capability already exists for this Pane.");
+    }
+    const record: ClaudeRegistrationRecord = {
+      ...options,
+      token: randomBytes(TOKEN_BYTES).toString("base64url"),
+    };
+    this.#claudeRegistrations.set(record.paneId, record);
+    let disposed = false;
+    return {
+      environment: {
+        [CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS.entry]: this.#claudeEntrypoint,
+        [CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS.paneId]: record.paneId,
+        [CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS.runner]: this.#runner,
+        [CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS.runtimeId]: record.runtimeId,
+        [CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS.socket]: this.#socketPath,
+        [CLAUDE_ACTIVITY_HOOK_ENVIRONMENT_KEYS.token]: record.token,
+      },
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        if (this.#claudeRegistrations.get(record.paneId) === record) {
+          this.#claudeRegistrations.delete(record.paneId);
+        }
+      },
+    };
+  }
+
   async close(): Promise<void> {
     this.#registrations.clear();
+    this.#claudeRegistrations.clear();
     for (const socket of this.#connections) socket.destroy();
     this.#connections.clear();
     const server = this.#server;
@@ -222,6 +288,26 @@ export class CodexSessionHookServer implements CodexSessionHookBridge {
       raw = JSON.parse(serialized) as unknown;
     } catch {
       return false;
+    }
+    if (typeof raw === "object" && raw !== null && "version" in raw && raw.version === 3) {
+      const parsed = ClaudeHookMessageSchema.safeParse(raw);
+      if (!parsed.success) return false;
+      const message = parsed.data;
+      const registration = this.#claudeRegistrations.get(message.paneId);
+      if (
+        registration === undefined ||
+        registration.runtimeId !== message.runtimeId ||
+        registration.cwd !== message.event.cwd ||
+        !equalCapability(registration.token, message.token)
+      ) {
+        return false;
+      }
+      try {
+        registration.onEvent(message.event);
+        return true;
+      } catch {
+        return false;
+      }
     }
     const parsed = HookMessageSchema.safeParse(raw);
     if (!parsed.success) return false;

@@ -352,7 +352,7 @@ export function TerminalPane({
     ) {
       setClipboardNotice({
         kind: "error",
-        message: `현재 화면은 이 ${pane.kind === "codex" ? "Codex" : "Terminal"} Pane을 제어할 수 없습니다.`,
+        message: `현재 화면은 이 ${pane.kind === "codex" ? "Codex" : pane.kind === "claude" ? "Claude Code" : "Terminal"} Pane을 제어할 수 없습니다.`,
       });
       return;
     }
@@ -1608,7 +1608,7 @@ export function TerminalPane({
       className={`${pane.kind}-pane pane-surface ${active ? "is-active" : ""}`}
       id={panelId}
       role={tabPanel ? "tabpanel" : "region"}
-      aria-label={`${pane.title} ${pane.kind === "codex" ? "Codex" : "터미널"}`}
+      aria-label={`${pane.title} ${pane.kind === "codex" ? "Codex" : pane.kind === "claude" ? "Claude Code" : "터미널"}`}
       tabIndex={-1}
       data-pane-id={pane.id}
       data-pane-kind={pane.kind}
@@ -1632,10 +1632,16 @@ export function TerminalPane({
       <header className="pane-toolbar">
         <div className="pane-identity">
           <span
-            className={pane.kind === "codex" ? "codex-glyph" : "terminal-glyph"}
+            className={
+              pane.kind === "codex"
+                ? "codex-glyph"
+                : pane.kind === "claude"
+                  ? "claude-glyph"
+                  : "terminal-glyph"
+            }
             aria-hidden="true"
           >
-            {pane.kind === "codex" ? "✦" : ">_"}
+            {pane.kind === "codex" ? "✦" : pane.kind === "claude" ? "◆" : ">_"}
           </span>
           <div>
             <strong>{pane.title}</strong>
@@ -1904,7 +1910,9 @@ export function TerminalPane({
                   ? "Codex 작업 재개"
                   : pane.kind === "codex"
                     ? "새 Codex 시작"
-                    : "터미널 다시 시작"}
+                    : pane.kind === "claude"
+                      ? "Claude Code 다시 시작"
+                      : "터미널 다시 시작"}
             </button>
             {canResumeCodex && (
               <button
@@ -2129,7 +2137,7 @@ function MobileKeyButton({
 function runtimeLabel(pane: Pane, runtimeId: string | null): string {
   const profile = profileLabel(pane.launchProfile);
   if (!runtimeId) return profile;
-  return pane.kind === "codex"
+  return pane.kind === "codex" || pane.kind === "claude"
     ? `${profile} · runtime ${runtimeId.slice(0, 8)}`
     : `runtime ${runtimeId.slice(0, 8)}`;
 }
@@ -2137,15 +2145,24 @@ function runtimeLabel(pane: Pane, runtimeId: string | null): string {
 function profileLabel(profile: string): string {
   if (profile === "codex-main") return "sol · xhigh";
   if (profile === "codex-quick") return "luna · medium";
+  if (profile === "claude-code") return "Claude Code";
   if (profile === "shell") return "shell";
   return profile;
 }
 
 function overlayTitle(pane: Pane, status: PaneStatus): string {
   if (status === "error") {
-    return pane.kind === "codex" ? "Codex를 시작하지 못했습니다" : "터미널을 시작하지 못했습니다";
+    return pane.kind === "codex"
+      ? "Codex를 시작하지 못했습니다"
+      : pane.kind === "claude"
+        ? "Claude Code를 시작하지 못했습니다"
+        : "터미널을 시작하지 못했습니다";
   }
-  return pane.kind === "codex" ? "Codex가 중지되었습니다" : "터미널이 중지되었습니다";
+  return pane.kind === "codex"
+    ? "Codex가 중지되었습니다"
+    : pane.kind === "claude"
+      ? "Claude Code가 중지되었습니다"
+      : "터미널이 중지되었습니다";
 }
 
 function overlayMessage(
@@ -2155,6 +2172,13 @@ function overlayMessage(
   codexSessionResumable: boolean,
 ): ReactNode {
   if (status === "error" && pane.lastErrorCode) return launchErrorMessage(pane.lastErrorCode);
+  if (pane.kind === "claude") {
+    return (
+      <>
+        다시 시작한 뒤 Claude Code에서 <code>/resume</code>으로 이전 대화를 선택할 수 있습니다.
+      </>
+    );
+  }
   if (pane.kind === "codex") {
     if (codexSessionId && codexSessionResumable) {
       return "저장된 Codex session ID로 이전 작업을 다시 열 수 있습니다.";
@@ -2179,6 +2203,14 @@ function overlayMessage(
 
 function launchErrorMessage(code: ErrorCode): ReactNode {
   switch (code) {
+    case "CLAUDE_EXECUTABLE_MISSING":
+      return "Mac mini에서 Claude Code CLI 설치 경로를 확인해 주세요.";
+    case "CLAUDE_AUTH_REQUIRED":
+      return (
+        <>
+          Mac mini에서 <code>claude auth login</code>을 완료해 주세요.
+        </>
+      );
     case "CODEX_EXECUTABLE_MISSING":
       return "Mac mini에서 Codex CLI 설치 경로를 확인해 주세요.";
     case "CODEX_AUTH_REQUIRED":

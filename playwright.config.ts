@@ -31,6 +31,7 @@ for (const projectPath of [
   join(publicProjectRoot, "packages/domain"),
   join(publicProjectRoot, "packages/contracts"),
   join(publicProjectRoot, "docs"),
+  join(publicProjectRoot, "claude-fixture"),
 ]) {
   mkdirSync(projectPath, { recursive: true });
 }
@@ -66,6 +67,7 @@ writeFileSync(join(filesProjectRoot, "src", "app.ts"), "const base = true;\n");
 writeFileSync(join(filesProjectRoot, ".env"), "TOKEN=fake-e2e-value\n");
 process.env.NARU_E2E_FILES_PROJECT = filesProjectRoot;
 const fakeCodexPath = fileURLToPath(new URL("./tests/fixtures/fake-codex.mjs", import.meta.url));
+const fakeClaudePath = fileURLToPath(new URL("./tests/fixtures/fake-claude.mjs", import.meta.url));
 const apiPort = readPort("NARU_E2E_API_PORT", 4990);
 const productionApiPort = readPort("NARU_E2E_PRODUCTION_API_PORT", 4992);
 const webPort = readPort("NARU_E2E_WEB_PORT", 4991);
@@ -102,6 +104,7 @@ export default defineConfig({
         NARU_SESSION_SECRET: "naru-e2e-session-secret-that-is-not-for-production",
         NARU_DATA_DIR: dataDir,
         NARU_CODEX_PATH: fakeCodexPath,
+        NARU_CLAUDE_PATH: fakeClaudePath,
       },
     },
     {

@@ -42,8 +42,13 @@ workstation intent --json \
   --private-ingress <owner-only-private-ingress-v0.json> \
   --project-root <dedicated-allowed-parent> \
   --shell <canonical-shell> \
-  --codex <canonical-codex>
+  --codex <canonical-codex> \
+  --claude <canonical-claude-code>
 ```
+
+`--claude`는 선택 사항이다. Claude Code를 설정할 때는 `claude` symlink가 아니라
+`realpath "$(command -v claude)"`로 확인한 canonical executable을 사용한다. CLI 업데이트로
+실행 파일 경로가 바뀌면 새 intent와 reconfigure가 필요하다.
 
 `plan --operation apply`/`apply`, `status`, `doctor`, `reconfigure`과 `rollback`을 사용한다.
 `apply`는 fresh installation의 명시적 alias이며 기존 `install` command를 제거하지 않는다.
@@ -88,6 +93,22 @@ absolute path여야 한다. 기존 intent/receipt에서 field가 없으면 동�
 legacy `/`만 허용한다. Invalid explicit field는 legacy root로 fallback하지 않는다. Root app이 없는
 Gateway는 인증된 `/sw.js` retirement worker도 제공해 전환 전 Naru root worker와 root cache만 해제하고,
 `/naru`나 다른 앱의 service worker/cache에는 관여하지 않는다.
+
+WV0-D011의 선택적 `additionalGatewayApps`는 별도 실행 중인 loopback 앱을 같은 인증 Gateway의
+독립 route로 등록한다. 각 항목은 `{ "appId": "claude-lab", "routePrefix": "/claude-lab",
+"upstreamPort": 45999 }` 형식이며 실제 port는 전용 서비스의 충돌 없는 listener로 정한다.
+필드가 없는 intent는 추가 앱 0개다. 기존 Naru나 다른 route와 겹치는 경로, 예약된
+`/_gateway` 경로, 중복 ID와 package-owned listener port를 거부한다. 구 CLI는 이 필드를 알지
+못하므로 지원하는 artifact를 사용해야 하며, 등록·제거는 별도 `reconfigure` plan을 승인한다.
+추가 앱의 프로세스·데이터·Host credential은 이 Workstation transaction이 관리하지 않는다.
+독립 Naru instance의 선택적 `externalGateway` binding은 다른 Gateway의 exact instance ID,
+app ID, owner subject, owner-only 공개 verifier file을 Naru에만 적용한다. 해당 instance의 Host,
+credential, socket, data와 receipt는 독립이며 v1 `ingress.kind: "none"`의 non-root app path에서만
+허용한다. `workstation intent --external-gateway <owner-only-json> --app-base-path <route>
+--default-agent-pane-kind claude`로 private candidate를 만들고, 별도의 기존 Gateway intent에는
+`additionalGatewayApps`를 추가한다. 계획은 외부 verifier file과 Claude Host 엔트리포인트를
+검증한다. 이 mode에서도 독립 instance의 내부 loopback Gateway job은 distribution lifecycle을
+위해 생성되지만 외부 browser route나 Passkey bootstrap에는 사용하지 않는다.
 
 Origin 변경은 allowlist에 누적하지 않고 새 receipt가 이전 receipt를 supersede한다. port가 바뀌면
 PWA/service-worker/cache/push subscription을 새 Origin에서 다시 인수하고, hostname이 바뀌면 새 RP
@@ -142,7 +163,8 @@ upgrade로 허용한다. 이 migration과 Origin/root 같은 reconfigure를 한 
   --origin <exact-https-origin> \
   --project-root <dedicated-allowed-parent> \
   --shell <canonical-shell> \
-  --codex <canonical-codex>
+  --codex <canonical-codex> \
+  --claude <canonical-claude-code>
 
 <expanded-artifact>/runtime/node/bin/node <expanded-artifact>/bin/workstation.mjs plan --json \
   --intent <private-intent.json> --operation install

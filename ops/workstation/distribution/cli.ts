@@ -48,6 +48,10 @@ interface IntentOptions {
   readonly nodeExecutable?: string;
   readonly shellExecutable: string;
   readonly codexExecutable: string;
+  readonly claudeExecutable?: string;
+  readonly appBasePath?: string;
+  readonly externalGatewayFile?: string;
+  readonly defaultAgentPaneKind?: "codex" | "claude";
   readonly vapidSubject?: string;
   readonly privateIngressFile?: string;
   readonly ingressKind: IngressKind;
@@ -157,6 +161,10 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   let nodeExecutable: string | undefined;
   let shellExecutable: string | undefined;
   let codexExecutable: string | undefined;
+  let claudeExecutable: string | undefined;
+  let appBasePath: string | undefined;
+  let externalGatewayFile: string | undefined;
+  let defaultAgentPaneKind: "codex" | "claude" | undefined;
   let vapidSubject: string | undefined;
   let privateIngressFile: string | undefined;
   let ingressOptionProvided = false;
@@ -220,6 +228,21 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
       case "--codex":
         codexExecutable = singleValue(codexExecutable, resolve(value), argument);
         break;
+      case "--claude":
+        claudeExecutable = singleValue(claudeExecutable, resolve(value), argument);
+        break;
+      case "--app-base-path":
+        appBasePath = singleValue(appBasePath, value, argument);
+        break;
+      case "--external-gateway":
+        externalGatewayFile = singleValue(externalGatewayFile, resolve(value), argument);
+        break;
+      case "--default-agent-pane-kind":
+        if (value !== "codex" && value !== "claude") {
+          throw new Error("--default-agent-pane-kind must be codex or claude.");
+        }
+        defaultAgentPaneKind = singleValue(defaultAgentPaneKind, value, argument);
+        break;
       case "--vapid-subject":
         vapidSubject = singleValue(vapidSubject, value, argument);
         break;
@@ -267,6 +290,9 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         "--private-ingress cannot be combined with --origin or legacy ingress options.",
       );
     }
+    if (externalGatewayFile !== undefined && privateIngressFile !== undefined) {
+      throw new Error("--external-gateway requires the isolated v1 loopback installation.");
+    }
     return {
       command,
       json: true,
@@ -279,6 +305,10 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         ...(nodeExecutable === undefined ? {} : { nodeExecutable }),
         shellExecutable,
         codexExecutable,
+        ...(claudeExecutable === undefined ? {} : { claudeExecutable }),
+        ...(appBasePath === undefined ? {} : { appBasePath }),
+        ...(externalGatewayFile === undefined ? {} : { externalGatewayFile }),
+        ...(defaultAgentPaneKind === undefined ? {} : { defaultAgentPaneKind }),
         ...(vapidSubject === undefined ? {} : { vapidSubject }),
         ...(privateIngressFile === undefined ? {} : { privateIngressFile }),
         ingressKind,
@@ -339,6 +369,10 @@ function createIntent(options: IntentOptions): WorkstationInstallationIntent {
       : PrivateIngressV0Schema.parse(
           readOwnerOnlyJson(options.privateIngressFile, "Private ingress"),
         );
+  const externalGateway =
+    options.externalGatewayFile === undefined
+      ? undefined
+      : readOwnerOnlyJson(options.externalGatewayFile, "External Gateway binding");
   return parseInstallationIntent({
     version:
       privateIngress === undefined
@@ -350,12 +384,19 @@ function createIntent(options: IntentOptions): WorkstationInstallationIntent {
     targetUid: identity.uid,
     homeDirectory: identity.homedir,
     artifactRoot: options.artifactRoot,
-    naruAppBasePath: NARU_DEFAULT_APP_BASE_PATH,
+    naruAppBasePath: options.appBasePath ?? NARU_DEFAULT_APP_BASE_PATH,
+    ...(externalGateway === undefined ? {} : { externalGateway }),
+    ...(options.defaultAgentPaneKind === undefined
+      ? {}
+      : { defaultAgentPaneKind: options.defaultAgentPaneKind }),
     canonicalBrowserOrigin: privateIngress?.browserOrigin ?? options.canonicalBrowserOrigin,
     allowedProjectRoots: options.projectRoots,
     nodeExecutable,
     shellExecutable: options.shellExecutable,
     codexExecutable: options.codexExecutable,
+    ...(options.claudeExecutable === undefined
+      ? {}
+      : { claudeExecutable: options.claudeExecutable }),
     ...(options.vapidSubject === undefined ? {} : { vapidSubject: options.vapidSubject }),
     ingress: privateIngress ?? { kind: options.ingressKind, profileId: options.ingressProfileId },
   });
@@ -401,7 +442,9 @@ function usage(): string {
     "Usage: workstation <intent|plan|status|doctor|apply|install|upgrade|reconfigure|rollback> --json",
     "  intent: --slug <label> --artifact <expanded-artifact> --origin <https-origin>",
     "          --project-root <allowed-parent> [--project-root ...]",
-    "          --shell <shell> --codex <codex> [--node <legacy-external-node24>]",
+    "          --shell <shell> --codex <codex> [--claude <claude>] [--node <legacy-external-node24>]",
+    "          [--app-base-path <route>] [--default-agent-pane-kind <codex|claude>]",
+    "          [--external-gateway <owner-only-binding.json>] (isolated v1 app only)",
     "          [--installation-id <uuid>] [--vapid-subject <https-or-mailto>]",
     "          [--ingress-kind <none|tailscale-serve|wireguard-direct|trusted-lan>]",
     "          [--ingress-profile <id>]",

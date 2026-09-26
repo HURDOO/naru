@@ -3,6 +3,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { CodexSessionIdSchema, type CodexLaunchProfile } from "@naru/contracts";
 import type { PaneContext } from "./database.js";
+import { claudeActivityHookSettings } from "./claude-activity-events.js";
 import { AppError } from "./errors.js";
 
 const CODEX_CHECK_TTL_MS = 30_000;
@@ -57,6 +58,8 @@ export type CommandRunner = (
 
 export interface LaunchProfileRegistryOptions {
   readonly codexExecutable?: string;
+  readonly claudeExecutable?: string;
+  readonly claudeActivityHookCommand?: string;
   readonly codexSessionHookCommand?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly commandRunner?: CommandRunner;
@@ -65,6 +68,8 @@ export interface LaunchProfileRegistryOptions {
 
 export class LaunchProfileRegistry implements PaneLaunchResolver {
   readonly #codexExecutable: string | undefined;
+  readonly #claudeExecutable: string | undefined;
+  readonly #claudeActivityHookCommand: string | undefined;
   readonly #codexSessionHookCommand: string | undefined;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #commandRunner: CommandRunner;
@@ -73,6 +78,8 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
 
   constructor(options: LaunchProfileRegistryOptions = {}) {
     this.#codexExecutable = options.codexExecutable;
+    this.#claudeExecutable = options.claudeExecutable;
+    this.#claudeActivityHookCommand = options.claudeActivityHookCommand;
     this.#codexSessionHookCommand = options.codexSessionHookCommand;
     this.#environment = options.environment ?? process.env;
     this.#commandRunner = options.commandRunner ?? runCommand;
@@ -86,6 +93,32 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
         throw new AppError("REQUEST_INVALID", 409, "허용되지 않은 터미널 실행 프로필입니다.");
       }
       return { file: resolveShell(this.#environment), args: ["-l"], environment };
+    }
+
+    if (context.pane.kind === "claude") {
+      if (context.pane.launchProfile !== "claude-code") {
+        throw new AppError("REQUEST_INVALID", 409, "허용되지 않은 Claude Code 실행 프로필입니다.");
+      }
+      const executable = resolveClaudeExecutable(this.#claudeExecutable, this.#environment);
+      const status = this.#commandRunner(executable, ["auth", "status"], {
+        cwd: context.projectPath,
+        env: environment,
+      });
+      if (status.error || status.status !== 0 || !isClaudeAuthenticated(status.stdout)) {
+        throw new AppError(
+          "CLAUDE_AUTH_REQUIRED",
+          503,
+          "Claude Code 인증이 필요합니다. Mac mini에서 claude auth login을 완료해 주세요.",
+        );
+      }
+      return {
+        file: executable,
+        args:
+          this.#claudeActivityHookCommand === undefined
+            ? []
+            : ["--settings", claudeActivityHookSettings(this.#claudeActivityHookCommand)],
+        environment,
+      };
     }
 
     if (context.pane.kind !== "codex") {
@@ -144,6 +177,37 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
       );
     }
     this.#codexCheckedAt = now;
+  }
+}
+
+function resolveClaudeExecutable(
+  configured: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): string {
+  if (configured !== undefined && isAbsolute(configured) && isExecutableFile(configured))
+    return configured;
+  if (configured === undefined) {
+    for (const directory of (environment.PATH ?? "").split(":")) {
+      if (!directory) continue;
+      const candidate = join(directory, "claude");
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+  throw new AppError(
+    "CLAUDE_EXECUTABLE_MISSING",
+    503,
+    "Claude Code CLI 설치 경로를 확인해 주세요.",
+  );
+}
+
+function isClaudeAuthenticated(output: string): boolean {
+  try {
+    const value: unknown = JSON.parse(output);
+    return (
+      typeof value === "object" && value !== null && "loggedIn" in value && value.loggedIn === true
+    );
+  } catch {
+    return false;
   }
 }
 

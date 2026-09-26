@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Pane, PaneActivity, ServerWsFrame } from "@naru/contracts";
+import type { ClaudeActivityEvent } from "../src/claude-activity-events.js";
 import type {
   CodexHookEvent,
   CodexSessionHookBridge,
@@ -62,6 +63,10 @@ class FakeCodexSessionHookBridge implements CodexSessionHookBridge {
         disposed: boolean;
       }
     | undefined;
+  readonly claudeRegistrations: Array<{
+    readonly onEvent: (event: ClaudeActivityEvent) => void;
+    disposed: boolean;
+  }> = [];
 
   register(options: {
     paneId: string;
@@ -87,6 +92,29 @@ class FakeCodexSessionHookBridge implements CodexSessionHookBridge {
 
   emit(event: CodexHookEvent): void {
     if (!this.#active?.disposed) this.#active?.onEvent(event);
+  }
+
+  registerClaude(options: {
+    paneId: string;
+    runtimeId: string;
+    cwd: string;
+    onEvent: (event: ClaudeActivityEvent) => void;
+  }): CodexSessionHookRegistration {
+    const active = { onEvent: options.onEvent, disposed: false };
+    this.claudeRegistrations.push(active);
+    return {
+      environment: {
+        NARU_CLAUDE_HOOK_PANE_ID: options.paneId,
+        NARU_CLAUDE_HOOK_RUNTIME_ID: options.runtimeId,
+      },
+      dispose: () => {
+        active.disposed = true;
+      },
+    };
+  }
+
+  emitClaude(index: number, event: ClaudeActivityEvent): void {
+    this.claudeRegistrations[index]?.onEvent(event);
   }
 
   emitRegistered(index: number, event: CodexHookEvent): void {
@@ -1176,6 +1204,58 @@ describe("PtySupervisor", () => {
           activity: { state: "server-stopped" },
         });
       }
+    } finally {
+      await supervisor.shutdown();
+      repository.close();
+    }
+  });
+
+  it("projects Claude hook state only from the current Pane runtime", async () => {
+    const repository = new NaruRepository(":memory:", { defaultAgentPaneKind: "claude" });
+    const project = repository.createProject("/tmp/naru-claude-pty", "claude-pty");
+    const pane = repository
+      .getWorkspace(project.id)
+      .panes.find((candidate) => candidate.kind === "claude");
+    if (pane === undefined) throw new Error("Claude fixture Pane is missing.");
+    const processes = [new FakePty(), new FakePty()];
+    let nextProcess = 0;
+    const bridge = new FakeCodexSessionHookBridge();
+    const supervisor = new PtySupervisor(
+      repository,
+      () => processes[nextProcess++] as FakePty,
+      { resolve: () => ({ file: "/test/claude", args: [], environment: {} }) },
+      bridge,
+    );
+    const event = (
+      type: ClaudeActivityEvent["type"],
+      sessionId = "session-1",
+    ): ClaudeActivityEvent => ({
+      type,
+      sessionId,
+      cwd: project.path,
+    });
+
+    try {
+      supervisor.start(pane.id);
+      bridge.emitClaude(0, event("session-start"));
+      bridge.emitClaude(0, event("turn-start"));
+      bridge.emitClaude(0, event("interaction-required"));
+      expect(repository.getPaneContext(pane.id)?.pane.activity.state).toBe("interaction-required");
+      bridge.emitClaude(0, event("turn-running"));
+      bridge.emitClaude(0, event("turn-completed"));
+      expect(repository.getPaneContext(pane.id)?.pane.activity.state).toBe("completed");
+
+      supervisor.stop(pane.id);
+      await waitFor(() => !supervisor.isRunning(pane.id));
+      expect(bridge.claudeRegistrations[0]?.disposed).toBe(true);
+      expect(repository.getPaneContext(pane.id)?.pane.activity.state).toBe("server-stopped");
+
+      supervisor.start(pane.id);
+      bridge.emitClaude(0, event("turn-start"));
+      expect(repository.getPaneContext(pane.id)?.pane.activity.state).toBe("idle");
+      bridge.emitClaude(1, event("session-start", "session-2"));
+      bridge.emitClaude(1, event("turn-start", "session-2"));
+      expect(repository.getPaneContext(pane.id)?.pane.activity.state).toBe("running");
     } finally {
       await supervisor.shutdown();
       repository.close();

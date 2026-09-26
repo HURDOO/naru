@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -7,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -23,10 +25,66 @@ import {
 import {
   createArtifactFixture,
   createDistributionFixture,
+  createPrivateIngressDistributionFixture,
   FakeWorkstationRuntime,
 } from "./test-support.js";
 
 describe("T14 deterministic maintenance transactions", () => {
+  it("blocks an external Gateway binding without private public keys or Claude Host entrypoints", async () => {
+    const fixture = createDistributionFixture({ claudeEntrypoints: true });
+    const verifierKeysFile = join(fixture.root, "gateway-verifier.json");
+    const { publicKey } = generateKeyPairSync("ed25519");
+    writeFileSync(
+      verifierKeysFile,
+      `${JSON.stringify({
+        version: 1,
+        keys: [
+          {
+            keyId: "fixture-key",
+            algorithm: "Ed25519",
+            publicKeyPem: publicKey.export({ type: "spki", format: "pem" }),
+          },
+        ],
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      naruAppBasePath: "/claude-lab",
+      claudeExecutable: fixture.codexExecutable,
+      defaultAgentPaneKind: "claude",
+      externalGateway: {
+        instanceId: "primary-u501-123456789abc",
+        appId: "claude-lab",
+        ownerSubject: "owner-u501-123456789abc",
+        verifierKeysFile,
+      },
+    });
+    const runtime = new FakeWorkstationRuntime();
+    const approved = await planDistribution(intent, "install", runtime, { probePorts: false });
+    expect(
+      approved.checks.find((check) => check.id === "credential.external-gateway-verifier-public")
+        ?.status,
+    ).toBe("ok");
+    expect(
+      approved.checks.find((check) => check.id === "artifact.claude-host-entrypoints")?.status,
+    ).toBe("ok");
+    chmodSync(verifierKeysFile, 0o644);
+    const unsafe = await planDistribution(intent, "install", runtime, { probePorts: false });
+    expect(
+      unsafe.checks.find((check) => check.id === "credential.external-gateway-verifier-public")
+        ?.status,
+    ).toBe("blocked");
+    const oldArtifact = createDistributionFixture();
+    const noLauncher = parseInstallationIntent({
+      ...oldArtifact.intent,
+      claudeExecutable: oldArtifact.codexExecutable,
+    });
+    const missing = await planDistribution(noLauncher, "install", runtime, { probePorts: false });
+    expect(
+      missing.checks.find((check) => check.id === "artifact.claude-host-entrypoints")?.status,
+    ).toBe("blocked");
+  });
   it("installs the packaged Node runtime and normalizes the receipt to its immutable release path", async () => {
     const fixture = createDistributionFixture({ packagedNodeRuntime: true });
     const runtime = new FakeWorkstationRuntime();
@@ -438,6 +496,52 @@ describe("T14 deterministic maintenance transactions", () => {
     writeFileSync(join(first.artifact.root, "components", "host", "dist", "main.js"), "tampered\n");
     expect((await statusDistribution(intent, runtime)).status).toBe("degraded");
     await expect(doctorDistribution(intent, runtime)).rejects.toThrow(/manifest/);
+  });
+
+  it("reconfigures an additional Gateway app without restarting the Host", async () => {
+    const fixture = createPrivateIngressDistributionFixture();
+    const runtime = new FakeWorkstationRuntime();
+    const options = {
+      probeListenerTargets: fixture.privateIngressListenerProbe,
+      privateIngressPreflight: fixture.privateIngressPreflight,
+    };
+    const install = await planDistribution(fixture.intent, "install", runtime, options);
+    const installed = await executeMaintenanceRequest(
+      stageMaintenanceHandoff(install, install.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [], ...options },
+    );
+    expect(installed.status).toBe("completed");
+    const candidate = parseInstallationIntent({
+      ...fixture.intent,
+      additionalGatewayApps: [
+        { appId: "claude-lab", routePrefix: "/claude-lab", upstreamPort: 45999 },
+      ],
+    });
+    const plan = await planDistribution(candidate, "reconfigure", runtime, options);
+    expect(plan.checks.find((check) => check.id === "transaction.reconfigure")?.status).toBe("ok");
+    expect(plan.restartServices).toEqual(["gateway", "naru"]);
+    const before = runtime.operations.length;
+    const result = await executeMaintenanceRequest(
+      stageMaintenanceHandoff(plan, plan.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [], ...options },
+    );
+    expect(result.status).toBe("completed");
+    const operations = runtime.operations.slice(before);
+    expect(operations).not.toContain(`bootout:${plan.layout.labels.host}`);
+    expect(operations).toContain(`bootout:${plan.layout.labels.gateway}`);
+    expect(operations).toContain(`bootout:${plan.layout.labels.naru}`);
+    const gateway = JSON.parse(readFileSync(plan.layout.files.gatewayConfig, "utf8")) as {
+      appRegistrations: readonly { appId: string; routePrefix: string }[];
+    };
+    expect(gateway.appRegistrations.map((app) => [app.appId, app.routePrefix])).toEqual([
+      ["naru", "/naru"],
+      ["claude-lab", "/claude-lab"],
+    ]);
+    expect(readCurrentReceipt(plan.layout)?.intent.additionalGatewayApps).toEqual(
+      candidate.additionalGatewayApps,
+    );
   });
 
   it("restarts Host only when the Host-owned Codex module graph changes", async () => {

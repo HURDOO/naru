@@ -82,6 +82,38 @@ describe("GitMetadataAdapter", () => {
     });
   });
 
+  it("inspects linked worktrees across separately approved sibling roots", async () => {
+    const base = await mkdtemp(join(tmpdir(), "naru-git-metadata-"));
+    temporaryDirectories.push(base);
+    const projects = join(base, "projects");
+    const worktree = join(base, "worktree");
+    const worktrees = join(base, "worktrees");
+    await Promise.all([mkdir(projects), mkdir(worktree), mkdir(worktrees)]);
+    const repository = await createRepository(projects, "approved");
+    const firstLinked = join(worktree, "first");
+    const secondLinked = join(worktrees, "second");
+    runGit(repository, ["worktree", "add", "-b", "feature/first", firstLinked]);
+    runGit(repository, ["worktree", "add", "-b", "feature/second", secondLinked]);
+    const policy = await ProjectPathPolicy.create([repository, worktree, worktrees], {
+      allowExactRoots: [repository],
+    });
+    const adapter = new GitMetadataAdapter(policy);
+
+    for (const target of [repository, firstLinked, secondLinked]) {
+      const inspection = await adapter.inspect(target);
+      expect(inspection).toMatchObject({
+        kind: "worktree",
+        commonDirectory: join(repository, ".git"),
+        rejectedWorktrees: [],
+      });
+      if (inspection.kind !== "worktree") throw new Error("Expected worktree inspection.");
+      expect(inspection.worktrees).toHaveLength(3);
+      expect(inspection.worktrees.find((candidate) => candidate.current)?.path).toBe(
+        await realpath(target),
+      );
+    }
+  });
+
   it("reports an unborn branch without inventing an object ID", async () => {
     const fixture = await createFixture();
     const repository = join(fixture.root, "unborn");

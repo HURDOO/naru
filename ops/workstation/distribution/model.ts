@@ -41,11 +41,31 @@ interface WorkstationInstallationIntentCommon {
   readonly canonicalBrowserOrigin: string;
   /** Absent only in legacy intent/receipt documents, where Naru owned `/`. */
   readonly naruAppBasePath?: string;
+  /** Optional, independently hosted apps on the same authenticated Gateway Origin. */
+  readonly additionalGatewayApps?: readonly AdditionalGatewayApp[];
+  /** Optional binding for an independently hosted Naru behind another Workstation Gateway. */
+  readonly externalGateway?: ExternalGatewayBinding;
+  readonly defaultAgentPaneKind?: "codex" | "claude";
   readonly allowedProjectRoots: readonly string[];
   readonly nodeExecutable: string;
   readonly shellExecutable: string;
   readonly codexExecutable: string;
+  /** Additive: absent in existing installations until Claude Code is configured. */
+  readonly claudeExecutable?: string;
   readonly vapidSubject?: string;
+}
+
+export interface AdditionalGatewayApp {
+  readonly appId: string;
+  readonly routePrefix: string;
+  readonly upstreamPort: number;
+}
+
+export interface ExternalGatewayBinding {
+  readonly instanceId: string;
+  readonly appId: string;
+  readonly ownerSubject: string;
+  readonly verifierKeysFile: string;
 }
 
 export interface WorkstationInstallationIntentV1 extends WorkstationInstallationIntentCommon {
@@ -165,6 +185,8 @@ export interface WorkstationInstanceLayout {
     readonly sessionCli: string;
     readonly codexIntegrationLauncher: string;
     readonly codexHook: string;
+    readonly claudeIntegrationLauncher: string;
+    readonly claudeIntegrationHook: string;
     readonly workstation: string;
     readonly maintenance: string;
   };
@@ -193,10 +215,14 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     "artifactRoot",
     "canonicalBrowserOrigin",
     "naruAppBasePath",
+    "additionalGatewayApps",
+    "externalGateway",
+    "defaultAgentPaneKind",
     "allowedProjectRoots",
     "nodeExecutable",
     "shellExecutable",
     "codexExecutable",
+    "claudeExecutable",
     "vapidSubject",
     "ingress",
   ]);
@@ -221,9 +247,31 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
   const nodeExecutable = requireAbsolutePath(value.nodeExecutable, "Node executable");
   const shellExecutable = requireAbsolutePath(value.shellExecutable, "Shell executable");
   const codexExecutable = requireAbsolutePath(value.codexExecutable, "Codex executable");
+  const claudeExecutable =
+    value.claudeExecutable === undefined
+      ? undefined
+      : requireAbsolutePath(value.claudeExecutable, "Claude Code executable");
   const canonicalBrowserOrigin = canonicalHttpsOrigin(value.canonicalBrowserOrigin);
   const naruAppBasePath =
     value.naruAppBasePath === undefined ? undefined : parseNaruAppBasePath(value.naruAppBasePath);
+  const additionalGatewayApps = parseAdditionalGatewayApps(
+    value.additionalGatewayApps,
+    naruAppBasePath ?? "/",
+  );
+  const externalGateway = parseExternalGatewayBinding(value.externalGateway);
+  const defaultAgentPaneKind = parseDefaultAgentPaneKind(value.defaultAgentPaneKind);
+  if (defaultAgentPaneKind === "claude" && claudeExecutable === undefined) {
+    throw new Error("Claude default Pane requires a configured Claude executable.");
+  }
+  if (
+    externalGateway !== undefined &&
+    (value.version !== DISTRIBUTION_SCHEMA_VERSION ||
+      naruAppBasePath === undefined ||
+      naruAppBasePath === "/" ||
+      additionalGatewayApps !== undefined)
+  ) {
+    throw new Error("External Gateway binding requires an isolated non-root v1 app instance.");
+  }
   const allowedProjectRoots = parseProjectRoots(value.allowedProjectRoots);
   const vapidSubject =
     value.vapidSubject === undefined
@@ -238,17 +286,25 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     artifactRoot,
     canonicalBrowserOrigin,
     ...(naruAppBasePath === undefined ? {} : { naruAppBasePath }),
+    ...(additionalGatewayApps === undefined ? {} : { additionalGatewayApps }),
+    ...(externalGateway === undefined ? {} : { externalGateway }),
+    ...(defaultAgentPaneKind === undefined ? {} : { defaultAgentPaneKind }),
     allowedProjectRoots,
     nodeExecutable,
     shellExecutable,
     codexExecutable,
+    ...(claudeExecutable === undefined ? {} : { claudeExecutable }),
     ...(vapidSubject === undefined ? {} : { vapidSubject }),
   } as const;
   if (value.version === DISTRIBUTION_SCHEMA_VERSION) {
+    const ingress = parseLegacyIngress(value.ingress);
+    if (externalGateway !== undefined && ingress.kind !== "none") {
+      throw new Error("External Gateway app must not own a browser ingress listener.");
+    }
     return {
       version: DISTRIBUTION_SCHEMA_VERSION,
       ...common,
-      ingress: parseLegacyIngress(value.ingress),
+      ingress,
     };
   }
   const ingress = PrivateIngressV0Schema.parse(value.ingress);
@@ -319,6 +375,9 @@ export function createInstanceLayout(
     throw new Error("Artifact package identity does not match Workstation.");
   }
   const namespace = createInstanceNamespace(intent);
+  if (intent.externalGateway?.instanceId === namespace) {
+    throw new Error("External Gateway binding must reference a different instance.");
+  }
   const digest = namespace.slice(-INSTANCE_DIGEST_LENGTH);
   const applicationSupport = join(intent.homeDirectory, "Library", "Application Support");
   const instancesRoot = join(applicationSupport, "Naru Workstation", "instances");
@@ -451,6 +510,20 @@ export function createInstanceLayout(
         "codex-integration-launcher.js",
       ),
       codexHook: join(releaseRoot, "components", "naru", "dist", "codex-session-hook-cli.js"),
+      claudeIntegrationLauncher: join(
+        releaseRoot,
+        "components",
+        "naru",
+        "dist",
+        "claude-integration-launcher.js",
+      ),
+      claudeIntegrationHook: join(
+        releaseRoot,
+        "components",
+        "naru",
+        "dist",
+        "claude-integration-hook-cli.js",
+      ),
       workstation: join(releaseRoot, "bin", "workstation.mjs"),
       maintenance: join(releaseRoot, "bin", "workstation-maintenance.mjs"),
     },
@@ -605,6 +678,84 @@ function parseProjectRoots(value: unknown): readonly string[] {
     throw new Error("Allowed Project roots must be unique.");
   }
   return roots;
+}
+
+function parseDefaultAgentPaneKind(value: unknown): "codex" | "claude" | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "codex" && value !== "claude") {
+    throw new Error("Default agent Pane kind is invalid.");
+  }
+  return value;
+}
+
+function parseExternalGatewayBinding(value: unknown): ExternalGatewayBinding | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("External Gateway binding must be an object.");
+  assertExactKeys(value, ["instanceId", "appId", "ownerSubject", "verifierKeysFile"]);
+  const identifier = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
+  for (const name of ["instanceId", "appId", "ownerSubject"] as const) {
+    if (typeof value[name] !== "string" || !identifier.test(value[name])) {
+      throw new Error(`External Gateway ${name} is invalid.`);
+    }
+  }
+  if (
+    !/^[a-z][a-z0-9-]{0,63}$/.test(value.appId as string) ||
+    value.appId === "naru" ||
+    value.appId === LOCAL_SESSION_CLI_APP_ID
+  ) {
+    throw new Error("External Gateway app ID must be a distinct additional app registration.");
+  }
+  return {
+    instanceId: value.instanceId as string,
+    appId: value.appId as string,
+    ownerSubject: value.ownerSubject as string,
+    verifierKeysFile: requireAbsolutePath(value.verifierKeysFile, "External Gateway verifier file"),
+  };
+}
+
+function parseAdditionalGatewayApps(
+  value: unknown,
+  naruRoutePrefix: string,
+): readonly AdditionalGatewayApp[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 16) {
+    throw new Error("Additional Gateway apps must contain between one and 16 registrations.");
+  }
+  const apps: AdditionalGatewayApp[] = [];
+  const appIds = new Set<string>(["naru"]);
+  const routes = [naruRoutePrefix];
+  for (const raw of value as unknown[]) {
+    if (!isRecord(raw)) throw new Error("Additional Gateway app must be an object.");
+    assertExactKeys(raw, ["appId", "routePrefix", "upstreamPort"]);
+    if (typeof raw.appId !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(raw.appId)) {
+      throw new Error("Additional Gateway app ID is invalid.");
+    }
+    if (appIds.has(raw.appId)) throw new Error("Additional Gateway app IDs must be unique.");
+    const routePrefix = parseNaruAppBasePath(raw.routePrefix);
+    if (
+      routes.some(
+        (route) =>
+          route === "/" ||
+          routePrefix === "/" ||
+          route === routePrefix ||
+          route.startsWith(`${routePrefix}/`) ||
+          routePrefix.startsWith(`${route}/`),
+      )
+    ) {
+      throw new Error("Additional Gateway app routes must not overlap Naru or another app.");
+    }
+    if (
+      !Number.isInteger(raw.upstreamPort) ||
+      (raw.upstreamPort as number) < 1 ||
+      (raw.upstreamPort as number) > 65_535
+    ) {
+      throw new Error("Additional Gateway app upstream port is invalid.");
+    }
+    appIds.add(raw.appId);
+    routes.push(routePrefix);
+    apps.push({ appId: raw.appId, routePrefix, upstreamPort: raw.upstreamPort as number });
+  }
+  return apps;
 }
 
 function requireAbsolutePath(value: unknown, label: string): string {

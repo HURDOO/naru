@@ -38,6 +38,20 @@ const validPushEnvironment = {
 };
 
 describe("loadConfig", () => {
+  it("keeps Codex as the default Pane and requires Claude for a Claude-first app", () => {
+    expect(loadConfig(validEnvironment).defaultAgentPaneKind).toBe("codex");
+    expect(() =>
+      loadConfig({ ...validEnvironment, NARU_DEFAULT_AGENT_PANE_KIND: "claude" }),
+    ).toThrow(/requires NARU_CLAUDE_PATH/);
+    expect(
+      loadConfig({
+        ...validEnvironment,
+        NARU_CLAUDE_PATH: "/bin/sh",
+        NARU_DEFAULT_AGENT_PANE_KIND: "claude",
+      }).defaultAgentPaneKind,
+    ).toBe("claude");
+  });
+
   it("requires an explicit project root allowlist", () => {
     const environment = { ...validEnvironment };
     delete environment.NARU_PROJECT_ROOTS;

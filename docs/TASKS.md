@@ -19,6 +19,78 @@ ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 
+### T67. Claude 별도 운영 앱 배포 준비
+
+- [-] 실행 중인 9443 서버를 보존하면서 Claude용 Naru를 운영 Mac의 별도 앱으로 준비한다.
+  기존 Gateway의 추가 앱 등록과 DurableSession 경계를 조사하고, 기존 운영 앱 등록을 잃지 않도록
+  운영 릴리스의 `additionalGatewayApps` 계약을 현재 source에 통합한다.
+- 선행 조건: T63, T66, WV0-D011, 현재 운영 receipt/intent와 기존 등록 앱의 보존 확인.
+- 완료 조건: 선택한 별도 앱 topology의 Host·Gateway·Naru 격리, Claude activity의 Durable Host
+  경로, 인증·project root·runtime fencing, 배포 artifact와 정확한 읽기 전용 plan, operations·
+  distribution·production smoke를 검증한다. 실제 mutation은 plan digest 승인 후 별도 수행한다.
+- 현재 상태: 운영 status·doctor 정상, 기존 Gateway 추가 등록 2개 확인. 현재 브랜치에 이 계약을
+  additive로 복구하고, 외부 Gateway assertion을 받는 별도 Workstation instance intent·owner-only
+  verifier 검사·Claude Host launcher/hook·Claude 기본 Pane 2개를 구현했다. Host app ID·subject는
+  외부 Gateway binding과 일치하고 credential/socket/data는 독립이다. distribution 대상 테스트,
+  typecheck·lint·build와 로컬 production smoke는 통과했다. 전체 unit은 보호된 현재 Codex daemon
+  경로를 건드리는 2개 파일만 제외하고 814건 통과했다. 브라우저 E2E 23건 중 21건이 첫 실행에
+  통과하고, 모바일 복사·Codex 스크롤 안정성 2건은 단독 재실행에 통과했다. clean committed artifact,
+  실제 private candidate intent의 read-only plan, Gateway route와 독립 Host의 연결 인수는 아직 gate다.
+  9443과 운영 서비스는 변경하지 않는다.
+
+### T66. Claude Code 훅 기반 Pane 작업 상태
+
+- [x] Claude Code의 lifecycle hook을 Pane별 runtime capability로 수신해 `running`,
+      `interaction-required`, `completed`, `failed` 상태에 반영한다. 프롬프트·도구 입력·응답·
+      transcript 원문은 수신 경계에서 버리고 저장·로그에 남기지 않는다.
+- 선행 조건: T63, D013 및 공식 Claude Code hooks 계약 확인. 사용자 요청에 따라 실행 중인
+  9443 서버의 설정·프로세스·데이터와 운영 Host·Naru·Gateway는 건드리지 않는다.
+- 검증: hook 입력·설정, 인증된 private IPC, Pane/runtime·cwd fence, 세션 전환·늦은 이벤트,
+  승인 대기와 해제·오류·종료, 새로고침·단일 controller 및 Node 24 회귀. 실제 9443 인수는
+  사용자가 별도로 승인할 때까지 보류한다.
+- 로컬 검증(2026-09-26, Node 24): redacted hook parser·owner-only UDS·capability/cwd/runtime
+  fence·상태 전환·후속 도구 이벤트 해제와 stale callback을 검증했다. 모의 Claude 브라우저
+  E2E에서 작업 중→입력 필요→작업 중→완료, 1440px·768px·360px와 새로고침을 확인했다.
+  format·lint·typecheck·build, Vitest 828건 통과(6건 건너뜀), 민감정보 scan 0건이다.
+  전체 E2E 23건 중 21건 통과, 기존 모바일 복사·Codex 스크롤 2건은 전체 실행에서 실패했으나
+  별도 재실행은 둘 다 통과했다. 실행 중인 9443·운영 서비스는 변경하지 않았다.
+
+### T65. 격리 9443 Cheers 연결 worktree 루트 허용
+
+- [x] Cheers의 연결 worktree가 놓인 `worktree`·`worktrees` 두 형제 디렉터리를 격리 9443
+      서버의 strict-child project root에만 추가한다. 운영 서비스와 일반 root 계약은 변경하지 않는다.
+- 선행 조건: T64, D014 및 사용자의 두 디렉터리 허용·테스트 서버 재시작 승인.
+- 검증: canonical·owner·symlink 검사, 두 연결 worktree의 발견과 연결 가능성, 범위 밖 경로
+  거부, 9443 TLS·로그인·Claude Pane 재연결. 운영 Host·Naru·Gateway는 재시작하지 않는다.
+- 로컬 검증(2026-09-26, Node 24): 두 root의 canonical·owner 확인 후 9443 설정을 원자적으로
+  갱신하고 테스트 LaunchAgent만 재시작했다. 실제 Cheers Git metadata에서 primary 1개와 연결
+  worktree 3개를 허용했고 거부 0개였으며, 각 연결 worktree의 독립 Git 검사도 통과했다. 브라우저
+  Cheers 그룹에 발견된 3개가 표시되고 기존 Claude Pane 2개 재시작·새로고침 재연결을 확인했다.
+  TLS·Origin 거부·비밀번호 로그인·세션 smoke, format·lint·typecheck·build 및 전체 Vitest
+  820건 통과(6건 건너뜀). 첫 전체 Vitest 실행의 보호 소켓 EPERM 11건은 샌드박스 경계로,
+  승인된 로컬 실행에서 모두 통과했다. 연결 worktree는 계속 사용자 명시 연결을 요구한다.
+
+### T64. 격리 Claude 9443 인수 기본 작업공간과 명시 프로젝트 연결
+
+- [x] 격리 비밀번호 서버의 새 Project 기본 Pane을 Claude Code 2개와 Dev Terminal로 생성하고,
+      사용자 지정 Project 한 경로만 `realpath` 뒤 exact root로 허용한다. 기존 Workspace와 운영
+      Workstation 기본값은 변경하지 않는다.
+- 선행 조건: T63, D013 및 9443 격리 서버 승인. 운영 배포·Host restart는 범위 밖이다.
+- 검증: 기본 Pane 저장·시작, exact root와 sibling/symlink escape 거부, 기존 Workspace 보존,
+  9443 TLS·로그인·Claude 실행·reconnect, Node 24 전체 회귀.
+
+### T63. Claude Code Pane 실험 구현
+
+- [x] Codex Pane과 저장된 Codex 세션을 보존하면서 별도 Claude Code Pane을 생성·실행한다.
+      Host allowlisted `claude-code` 프로필, standalone 실행, UI와 distribution intent의 선택적
+      `claudeExecutable`을 연결한다. 기존 intent는 필드가 없어도 그대로 읽는다.
+- 선행 조건: D001~D003, D009, T53, T59 및 Workstation v0 distribution.
+- 검증: v16 DB의 Pane/Host 연결 보존 migration, 인증·실행 실패, Pane 생성·재연결·단일
+  controller, distribution 구성 및 로컬 UI. 운영 Gateway 등록·reconfigure·실기기 인수는
+  exact artifact/intent plan을 별도로 검토한 뒤 수행한다.
+- 범위: Claude CLI 자체의 대화 재개 선택기를 사용한다. Claude hook 기반 activity·입력 필요·
+  Files 전송·이미지 paste는 이 초기 구현에 포함하지 않는다.
+
 ### T52. Pane resize·로딩·유휴 상태의 blink와 입력 focus 유실 개선
 
 - [x] 로컬 terminal restore·resize·유휴·입력 경로를 안정화하고 격리된 fixture의 자동화와

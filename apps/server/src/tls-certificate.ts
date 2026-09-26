@@ -74,6 +74,14 @@ export interface TlsCertificateEvent {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
+export interface TlsCertificateService {
+  loadInitial(): ServerOptions;
+  start(server: unknown): void;
+  stop(): void;
+  status(): TlsCertificateStatus;
+  setEventSink(eventSink: (event: TlsCertificateEvent) => void): void;
+}
+
 interface TlsGenerationPointer {
   readonly formatVersion: 1;
   readonly generation: string;

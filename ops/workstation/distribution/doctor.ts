@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseEnv } from "node:util";
+import { loadGatewayVerifierKeys } from "../../../apps/server/src/gateway-auth.js";
 import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { verifyDistributionArtifact } from "./artifact.js";
 import { createRuntimeConfiguration } from "./configuration.js";
@@ -211,6 +212,17 @@ export async function doctorDistribution(
   checks.push(localSessionCliArtifactCheck(hostLayout, expected.localSessionCli !== undefined));
 
   checks.push(verifierFileCheck(layout.files.gatewayVerifierKeys, layout.uid));
+  if (current.intent.externalGateway !== undefined) {
+    checks.push(
+      verifierFileCheck(
+        current.intent.externalGateway.verifierKeysFile,
+        layout.uid,
+        "credential.external-gateway-verifier-public",
+        "user",
+        true,
+      ),
+    );
+  }
   for (const service of ["host", "gateway", "naru"] as const) {
     const state = runtime.serviceState(layout.uid, layout.labels[service]);
     checks.push({
@@ -489,19 +501,26 @@ function naruEnvironmentCheck(
   }
 }
 
-function verifierFileCheck(path: string, uid: number): DistributionCheck {
+function verifierFileCheck(
+  path: string,
+  uid: number,
+  id = "credential.gateway-verifier-public",
+  owner: DistributionCheck["owner"] = "package",
+  validateNaruLoader = false,
+): DistributionCheck {
   try {
     lstatPrivateFile(path, uid);
     parseVerifierKeys(JSON.parse(readFileSync(path, "utf8")) as unknown);
+    if (validateNaruLoader) loadGatewayVerifierKeys(path);
     return {
-      id: "credential.gateway-verifier-public",
+      id,
       status: "ok",
       expected: "owner-only public Ed25519 verifier material without private keys",
       actual: "verified",
-      owner: "package",
+      owner,
     };
   } catch (error) {
-    return blockedCheck("credential.gateway-verifier-public", safeError(error), "package");
+    return blockedCheck(id, safeError(error), owner);
   }
 }
 
@@ -512,7 +531,8 @@ function lstatPrivateFile(path: string, uid: number): { readonly mode: number } 
     !metadata.isFile() ||
     metadata.isSymbolicLink() ||
     metadata.uid !== uid ||
-    (metadata.mode & 0o777) !== 0o600
+    (metadata.mode & 0o777) !== 0o600 ||
+    metadata.size > 1024 * 1024
   ) {
     throw new Error("not an owner-only mode-0600 regular file");
   }

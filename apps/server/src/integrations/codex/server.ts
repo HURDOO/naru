@@ -4,6 +4,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { NaruCodexIntegrationPort } from "./port.js";
+import type { NaruClaudeIntegrationPort } from "../claude/port.js";
 import { CodexIntegrationRequestSchema, type CodexIntegrationReply } from "./protocol.js";
 
 const SOCKET_FILENAME = "codex-integration.sock";
@@ -27,7 +28,10 @@ export class CodexIntegrationServer {
   constructor(
     dataDirectory: string,
     private readonly integration: NaruCodexIntegrationPort,
-    options: { readonly socketPath?: string } = {},
+    private readonly options: {
+      readonly socketPath?: string;
+      readonly claudeIntegration?: NaruClaudeIntegrationPort;
+    } = {},
   ) {
     if (options.socketPath !== undefined) {
       if (!isAbsolute(options.socketPath) || resolve(options.socketPath) !== options.socketPath) {
@@ -137,6 +141,26 @@ export class CodexIntegrationServer {
     const parsed = CodexIntegrationRequestSchema.safeParse(input);
     if (!parsed.success) return { version: 1, ok: false, code: "INVALID" };
     try {
+      if (parsed.data.type === "claude-launch") {
+        if (this.options.claudeIntegration === undefined) {
+          return { version: 1, ok: false, code: "UNAVAILABLE" };
+        }
+        const plan = this.options.claudeIntegration.launch(parsed.data.bootstrap);
+        return {
+          version: 1,
+          ok: true,
+          type: "claude-launch",
+          plan: { executable: plan.executable, args: [...plan.args] },
+        };
+      }
+      if (parsed.data.type === "claude-hook") {
+        return this.options.claudeIntegration?.acceptHook(
+          parsed.data.bootstrap,
+          parsed.data.event,
+        ) === true
+          ? { version: 1, ok: true, type: "claude-hook" }
+          : { version: 1, ok: false, code: "DENIED" };
+      }
       if (parsed.data.type === "launch") {
         const plan = this.integration.launch(parsed.data.bootstrap);
         return {

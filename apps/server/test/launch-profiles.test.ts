@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Pane } from "@naru/contracts";
+import { CLAUDE_ACTIVITY_HOOK_COMMAND } from "../src/claude-activity-hook-client.js";
 import { CODEX_SESSION_HOOK_COMMAND } from "../src/codex-session-hook.js";
 import type { PaneContext } from "../src/database.js";
 import {
@@ -34,6 +35,59 @@ const expectedHookArguments = [
 ];
 
 describe("LaunchProfileRegistry", () => {
+  it("launches an authenticated Claude Code pane and rejects missing authentication", () => {
+    const runner = vi.fn<CommandRunner>(() => ({
+      stdout: '{"loggedIn":true}',
+      stderr: "",
+      status: 0,
+    }));
+    const registry = new LaunchProfileRegistry({
+      claudeExecutable: "/bin/sh",
+      environment,
+      commandRunner: runner,
+    });
+    expect(registry.resolve(context("claude", "claude-code"))).toMatchObject({
+      file: "/bin/sh",
+      args: [],
+    });
+    expect(runner).toHaveBeenCalledWith("/bin/sh", ["auth", "status"], expect.any(Object));
+    expect(() => registry.resolve(context("claude", "other"))).toThrowError(
+      expect.objectContaining({ code: "REQUEST_INVALID" }),
+    );
+    const loggedOut = new LaunchProfileRegistry({
+      claudeExecutable: "/bin/sh",
+      environment,
+      commandRunner: () => ({ stdout: '{"loggedIn":false}', stderr: "secret", status: 1 }),
+    });
+    expect(() => loggedOut.resolve(context("claude", "claude-code"))).toThrowError(
+      expect.objectContaining({ code: "CLAUDE_AUTH_REQUIRED" }),
+    );
+    const missing = new LaunchProfileRegistry({
+      claudeExecutable: "/tmp/naru-definitely-missing-claude",
+      environment,
+    });
+    expect(() => missing.resolve(context("claude", "claude-code"))).toThrowError(
+      expect.objectContaining({ code: "CLAUDE_EXECUTABLE_MISSING" }),
+    );
+  });
+  it("adds observation-only Claude hooks only when explicitly configured", () => {
+    const registry = new LaunchProfileRegistry({
+      claudeExecutable: "/bin/sh",
+      claudeActivityHookCommand: CLAUDE_ACTIVITY_HOOK_COMMAND,
+      environment,
+      commandRunner: () => ({ stdout: '{"loggedIn":true}', stderr: "", status: 0 }),
+    });
+    const launch = registry.resolve(context("claude", "claude-code"));
+    expect(launch.args[0]).toBe("--settings");
+    const settings = JSON.parse(launch.args[1] ?? "") as {
+      hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string }> }>>;
+    };
+    expect(Object.keys(settings.hooks)).toHaveLength(12);
+    expect(settings.hooks.PermissionRequest?.[0]?.hooks[0]).toEqual(
+      expect.objectContaining({ type: "command", command: CLAUDE_ACTIVITY_HOOK_COMMAND }),
+    );
+    expect(launch.args.join(" ")).not.toContain("test-only-api-key");
+  });
   it("resolves the two approved Codex profiles as structured spawn arguments", () => {
     const runner = vi.fn<CommandRunner>(() => doctorResult());
     let now = 1_000;
