@@ -50,6 +50,7 @@ const RawConfigSchema = z.object({
   NARU_ALLOWED_ORIGINS: z.string().min(1),
   NARU_ALLOWED_CLIENT_IPS: z.string().optional(),
   NARU_PROJECT_ROOTS: z.string().min(1),
+  NARU_EXACT_PROJECT_ROOTS: z.string().optional(),
   NARU_PASSWORD_HASH: z.string().min(1).optional(),
   NARU_SESSION_SECRET: SessionSecretSchema.optional(),
   NARU_SESSION_COOKIE_NAME: SessionCookieNameSchema.optional(),
@@ -128,6 +129,7 @@ interface AppConfigBase {
   allowedOrigins: ReadonlySet<string>;
   allowedClientIps?: ReadonlySet<string>;
   projectRoots: readonly string[];
+  exactProjectRoots?: readonly string[];
   dataDir: string;
   webDist?: string;
   appBasePath: string;
@@ -205,6 +207,7 @@ export function loadConfig(
   if (projectRoots.length === 0) {
     throw new Error("NARU_PROJECT_ROOTS must contain at least one directory.");
   }
+  const exactProjectRoots = parseExactProjectRoots(raw.NARU_EXACT_PROJECT_ROOTS, projectRoots);
   const sessionRuntime = parseSessionRuntime(raw, projectRoots, baseDirectory);
   if (raw.NARU_DEFAULT_AGENT_PANE_KIND === "claude" && raw.NARU_CLAUDE_PATH === undefined) {
     throw new Error("Claude default Pane requires NARU_CLAUDE_PATH.");
@@ -220,6 +223,7 @@ export function loadConfig(
     allowedOrigins: new Set(originValues),
     ...(allowedClientIps === undefined ? {} : { allowedClientIps }),
     projectRoots,
+    ...(exactProjectRoots === undefined ? {} : { exactProjectRoots }),
     dataDir: resolve(baseDirectory, raw.NARU_DATA_DIR),
     ...(raw.NARU_WEB_DIST === undefined
       ? {}
@@ -321,6 +325,43 @@ export function loadConfig(
     },
     secureCookie: false,
   };
+}
+
+function parseExactProjectRoots(
+  source: string | undefined,
+  projectRoots: readonly string[],
+): readonly string[] | undefined {
+  if (source === undefined) return undefined;
+  if (source.length > 64 * 1024) {
+    throw new Error("NARU_EXACT_PROJECT_ROOTS exceeds the size limit.");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    throw new Error("NARU_EXACT_PROJECT_ROOTS must be a JSON array.");
+  }
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+    throw new Error("NARU_EXACT_PROJECT_ROOTS must contain 1–64 paths.");
+  }
+  const allowed = new Set(projectRoots);
+  const exact = value.map((path: unknown) => {
+    if (
+      typeof path !== "string" ||
+      !isAbsolute(path) ||
+      resolve(path) !== path ||
+      path.length > 4_096 ||
+      /[\0\r\n]/.test(path) ||
+      !allowed.has(path)
+    ) {
+      throw new Error("NARU_EXACT_PROJECT_ROOTS must name exact configured Project roots.");
+    }
+    return path;
+  });
+  if (new Set(exact).size !== exact.length) {
+    throw new Error("NARU_EXACT_PROJECT_ROOTS must be unique.");
+  }
+  return exact;
 }
 
 function parseCodexIntegrationSocketPath(

@@ -317,6 +317,9 @@ export function createInstanceConfiguration(
     NARU_PORT: String(layout.ports.naru),
     NARU_ALLOWED_ORIGINS: layout.browser.origin,
     NARU_PROJECT_ROOTS: layout.rootMappings.map((root) => root.path).join(","),
+    ...(intent.exactProjectRoots === undefined
+      ? {}
+      : { NARU_EXACT_PROJECT_ROOTS: stableJson(intent.exactProjectRoots) }),
     NARU_DATA_DIR: layout.directories.naruData,
     NARU_WEB_DIST: layout.webReleaseRoot,
     NARU_APP_BASE_PATH: layout.appBasePath,

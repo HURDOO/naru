@@ -28,7 +28,9 @@ const repository = NaruRepository.openDataDirectory(config.dataDir, {
   sessionOwner: sessionRuntime.owner,
   defaultAgentPaneKind: config.defaultAgentPaneKind ?? "codex",
 });
-const pathPolicy = await ProjectPathPolicy.create(config.projectRoots);
+const pathPolicy = await ProjectPathPolicy.create(config.projectRoots, {
+  allowExactRoots: config.exactProjectRoots ?? [],
+});
 let supervisor: NaruSessionFacade;
 if (sessionRuntime.owner === "durable-host") {
   const launchProfiles = new LaunchProfileRegistry({

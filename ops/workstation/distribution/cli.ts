@@ -45,6 +45,7 @@ interface IntentOptions {
   readonly artifactRoot: string;
   readonly canonicalBrowserOrigin?: string;
   readonly projectRoots: readonly string[];
+  readonly exactProjectRoots: readonly string[];
   readonly nodeExecutable?: string;
   readonly shellExecutable: string;
   readonly codexExecutable: string;
@@ -158,6 +159,7 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   let artifactRoot: string | undefined;
   let canonicalBrowserOrigin: string | undefined;
   const projectRoots: string[] = [];
+  const exactProjectRoots: string[] = [];
   let nodeExecutable: string | undefined;
   let shellExecutable: string | undefined;
   let codexExecutable: string | undefined;
@@ -218,6 +220,9 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         break;
       case "--project-root":
         projectRoots.push(resolve(value));
+        break;
+      case "--exact-project-root":
+        exactProjectRoots.push(resolve(value));
         break;
       case "--node":
         nodeExecutable = singleValue(nodeExecutable, resolve(value), argument);
@@ -302,6 +307,7 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         artifactRoot,
         ...(canonicalBrowserOrigin === undefined ? {} : { canonicalBrowserOrigin }),
         projectRoots,
+        exactProjectRoots,
         ...(nodeExecutable === undefined ? {} : { nodeExecutable }),
         shellExecutable,
         codexExecutable,
@@ -391,6 +397,9 @@ function createIntent(options: IntentOptions): WorkstationInstallationIntent {
       : { defaultAgentPaneKind: options.defaultAgentPaneKind }),
     canonicalBrowserOrigin: privateIngress?.browserOrigin ?? options.canonicalBrowserOrigin,
     allowedProjectRoots: options.projectRoots,
+    ...(options.exactProjectRoots.length === 0
+      ? {}
+      : { exactProjectRoots: options.exactProjectRoots }),
     nodeExecutable,
     shellExecutable: options.shellExecutable,
     codexExecutable: options.codexExecutable,
@@ -442,6 +451,7 @@ function usage(): string {
     "Usage: workstation <intent|plan|status|doctor|apply|install|upgrade|reconfigure|rollback> --json",
     "  intent: --slug <label> --artifact <expanded-artifact> --origin <https-origin>",
     "          --project-root <allowed-parent> [--project-root ...]",
+    "          [--exact-project-root <listed-project-root> ...]",
     "          --shell <shell> --codex <codex> [--claude <claude>] [--node <legacy-external-node24>]",
     "          [--app-base-path <route>] [--default-agent-pane-kind <codex|claude>]",
     "          [--external-gateway <owner-only-binding.json>] (isolated v1 app only)",

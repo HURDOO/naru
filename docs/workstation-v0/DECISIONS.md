@@ -97,3 +97,15 @@ remote push 승인으로 해석하지 않는다.
 - 호환성·제거: 필드가 없는 기존 intent/receipt는 추가 앱 0개로 읽는다. 구 CLI는 새 필드를
   거부하므로 지원하는 CLI artifact가 필요하다. 등록 해제는 필드를 제거한 새 `reconfigure` plan으로
   수행하고 기존 receipt·backup을 보존한다. 별도 upstream의 설치·제거는 별도 승인 경계다.
+
+## WV0-D012. 단일 Project는 opt-in exact root로만 허용한다
+
+- 상태: T67 source 구현·운영 적용 전.
+- 결정: Workstation intent의 선택적 `exactProjectRoots`는 `allowedProjectRoots`에 이미 열거된
+  canonical root만 지정한다. 지정된 root 자체와 그 하위 경로를 Project로 사용할 수 있고,
+  나머지 root는 기존처럼 strict-child 정책을 유지한다. Naru에는 JSON 환경값
+  `NARU_EXACT_PROJECT_ROOTS`로 전달하며 `ProjectPathPolicy`의 realpath·symlink escape 검사가
+  적용된다. 이를 통해 특정 Project를 열기 위해 상위 디렉터리의 다른 Project를 함께 허용하지 않는다.
+- 호환성·migration: 필드가 없는 기존 intent/receipt와 Naru 환경은 기존 strict-child 의미로
+  유지된다. settings digest에 필드를 결합해 값 변경은 새 plan과 승인 대상으로 다룬다.
+  기존 설치의 설정을 소급 수정하지 않는다.

@@ -85,6 +85,8 @@ describe("T14 Workstation CLI auth command", () => {
       "https://fixture.tailnet.ts.net",
       "--project-root",
       fixture.projectRoot,
+      "--exact-project-root",
+      fixture.projectRoot,
       "--shell",
       "/bin/zsh",
       "--codex",
@@ -102,6 +104,7 @@ describe("T14 Workstation CLI auth command", () => {
       expect(JSON.parse(output)).toMatchObject({
         naruAppBasePath: "/naru",
         nodeExecutable: fixture.nodeExecutable,
+        exactProjectRoots: [fixture.projectRoot],
       });
       expect(JSON.parse(output)).not.toHaveProperty("claudeExecutable");
       output = "";

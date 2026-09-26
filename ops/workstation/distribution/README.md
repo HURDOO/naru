@@ -110,6 +110,11 @@ credential, socket, data와 receipt는 독립이며 v1 `ingress.kind: "none"`의
 검증한다. 이 mode에서도 독립 instance의 내부 loopback Gateway job은 distribution lifecycle을
 위해 생성되지만 외부 browser route나 Passkey bootstrap에는 사용하지 않는다.
 
+특정 Project 자체를 허용할 때는 그 canonical 경로를 `--project-root`에 열거하고
+`--exact-project-root`에도 지정한다. 선택적 `exactProjectRoots`는 이미 열거된 root만 받을 수
+있으며 다른 root의 strict-child 정책은 그대로 유지한다. 상위 projects 디렉터리 전체를
+허용하지 않고 단일 Project를 열기 위한 opt-in 계약이다(WV0-D012).
+
 Origin 변경은 allowlist에 누적하지 않고 새 receipt가 이전 receipt를 supersede한다. port가 바뀌면
 PWA/service-worker/cache/push subscription을 새 Origin에서 다시 인수하고, hostname이 바뀌면 새 RP
 ID의 owner bootstrap/passkey도 다시 인수한다. VAPID keypair는 명시적 rotation 없이 보존한다.

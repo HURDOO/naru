@@ -47,6 +47,8 @@ interface WorkstationInstallationIntentCommon {
   readonly externalGateway?: ExternalGatewayBinding;
   readonly defaultAgentPaneKind?: "codex" | "claude";
   readonly allowedProjectRoots: readonly string[];
+  /** Opt-in exact Project roots; other roots remain strict parents. */
+  readonly exactProjectRoots?: readonly string[];
   readonly nodeExecutable: string;
   readonly shellExecutable: string;
   readonly codexExecutable: string;
@@ -219,6 +221,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     "externalGateway",
     "defaultAgentPaneKind",
     "allowedProjectRoots",
+    "exactProjectRoots",
     "nodeExecutable",
     "shellExecutable",
     "codexExecutable",
@@ -273,6 +276,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     throw new Error("External Gateway binding requires an isolated non-root v1 app instance.");
   }
   const allowedProjectRoots = parseProjectRoots(value.allowedProjectRoots);
+  const exactProjectRoots = parseExactProjectRoots(value.exactProjectRoots, allowedProjectRoots);
   const vapidSubject =
     value.vapidSubject === undefined
       ? undefined
@@ -290,6 +294,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     ...(externalGateway === undefined ? {} : { externalGateway }),
     ...(defaultAgentPaneKind === undefined ? {} : { defaultAgentPaneKind }),
     allowedProjectRoots,
+    ...(exactProjectRoots === undefined ? {} : { exactProjectRoots }),
     nodeExecutable,
     shellExecutable,
     codexExecutable,
@@ -678,6 +683,22 @@ function parseProjectRoots(value: unknown): readonly string[] {
     throw new Error("Allowed Project roots must be unique.");
   }
   return roots;
+}
+
+function parseExactProjectRoots(
+  value: unknown,
+  allowedProjectRoots: readonly string[],
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+    throw new Error("Exact Project roots must contain 1–64 paths.");
+  }
+  const allowed = new Set(allowedProjectRoots);
+  const exact = value.map((path) => requireAbsolutePath(path, "Exact Project root"));
+  if (new Set(exact).size !== exact.length || exact.some((path) => !allowed.has(path))) {
+    throw new Error("Exact Project roots must uniquely name allowed Project roots.");
+  }
+  return exact;
 }
 
 function parseDefaultAgentPaneKind(value: unknown): "codex" | "claude" | undefined {

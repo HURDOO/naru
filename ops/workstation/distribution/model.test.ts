@@ -19,6 +19,32 @@ import {
 } from "./test-support.js";
 
 describe("T14 distribution identity and configuration", () => {
+  it("renders opt-in exact roots without widening sibling Project admission", () => {
+    const fixture = createDistributionFixture();
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      exactProjectRoots: [fixture.projectRoot],
+    });
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(intent, artifact.summary);
+    const generated = createInstanceConfiguration(intent, artifact.summary, layout);
+    expect(generated.naruEnvironment.NARU_EXACT_PROJECT_ROOTS).toBe(
+      JSON.stringify([fixture.projectRoot]),
+    );
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        exactProjectRoots: [`${fixture.root}/sibling`],
+      }),
+    ).toThrow(/uniquely name allowed/);
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        exactProjectRoots: [fixture.projectRoot, fixture.projectRoot],
+      }),
+    ).toThrow(/uniquely name allowed/);
+  });
+
   it("adds a Claude Host profile only when the intent names an executable", () => {
     const fixture = createDistributionFixture();
     const artifact = verifyDistributionArtifact(fixture.artifactRoot);

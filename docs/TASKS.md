@@ -37,6 +37,9 @@ ownership과 integration gate를 지킨다.
   통과하고, 모바일 복사·Codex 스크롤 안정성 2건은 단독 재실행에 통과했다. clean committed artifact,
   실제 private candidate intent의 read-only plan, Gateway route와 독립 Host의 연결 인수는 아직 gate다.
   9443과 운영 서비스는 변경하지 않는다.
+  Cheers만 허용하려고 상위 projects root를 추가하면 형제 프로젝트까지 열리는 것을 확인해,
+  선택적 exact root 계약(WV0-D012)을 추가했다. 새 source commit/artifact와 read-only plan으로
+  이 범위를 다시 검증한다.
 
 ### T66. Claude Code 훅 기반 Pane 작업 상태
 

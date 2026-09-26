@@ -40,6 +40,11 @@ optional이므로 기존 receipt는 그대로 읽고, 제거 시 구 배포 의�
 `ingress.kind: "none"`의 non-root route에서만 허용한다. 계획과 doctor는 외부 공개 키의 owner-only
 권한·형식을 검사하고, 계획은 선택된 Host release의 Claude launcher/hook 파일을 확인한다.
 
+Project 허용 범위는 Cheers 자체를 `--project-root`와 `--exact-project-root`에 함께 지정하고,
+두 worktree 디렉터리를 별도 strict-child `--project-root`로 지정한다. 상위 projects 디렉터리를
+통째로 허용하면 다른 프로젝트도 열리므로 사용하지 않는다. 새 exact-root 필드는 opt-in이며 기존
+instance의 root 해석을 변경하지 않는다(WV0-D012).
+
 Naru가 중단된 동안 Host PTY는 이어지지만 그 사이 발생한 hook 이벤트는 재생되지 않는다. 재연결 후
 같은 runtime의 첫 이벤트로 진행 중 turn을 최선 노력으로 복구한다. 이 기간의 작업 상태 정확성은
 보장하지 않는다.

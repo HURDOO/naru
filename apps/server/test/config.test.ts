@@ -59,6 +59,25 @@ describe("loadConfig", () => {
     expect(() => loadConfig(environment)).toThrow(/NARU_PROJECT_ROOTS/);
   });
 
+  it("opts into only listed exact Project roots", () => {
+    const exact = "/safe/projects/cheers";
+    const environment = {
+      ...validEnvironment,
+      NARU_PROJECT_ROOTS: `${exact},/safe/worktrees`,
+      NARU_EXACT_PROJECT_ROOTS: JSON.stringify([exact]),
+    };
+    expect(loadConfig(environment).exactProjectRoots).toEqual([exact]);
+    expect(() =>
+      loadConfig({ ...environment, NARU_EXACT_PROJECT_ROOTS: JSON.stringify(["/safe/projects"]) }),
+    ).toThrow(/exact configured Project roots/);
+    expect(() =>
+      loadConfig({ ...environment, NARU_EXACT_PROJECT_ROOTS: JSON.stringify([exact, exact]) }),
+    ).toThrow(/unique/);
+    expect(() => loadConfig({ ...environment, NARU_EXACT_PROJECT_ROOTS: "not-json" })).toThrow(
+      /JSON array/,
+    );
+  });
+
   it("keeps legacy ownership as the explicit default and rejects mixed Host settings", () => {
     expect(loadConfig(validEnvironment).sessionRuntime).toEqual({ owner: "legacy" });
     expect(() =>

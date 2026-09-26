@@ -544,6 +544,28 @@ describe("T14 deterministic maintenance transactions", () => {
     );
   });
 
+  it("binds exact Project root opt-in to a Naru-only reconfigure plan", async () => {
+    const fixture = createDistributionFixture();
+    const runtime = new FakeWorkstationRuntime();
+    const options = { probePorts: false };
+    const install = await planDistribution(fixture.intent, "install", runtime, options);
+    const result = await executeMaintenanceRequest(
+      stageMaintenanceHandoff(install, install.planDigest, runtime),
+      runtime,
+      { inspectNative: () => [] },
+    );
+    expect(result.status).toBe("completed");
+    const candidate = parseInstallationIntent({
+      ...fixture.intent,
+      exactProjectRoots: [fixture.projectRoot],
+    });
+    const plan = await planDistribution(candidate, "reconfigure", runtime, options);
+    expect(plan.status).toBe("needs-input");
+    expect(plan.checks.find((check) => check.id === "transaction.reconfigure")?.status).toBe("ok");
+    expect(plan.restartServices).toEqual(["naru"]);
+    expect(plan.planDigest).not.toBe(install.planDigest);
+  });
+
   it("restarts Host only when the Host-owned Codex module graph changes", async () => {
     const fixture = createDistributionFixture({ packagedNodeRuntime: true });
     const runtime = new FakeWorkstationRuntime();
