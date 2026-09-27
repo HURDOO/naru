@@ -21,25 +21,25 @@ ownership과 integration gate를 지킨다.
 
 ### T67. Claude 별도 운영 앱 배포 준비
 
-- [-] 실행 중인 9443 서버를 보존하면서 Claude용 Naru를 운영 Mac의 별도 앱으로 준비한다.
+- [-] Claude용 Naru를 운영 Mac의 별도 앱으로 준비·인수한다. 9443 테스트 서버는
+  사용자 후속 승인 전까지 보존하고, 승인 후 별도로 중지한다.
   기존 Gateway의 추가 앱 등록과 DurableSession 경계를 조사하고, 기존 운영 앱 등록을 잃지 않도록
   운영 릴리스의 `additionalGatewayApps` 계약을 현재 source에 통합한다.
 - 선행 조건: T63, T66, WV0-D011, 현재 운영 receipt/intent와 기존 등록 앱의 보존 확인.
 - 완료 조건: 선택한 별도 앱 topology의 Host·Gateway·Naru 격리, Claude activity의 Durable Host
   경로, 인증·project root·runtime fencing, 배포 artifact와 정확한 읽기 전용 plan, operations·
   distribution·production smoke를 검증한다. 실제 mutation은 plan digest 승인 후 별도 수행한다.
-- 현재 상태: 운영 status·doctor 정상, 기존 Gateway 추가 등록 2개 확인. 현재 브랜치에 이 계약을
-  additive로 복구하고, 외부 Gateway assertion을 받는 별도 Workstation instance intent·owner-only
-  verifier 검사·Claude Host launcher/hook·Claude 기본 Pane 2개를 구현했다. Host app ID·subject는
-  외부 Gateway binding과 일치하고 credential/socket/data는 독립이다. distribution 대상 테스트,
-  typecheck·lint·build와 로컬 production smoke는 통과했다. 전체 unit은 보호된 현재 Codex daemon
-  경로를 건드리는 2개 파일만 제외하고 814건 통과했다. 브라우저 E2E 23건 중 21건이 첫 실행에
-  통과하고, 모바일 복사·Codex 스크롤 안정성 2건은 단독 재실행에 통과했다. clean committed artifact,
-  실제 private candidate intent의 read-only plan, Gateway route와 독립 Host의 연결 인수는 아직 gate다.
-  9443과 운영 서비스는 변경하지 않는다.
-  Cheers만 허용하려고 상위 projects root를 추가하면 형제 프로젝트까지 열리는 것을 확인해,
-  선택적 exact root 계약(WV0-D012)을 추가했다. 새 source commit/artifact와 read-only plan으로
-  이 범위를 다시 검증한다.
+- 현재 상태: 외부 Gateway assertion을 받는 별도 Workstation instance와 Claude Host launcher/hook,
+  Claude 기본 Pane 2개를 구현했다. Host app ID·subject는 외부 Gateway binding과 일치하고
+  credential/socket/data는 독립이다. Cheers만 허용할 수 있도록 선택적 exact root 계약
+  (WV0-D012)을 추가했다. Node 24 아티팩트는 clean commit에서 빌드했고 distribution 85건,
+  operations 64건, unit 816건(사용 중인 Codex daemon에 접근하는 2개 파일 제외)과 로컬 production
+  smoke를 통과했다. 브라우저 E2E 23건 중 첫 실행의 2건은 단독 재실행에 통과했다.
+- 운영 적용(2026-09-27): 후속 사용자 승인으로 9443 LaunchAgent만 중지하고 테스트 데이터는
+  보존했다. 독립 Claude Workstation을 설치한 뒤 기존 Gateway에 앱을 등록했다. 기존 추가 앱
+  2개를 보존했고 기존 Host PID를 유지한 채 Gateway·Naru만 재시작했다. 두 instance의
+  `status`·`doctor`는 정상이며, 새 HTTPS 경로는 미인증 요청에 401을 반환한다. 실제 패스키
+  로그인, Cheers 연결, Claude Pane 2개 및 hook 상태의 휴대폰 인수는 아직 남아 있어 T67은 진행 중이다.
 
 ### T66. Claude Code 훅 기반 Pane 작업 상태
 

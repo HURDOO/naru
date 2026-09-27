@@ -2,14 +2,14 @@
 
 ## 현재 상태
 
-- T67 진행 중. 이 문서는 운영 변경 승인이 아니라 source·검증·plan 준비 목록이다.
-- 9443 비밀번호 서버는 실행 중인 Claude Pane 때문에 그대로 유지한다.
-- 운영 Workstation은 읽기 전용 `status`·`doctor`에서 정상이다. 운영 Gateway에는 기본 Naru 외에
-  승인된 추가 앱 등록이 이미 있으므로, 새 plan은 해당 등록을 누락하거나 대체하면 안 된다.
+- T67 진행 중. 독립 Claude instance와 기존 Gateway 앱 등록은 사용자 승인 뒤 적용했다.
+- 9443 비밀번호 서버는 후속 승인으로 중지했고, 테스트 데이터와 Keychain 항목은 보존했다.
+- 운영 Gateway의 기존 추가 앱 2개를 보존했다. 두 instance의 `status`·`doctor`는 정상이지만
+  실제 패스키·Claude Pane·hook 동작의 휴대폰 인수는 아직 남았다.
 - 현재 Workstation distribution의 `additionalGatewayApps`는 Gateway route만 등록한다. 추가 앱의
   Naru/Host 서비스, 데이터, 자격 증명과 롤백은 별도 소유다.
-- T66의 standalone 훅은 그대로 유지한다. T67은 별도 Host가 서명한 current-runtime bootstrap을
-  사용하는 Durable Claude 경로를 구현 중이며, 실제 운영 인수는 아직 하지 않았다.
+- T66의 standalone 훅은 그대로 유지한다. T67의 별도 Host가 서명한 current-runtime bootstrap과
+  Durable Claude 경로는 배포됐으며, 실제 Claude turn의 운영 인수는 아직 하지 않았다.
 
 ## 확정 topology — 같은 Gateway 아래 별도 앱
 
@@ -80,5 +80,6 @@ Naru가 중단된 동안 Host PTY는 이어지지만 그 사이 발생한 hook �
 정확한 artifact와 plan이 나온 뒤에만 신규 서비스 설치, 기존 Gateway `reconfigure`, 필요 시 기존
 Workstation `upgrade`를 각각 검토한다. `upgrade`가 Host payload 변경으로 기존 Host를 재시작하면
 현재 운영 PTY가 중단될 수 있으므로 이를 별도로 명시한다. `deploy-naru` 절차대로 정확한 digest와
-변경 서비스에 대한 승인을 받기 전에는 mutation을 실행하지 않는다. 9443, DNS, VPN, 인증서 발급,
-remote repository는 이 작업에서 변경하지 않는다.
+변경 서비스에 대한 승인을 받기 전에는 mutation을 실행하지 않는다. 승인된 이번 적용은 9443
+테스트 서비스 중지, 별도 instance 설치, 기존 Gateway·Naru 재시작으로 한정됐다. 기존 Host와
+DNS, VPN, 인증서 발급, remote repository는 변경하지 않았다.
