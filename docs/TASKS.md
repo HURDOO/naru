@@ -19,6 +19,25 @@ ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 
+### T68. Claude fullscreen 터치 스크롤
+
+- [x] Claude Code fullscreen의 alternate buffer에서 모바일 수직 드래그를 CLI가 협상한 mouse wheel
+      입력으로 전달한다. 일반 shell의 local scrollback과 선택·focus 동작은 유지한다.
+- 선행 조건: T52, T56, T63, D002 및 DurableSession snapshot barrier. `main`의 진행 중 Codex
+  스크롤 변경은 읽기 전용 참고로만 사용하고 해당 작업 트리는 변경하지 않는다.
+- 범위: Host와 standalone PTY snapshot에서 xterm serializer가 누락한 mouse encoding만 복원한다.
+  public wire schema·DB를 바꾸지 않고 observer input과 오래된 controller generation을 계속 거부한다.
+  `/tui default`의 빈 화면은 별도 원인 조사 대상으로 남긴다.
+- 완료 조건: normal/alternate buffer, mouse mode off/on, snapshot/reconnect, observer와 controller
+  handoff, 선택·focus 및 1440px·768px·360px·동적 viewport를 격리 fixture에서 검증한다. 실제
+  Claude Code·모바일 기기 인수와 운영 배포·Host restart는 별도 승인 경계다.
+- 로컬 검증(2026-09-27): Node 24 format·lint·typecheck·build, 관련 unit/integration 42건,
+  외부 보호 소켓 권한이 필요한 4개 파일을 제외한 Vitest 810건 통과. Node 26 브라우저 E2E에서
+  Claude touch·기존 모바일 복사·Claude reconnect 5건 통과했다. 전체 Vitest의 나머지 4개 파일은
+  현재 sandbox의 보호 소켓/외부 프로세스 접근 제약으로 15건 실패했고, Node 24 Playwright의
+  Chrome 실행은 같은 sandbox에서 SIGABRT로 막혔다. 실제 Claude Code와 실기기·운영 서비스는
+  건드리지 않았다.
+
 ### T67. Claude 별도 운영 앱 배포 준비
 
 - [-] Claude용 Naru를 운영 Mac의 별도 앱으로 준비·인수한다. 9443 테스트 서버는

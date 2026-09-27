@@ -203,6 +203,12 @@ flush한다. 동일 sequence를 snapshot과 live 양쪽에 적용하거나 건�
 확인하지 못하거나 bounded queue를 넘으면 incremental recovery를 추측하지 않고 full resync를
 요구한다.
 
+Host의 terminal emulator는 DEC mouse encoding(1006/1016)을 출력 parser에서 추적한다.
+xterm serializer가 이 encoding을 포함하지 않으므로, 같은 output barrier에서 만든 snapshot 끝에
+현재 encoding reset/enable sequence를 덧붙인다. 이 byte는 기존 `serializedState` 문자열 내부에만
+들어가며 public frame schema나 sequence 계약을 바꾸지 않는다. Naru standalone PTY의 staged/full
+snapshot도 동일하게 복원한다.
+
 ### 5.5 metadata repository
 
 SQLite에는 다음 redacted metadata만 저장한다.

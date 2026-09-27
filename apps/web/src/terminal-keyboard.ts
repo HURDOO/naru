@@ -68,3 +68,12 @@ export function isTerminalFocusReport(data: string, focusReportingEnabled: boole
     (data === TERMINAL_FOCUS_IN_SEQUENCE || data === TERMINAL_FOCUS_OUT_SEQUENCE)
   );
 }
+
+/** Mouse protocol input is not typing and must not consume modifiers or reveal the live tail. */
+export function isTerminalMouseReport(data: string, mouseTrackingMode: string): boolean {
+  return (
+    mouseTrackingMode !== "none" &&
+    data.startsWith("\u001b") &&
+    /^\[<\d+;\d+;\d+[Mm]$/.test(data.slice(1))
+  );
+}

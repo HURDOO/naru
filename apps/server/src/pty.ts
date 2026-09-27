@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { TerminalMouseEncoding } from "@naru/domain";
 import { dirname, join } from "node:path";
 import type { SerializeAddon as SerializeAddonInstance } from "@xterm/addon-serialize";
 import type {
@@ -79,6 +80,7 @@ interface Runtime {
   readonly process: PtyProcess;
   readonly terminal: HeadlessTerminalInstance;
   readonly serializer: SerializeAddonInstance;
+  readonly mouseEncoding: TerminalMouseEncoding;
   readonly codexSemantics: CodexRuntimeSemantics | null;
   readonly claudeSemantics: ClaudeActivitySemantics | null;
   readonly codexSessionHookRegistration: CodexSessionHookRegistration | null;
@@ -213,6 +215,20 @@ export class PtySupervisor {
     });
     const serializer = new SerializeAddon();
     terminal.loadAddon(serializer);
+    const mouseEncoding = new TerminalMouseEncoding();
+    for (const [final, enabled] of [
+      ["h", true],
+      ["l", false],
+    ] as const) {
+      terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
+        mouseEncoding.set(params, enabled);
+        return false;
+      });
+    }
+    terminal.parser.registerEscHandler({ final: "c" }, () => {
+      mouseEncoding.reset();
+      return false;
+    });
 
     let process: PtyProcess;
     try {
@@ -250,6 +266,7 @@ export class PtySupervisor {
       process,
       terminal,
       serializer,
+      mouseEncoding,
       codexSemantics:
         context.pane.kind === "codex"
           ? new CodexRuntimeSemantics({
@@ -701,9 +718,9 @@ function captureSnapshot(runtime: Runtime): Promise<{
 }> {
   const snapshot = runtime.writeBarrier.then(() => ({
     sequence: runtime.sequence,
-    serializedState: runtime.serializer.serialize({
-      scrollback: MAX_TERMINAL_SCROLLBACK_ROWS,
-    }),
+    serializedState:
+      runtime.serializer.serialize({ scrollback: MAX_TERMINAL_SCROLLBACK_ROWS }) +
+      runtime.mouseEncoding.serialize(),
     cols: runtime.terminal.cols,
     rows: runtime.terminal.rows,
   }));
@@ -731,7 +748,8 @@ function captureStagedSnapshot(
       runtime.terminal.buffer.active.type === "alternate"
         ? 0
         : clampBottomOffset(runtime.viewportBottomOffset, normal.baseY);
-    const currentState = runtime.serializer.serialize({ scrollback: 0 });
+    const currentState =
+      runtime.serializer.serialize({ scrollback: 0 }) + runtime.mouseEncoding.serialize();
     let previewState = currentState;
     let previewBottomOffset = 0;
 
@@ -760,9 +778,9 @@ function captureStagedSnapshot(
     });
     return {
       ...common,
-      serializedState: runtime.serializer.serialize({
-        scrollback: MAX_TERMINAL_SCROLLBACK_ROWS,
-      }),
+      serializedState:
+        runtime.serializer.serialize({ scrollback: MAX_TERMINAL_SCROLLBACK_ROWS }) +
+        runtime.mouseEncoding.serialize(),
     };
   });
   runtime.writeBarrier = snapshot.then(() => undefined);

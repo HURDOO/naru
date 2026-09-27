@@ -4,6 +4,7 @@ import {
   codexShiftEnterSequence,
   ctrlSequenceForKeyboardEvent,
   isTerminalFocusReport,
+  isTerminalMouseReport,
   latchedModifierSequenceForKeyboardEvent,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
@@ -54,5 +55,13 @@ describe("terminal keyboard boundary", () => {
     expect(isTerminalFocusReport("\u001b[O", true)).toBe(true);
     expect(isTerminalFocusReport("\u001b[I", false)).toBe(false);
     expect(isTerminalFocusReport("ordinary input", true)).toBe(false);
+  });
+
+  it("distinguishes negotiated SGR mouse reports from typing and focus reports", () => {
+    expect(isTerminalMouseReport("\u001b[<65;12;7M", "any")).toBe(true);
+    expect(isTerminalMouseReport("\u001b[<0;12;7m", "any")).toBe(true);
+    expect(isTerminalMouseReport("\u001b[<65;12;7M", "none")).toBe(false);
+    expect(isTerminalMouseReport("\u001b[I", "any")).toBe(false);
+    expect(isTerminalMouseReport("ordinary input", "any")).toBe(false);
   });
 });

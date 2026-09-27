@@ -7,6 +7,7 @@ import {
 } from "@naru/contracts";
 
 export type SplitDirection = SplitNode["direction"];
+export { TerminalMouseEncoding } from "./terminal-mouse-encoding.js";
 
 export function paneNode(paneId: string): PaneNode {
   return { type: "pane", paneId, collapsed: false };

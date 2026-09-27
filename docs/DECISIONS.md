@@ -1,5 +1,20 @@
 # Naru 결정 기록
 
+## D018. Claude fullscreen 터치 스크롤은 협상된 mouse 입력으로 전달한다
+
+- 상태: T68 격리 fixture 검증 완료, 운영 적용 전
+- Claude fullscreen의 alternate buffer는 native terminal scrollback 대신 CLI가 대화 viewport를
+  소유한다. Naru는 해당 buffer에서 mouse tracking이 활성화됐을 때만 모바일 수직 드래그를 xterm의
+  wheel 경로로 전달한다. normal buffer와 mouse mode off는 기존 local scrollback을 유지한다.
+- xterm serializer가 복원하지 않는 DEC mouse encoding 1006/1016만 Host와 standalone PTY의
+  public parser hook에서 추적해 snapshot에 더한다. tracking mode는 기존 serializer에 맡기고,
+  같은 sequence barrier와 state 상한을 적용한다. public event schema/version과 DB migration은 없다.
+- wheel report도 기존 attachment/controller generation fence를 통과한다. observer의 터치는 PTY
+  입력이 되지 않는다. 입력이 아닌 mouse report는 live tail 이동·모바일 modifier 소비를 일으키지
+  않는다. `/tui default` 렌더링과 CLI 설정을 임의 변경하지 않는다.
+- 새 Host 코드 적용은 별도 immutable release와 승인된 Host restart가 필요하다. 이미 실행 중인 PTY
+  연속성은 보장하지 않으며, 실제 모바일·Claude 인수 전에는 운영 동작을 해결했다고 주장하지 않는다.
+
 ## D017. 별도 Gateway 앱의 Claude PTY와 작업 상태는 독립 Host가 소유한다
 
 - 상태: T67 구현 중. 기존 Gateway 아래 별도 앱 선택은 사용자 확인 완료; 운영 변경은 아직 하지 않는다.

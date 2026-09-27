@@ -30,8 +30,10 @@ export interface TerminalScrollbarTouchDrag {
 
 interface ScrollableTerminal {
   rows: number;
+  readonly modes?: { readonly mouseTrackingMode: string };
   buffer: {
     active: {
+      readonly type?: "normal" | "alternate";
       readonly baseY: number;
       readonly viewportY: number;
     };
@@ -244,7 +246,30 @@ export function attachTerminalTouchScroll(
     if (!update.scrolling) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
-    if (update.lines !== 0) terminal.scrollLines(update.lines);
+    if (update.lines !== 0) {
+      if (
+        terminal.buffer.active.type === "alternate" &&
+        terminal.modes?.mouseTrackingMode !== undefined &&
+        terminal.modes.mouseTrackingMode !== "none"
+      ) {
+        // xterm encodes the negotiated mouse protocol and coordinates. Its onData callback
+        // still passes through the current attachment/controller generation fence.
+        for (let i = 0; i < Math.min(Math.abs(update.lines), 24); i++) {
+          screen.dispatchEvent(
+            new WheelEvent("wheel", {
+              bubbles: true,
+              cancelable: true,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              deltaY: Math.sign(update.lines),
+              deltaMode: WheelEvent.DOM_DELTA_LINE,
+            }),
+          );
+        }
+      } else {
+        terminal.scrollLines(update.lines);
+      }
+    }
   };
 
   const finishPointer = (event: PointerEvent, canceled: boolean): void => {

@@ -42,8 +42,27 @@ if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
 }
 process.stdin.setEncoding("utf8");
 let inputBuffer = "";
+let fullscreenScroll = false;
+let scrollPosition = 0;
 process.stdin.on("data", (input) => {
-  inputBuffer = `${inputBuffer}${input}`.slice(-64);
+  inputBuffer = `${inputBuffer}${input}`.slice(-256);
+  if (fullscreenScroll) {
+    const mouseWheel = new RegExp(String.raw`\x1b\[<(64|65);\d+;\d+M`, "g");
+    for (const report of inputBuffer.matchAll(mouseWheel)) {
+      scrollPosition += report[1] === "64" ? 1 : -1;
+      process.stdout.write(
+        `\u001b[H\u001b[2KFAKE_CLAUDE_SCROLL_${String(scrollPosition).padStart(3, "0")}`,
+      );
+    }
+    inputBuffer = inputBuffer.replace(mouseWheel, "").slice(-64);
+    return;
+  }
+  if (inputBuffer.includes("scroll-test")) {
+    fullscreenScroll = true;
+    inputBuffer = "";
+    process.stdout.write("\u001b[?1049h\u001b[?1003;1006h\u001b[2J\u001b[HFAKE_CLAUDE_SCROLL_000");
+    return;
+  }
   const activityCommands = [
     ["status-start", "UserPromptSubmit", "FAKE_CLAUDE_RUNNING"],
     ["status-need", "PermissionRequest", "FAKE_CLAUDE_NEEDS_PERMISSION"],
