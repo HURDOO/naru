@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ClaudeActivityEventSchema } from "../../claude-activity-events.js";
 import { CodexHookEventSchema, CodexInteractionSnapshotSchema } from "./events.js";
 
 const BootstrapSchema = z
@@ -24,6 +25,17 @@ export const CodexIntegrationRequestSchema = z.discriminatedUnion("type", [
     bootstrap: BootstrapSchema,
     snapshot: CodexInteractionSnapshotSchema,
   }),
+  z.strictObject({
+    version: z.literal(1),
+    type: z.literal("claude-launch"),
+    bootstrap: BootstrapSchema,
+  }),
+  z.strictObject({
+    version: z.literal(1),
+    type: z.literal("claude-hook"),
+    bootstrap: BootstrapSchema,
+    event: ClaudeActivityEventSchema,
+  }),
 ]);
 export type CodexIntegrationRequest = z.infer<typeof CodexIntegrationRequestSchema>;
 
@@ -48,6 +60,17 @@ export const CodexIntegrationReplySchema = z.union([
     version: z.literal(1),
     ok: z.literal(true),
     type: z.literal("interaction"),
+  }),
+  z.strictObject({
+    version: z.literal(1),
+    ok: z.literal(true),
+    type: z.literal("claude-launch"),
+    plan: LaunchPlanSchema,
+  }),
+  z.strictObject({
+    version: z.literal(1),
+    ok: z.literal(true),
+    type: z.literal("claude-hook"),
   }),
   z.strictObject({
     version: z.literal(1),

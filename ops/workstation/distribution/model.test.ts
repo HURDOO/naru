@@ -1,5 +1,8 @@
+import { generateKeyPairSync } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseEnv } from "node:util";
+import { loadConfig } from "../../../apps/server/src/config.js";
 import { DurableSessionHostConfigSchema } from "../../../apps/durable-session-host/src/config.js";
 import { WorkstationGatewayConfigSchema } from "../../../apps/workstation-gateway/src/config.js";
 import { verifyDistributionArtifact } from "./artifact.js";
@@ -16,6 +19,145 @@ import {
 } from "./test-support.js";
 
 describe("T14 distribution identity and configuration", () => {
+  it("renders opt-in exact roots without widening sibling Project admission", () => {
+    const fixture = createDistributionFixture();
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      exactProjectRoots: [fixture.projectRoot],
+    });
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(intent, artifact.summary);
+    const generated = createInstanceConfiguration(intent, artifact.summary, layout);
+    expect(generated.naruEnvironment.NARU_EXACT_PROJECT_ROOTS).toBe(
+      JSON.stringify([fixture.projectRoot]),
+    );
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        exactProjectRoots: [`${fixture.root}/sibling`],
+      }),
+    ).toThrow(/uniquely name allowed/);
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        exactProjectRoots: [fixture.projectRoot, fixture.projectRoot],
+      }),
+    ).toThrow(/uniquely name allowed/);
+  });
+
+  it("adds a Claude Host profile only when the intent names an executable", () => {
+    const fixture = createDistributionFixture();
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      claudeExecutable: fixture.codexExecutable,
+    });
+    const layout = createInstanceLayout(intent, artifact.summary);
+    const generated = createInstanceConfiguration(intent, artifact.summary, layout);
+    const parsedHost = DurableSessionHostConfigSchema.parse(generated.host);
+    expect(generated.naruEnvironment.NARU_DURABLE_SESSION_PROFILE_IDS).toContain("claude-code");
+    expect(generated.naruEnvironment.NARU_CLAUDE_PATH).toBe(fixture.codexExecutable);
+    expect(
+      parsedHost.profiles.some(
+        (profile) =>
+          profile.profileId === "claude-code" &&
+          profile.executable === layout.runtime.nodeExecutable &&
+          profile.args[0] === layout.entrypoints.claudeIntegrationLauncher,
+      ),
+    ).toBe(true);
+    expect(parsedHost.integrationPolicies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          policyRef: "naru-claude-v0",
+          integrationKind: "claude",
+          profileIds: ["claude-code"],
+        }),
+      ]),
+    );
+    expect(generated.gateway.appRegistrations).toHaveLength(1);
+  });
+  it("binds an isolated Claude app to another Gateway while retaining its own Host", () => {
+    const fixture = createDistributionFixture();
+    const binding = {
+      instanceId: "primary-u501-123456789abc",
+      appId: "claude-lab",
+      ownerSubject: "owner-u501-123456789abc",
+      verifierKeysFile: `${fixture.root}/primary-verifier.json`,
+    };
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      naruAppBasePath: "/claude-lab",
+      claudeExecutable: fixture.codexExecutable,
+      defaultAgentPaneKind: "claude",
+      externalGateway: binding,
+    });
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(intent, artifact.summary);
+    const generated = createInstanceConfiguration(intent, artifact.summary, layout);
+    const { publicKey } = generateKeyPairSync("ed25519");
+    writeFileSync(
+      binding.verifierKeysFile,
+      `${JSON.stringify({
+        version: 1,
+        keys: [
+          {
+            keyId: "fixture-key",
+            algorithm: "Ed25519",
+            publicKeyPem: publicKey.export({ type: "spki", format: "pem" }),
+          },
+        ],
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const parsedNaru = loadConfig(generated.naruEnvironment, fixture.root);
+    expect(parsedNaru.authMode).toBe("gateway-managed");
+    expect(parsedNaru.sessionRuntime).toMatchObject({
+      owner: "durable-host",
+      appId: binding.appId,
+      subject: binding.ownerSubject,
+    });
+    expect(generated.naruEnvironment).toMatchObject({
+      NARU_GATEWAY_INSTANCE_ID: binding.instanceId,
+      NARU_GATEWAY_APP_ID: binding.appId,
+      NARU_GATEWAY_OWNER_SUBJECT: binding.ownerSubject,
+      NARU_GATEWAY_VERIFIER_KEYS_FILE: binding.verifierKeysFile,
+      NARU_DURABLE_SESSION_SOCKET_PATH: layout.sockets.host,
+      NARU_DURABLE_SESSION_CREDENTIAL_FILE: layout.files.hostCredential,
+      NARU_DURABLE_SESSION_APP_ID: binding.appId,
+      NARU_DURABLE_SESSION_SUBJECT: binding.ownerSubject,
+      NARU_DEFAULT_AGENT_PANE_KIND: "claude",
+    });
+    expect(generated.host.appRegistrations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          appId: binding.appId,
+          credentialFile: layout.files.hostCredential,
+          subjectScope: { kind: "ids", ids: [binding.ownerSubject] },
+        }),
+      ]),
+    );
+    expect(generated.gateway.appRegistrations).toHaveLength(1);
+    expect(() =>
+      parseInstallationIntent({ ...intent, ingress: { kind: "trusted-lan", profileId: "lan" } }),
+    ).toThrow();
+    expect(() => parseInstallationIntent({ ...intent, version: 2 })).toThrow();
+    expect(() => parseInstallationIntent({ ...intent, naruAppBasePath: "/" })).toThrow();
+    expect(() => parseInstallationIntent({ ...intent, additionalGatewayApps: [] })).toThrow();
+    expect(() =>
+      parseInstallationIntent({ ...intent, externalGateway: { ...binding, extra: true } }),
+    ).toThrow();
+    for (const appId of ["naru", "local-session-cli", "Invalid ID"]) {
+      expect(() =>
+        parseInstallationIntent({ ...intent, externalGateway: { ...binding, appId } }),
+      ).toThrow();
+    }
+    expect(() => parseInstallationIntent({ ...intent, claudeExecutable: undefined })).toThrow();
+    const selfBound = parseInstallationIntent({
+      ...intent,
+      externalGateway: { ...binding, instanceId: layout.namespace },
+    });
+    expect(() => createInstanceLayout(selfBound, artifact.summary)).toThrow();
+  });
   it("derives a private namespace and four package-owned labels without user data", () => {
     const fixture = createDistributionFixture();
     const artifact = verifyDistributionArtifact(fixture.artifactRoot);
@@ -205,6 +347,60 @@ describe("T14 distribution identity and configuration", () => {
         parseInstallationIntent({ ...fixture.intent, naruAppBasePath: value }),
       ).toThrow();
     }
+  });
+
+  it("preserves approved additional Gateway routes without changing Host or Naru identity", () => {
+    const fixture = createPrivateIngressDistributionFixture();
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      additionalGatewayApps: [
+        { appId: "claude-lab", routePrefix: "/claude-lab", upstreamPort: 45999 },
+      ],
+    });
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(intent, artifact.summary);
+    const generated = createInstanceConfiguration(intent, artifact.summary, layout);
+    expect(WorkstationGatewayConfigSchema.parse(generated.gateway).appRegistrations).toEqual([
+      expect.objectContaining({ appId: "naru", routePrefix: "/naru" }),
+      {
+        appId: "claude-lab",
+        mode: "gateway-managed",
+        routePrefix: "/claude-lab",
+        upstream: { kind: "loopback", origin: "http://127.0.0.1:45999" },
+        includeCredentialRef: true,
+        enabled: true,
+      },
+    ]);
+    expect(generated.host.appRegistrations).toHaveLength(2);
+    expect(generated.naruEnvironment.NARU_GATEWAY_APP_ID).toBe("naru");
+  });
+
+  it("rejects unsafe, overlapping, and package-owned additional Gateway routes", () => {
+    const fixture = createPrivateIngressDistributionFixture();
+    const app = { appId: "claude-lab", routePrefix: "/claude-lab", upstreamPort: 45999 };
+    for (const additionalGatewayApps of [
+      [{ ...app, appId: "naru" }],
+      [{ ...app, routePrefix: "/naru/child" }],
+      [{ ...app, routePrefix: "/_gateway/apps" }],
+      [{ ...app, upstreamPort: 0 }],
+      [{ ...app, enabled: true }],
+      [app, { ...app, appId: "another", routePrefix: "/claude-lab/child" }],
+    ]) {
+      expect(() => parseInstallationIntent({ ...fixture.intent, additionalGatewayApps })).toThrow();
+    }
+    const rootIntent = { ...fixture.intent, naruAppBasePath: undefined };
+    expect(() => parseInstallationIntent({ ...rootIntent, additionalGatewayApps: [app] })).toThrow(
+      /overlap/,
+    );
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const layout = createInstanceLayout(fixture.intent, artifact.summary);
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      additionalGatewayApps: [{ ...app, upstreamPort: layout.ports.naru }],
+    });
+    expect(() => createInstanceConfiguration(intent, artifact.summary, layout)).toThrow(
+      /package-owned listener/,
+    );
   });
 
   it("rejects private ingress Origin drift instead of falling back to legacy config", () => {

@@ -17,6 +17,7 @@ import {
 import type { NaruRepository, PaneSessionLink, PaneSessionOperation } from "./database.js";
 import { AppError } from "./errors.js";
 import type { NaruCodexIntegrationPort } from "./integrations/codex/port.js";
+import type { NaruClaudeIntegrationPort } from "./integrations/claude/port.js";
 import type {
   NaruSessionFacade,
   SessionActivityListener,
@@ -142,6 +143,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
   >();
   readonly #removeIntegrationActivityListener: (() => void) | null;
   readonly #removeIntegrationEventListener: (() => void) | null;
+  readonly #removeClaudeActivityListener: (() => void) | null;
 
   constructor(
     private readonly repository: NaruRepository,
@@ -151,6 +153,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
     private readonly now: () => number = Date.now,
     private readonly codexIntegration?: NaruCodexIntegrationPort,
     private readonly integrationTransport?: { close(): Promise<void> },
+    private readonly claudeIntegration?: NaruClaudeIntegrationPort,
   ) {
     this.#removeIntegrationActivityListener =
       codexIntegration?.onActivity((change) => this.#emitActivity(change)) ?? null;
@@ -167,6 +170,8 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
           this.#emitCodexIdentityForRuntime(event.paneId, event.runtimeId, null, false);
         }
       }) ?? null;
+    this.#removeClaudeActivityListener =
+      claudeIntegration?.onActivity((change) => this.#emitActivity(change)) ?? null;
   }
 
   async reconcile(): Promise<void> {
@@ -381,6 +386,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
     await Promise.allSettled(this.#paneBarriers.values());
     this.#removeIntegrationActivityListener?.();
     this.#removeIntegrationEventListener?.();
+    this.#removeClaudeActivityListener?.();
     for (const observer of this.#integrationObservers.values()) observer.dispose();
     this.#integrationObservers.clear();
     await this.integrationTransport?.close();
@@ -392,9 +398,15 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
   async #create(paneId: string, columns: number, rows: number): Promise<void> {
     const context = this.repository.getPaneContext(paneId);
     if (!context) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
-    if (context.pane.kind === "codex" && this.codexIntegration !== undefined) {
+    const integration =
+      context.pane.kind === "codex"
+        ? this.codexIntegration
+        : context.pane.kind === "claude"
+          ? this.claudeIntegration
+          : undefined;
+    if (integration !== undefined) {
       try {
-        this.codexIntegration.preflight(paneId);
+        integration.preflight(paneId);
       } catch (error) {
         const normalized = toAppError(error);
         this.repository.setPaneStatus(paneId, "error", null, normalized.code);
@@ -403,10 +415,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
         throw normalized;
       }
     }
-    const integrationBindingId =
-      context.pane.kind === "codex" && this.codexIntegration !== undefined
-        ? randomUUID()
-        : undefined;
+    const integrationBindingId = integration === undefined ? undefined : randomUUID();
     const pending = this.repository.preparePaneSessionOperation(
       paneId,
       "create",
@@ -436,7 +445,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
       this.#recordOperationFailure(paneId, "create", operationKey, error);
       throw toAppError(error);
     }
-    await this.#bindCodexRuntime(paneId, created);
+    await this.#bindAgentRuntime(paneId, created);
   }
 
   async #start(
@@ -475,6 +484,11 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
       return;
     }
     const context = this.repository.getPaneContext(paneId);
+    if (context?.pane.kind === "claude" && this.claudeIntegration !== undefined) {
+      await this.#remove(paneId);
+      await this.#create(paneId, columns, rows);
+      return;
+    }
     if (context?.pane.kind === "codex" && this.codexIntegration !== undefined) {
       await this.#remove(paneId);
       const stopped = this.repository.getPaneContext(paneId)?.pane;
@@ -515,7 +529,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
         result.session,
       );
       this.#sessionViews.set(link.paneId, result.session);
-      await this.#bindCodexRuntime(link.paneId, result.session);
+      await this.#bindAgentRuntime(link.paneId, result.session);
     } catch (error) {
       this.#recordOperationFailure(link.paneId, "start", operationKey, error);
       throw toAppError(error);
@@ -535,6 +549,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
     const sessionId = requireSessionId(link);
     const runtimeId = requireViewRuntimeId(session);
     this.codexIntegration?.markStopping(paneId, runtimeId);
+    this.claudeIntegration?.markStopping(paneId, runtimeId);
     const revision = session.sessionRevision;
     const pending = this.repository.preparePaneSessionOperation(paneId, "stop", {
       sessionRevision: revision,
@@ -556,6 +571,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
     } catch (error) {
       if (error instanceof DurableSessionHostOperationError) {
         this.codexIntegration?.cancelStopping(paneId, runtimeId);
+        this.claudeIntegration?.cancelStopping(paneId, runtimeId);
       }
       this.#recordOperationFailure(paneId, "stop", operationKey, error);
       throw toAppError(error);
@@ -680,7 +696,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
       if (result.operation !== "getSession") throw new Error("Unexpected Host operation.");
       this.repository.syncPaneSession(paneId, result.session);
       this.#sessionViews.set(paneId, result.session);
-      await this.#bindCodexRuntime(paneId, result.session);
+      await this.#bindAgentRuntime(paneId, result.session);
       return result.session;
     } catch (error) {
       if (isHostError(error, "SESSION_NOT_FOUND")) {
@@ -710,6 +726,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
 
       this.#disposeIntegrationObserver(binding.paneId, binding.runtimeId);
       this.codexIntegration?.disposeRuntime(binding.paneId, binding.runtimeId);
+      this.claudeIntegration?.disposeRuntime(binding.paneId, binding.runtimeId);
 
       if (reason === "SESSION_NOT_FOUND") {
         this.#markRuntimeServerStopped(binding);
@@ -739,7 +756,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
 
       this.#sessionViews.set(binding.paneId, session);
       if (isLiveSession(session)) {
-        await this.#bindCodexRuntime(binding.paneId, session);
+        await this.#bindAgentRuntime(binding.paneId, session);
         return;
       }
       this.#markRuntimeServerStopped(binding);
@@ -828,29 +845,39 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
       throw new AppError("PROJECT_OUTSIDE_ROOT", 403, "프로젝트가 Host root 범위를 벗어났습니다.");
     }
     const relativePath = relative(root.path, projectPath).split(sep).join("/");
+    if (profileId === "claude-code" && this.claudeIntegration === undefined) {
+      throw new AppError(
+        "CLAUDE_EXECUTABLE_MISSING",
+        503,
+        "Claude Host 통합이 설정되지 않았습니다.",
+      );
+    }
+    const integration =
+      integrationBindingId === null
+        ? undefined
+        : profileId === "claude-code"
+          ? this.claudeIntegration?.descriptor(integrationBindingId)
+          : this.codexIntegration?.descriptor(integrationBindingId);
     return {
       kind: "profile",
       profileId,
       cwd: { rootId: root.rootId, relativePath },
       terminal: { cols: columns, rows, term: "xterm-256color" },
-      ...(integrationBindingId === null || this.codexIntegration === undefined
-        ? {}
-        : { integration: this.codexIntegration.descriptor(integrationBindingId) }),
+      ...(integration === undefined ? {} : { integration }),
     };
   }
 
-  async #bindCodexRuntime(paneId: string, session: SessionView): Promise<void> {
-    if (
-      this.codexIntegration === undefined ||
-      session.lifecycle !== "running" ||
-      session.runtimeId === null ||
-      this.repository.getPaneContext(paneId)?.pane.kind !== "codex"
-    ) {
+  async #bindAgentRuntime(paneId: string, session: SessionView): Promise<void> {
+    const pane = this.repository.getPaneContext(paneId)?.pane;
+    if (session.lifecycle !== "running" || session.runtimeId === null || pane === undefined) return;
+    if (pane.kind === "codex" && this.codexIntegration !== undefined) {
+      this.codexIntegration.bindRuntime(paneId, session);
+    } else if (pane.kind === "claude" && this.claudeIntegration !== undefined) {
+      this.claudeIntegration.bindRuntime(paneId, session);
+    } else {
       return;
     }
-    this.codexIntegration.bindRuntime(paneId, session);
-    const pane = this.repository.getPaneContext(paneId)?.pane;
-    if (pane !== undefined && pane.codexSessionId !== null) {
+    if (pane.kind === "codex" && pane.codexSessionId !== null) {
       this.#emitCodexIdentityForRuntime(
         paneId,
         session.runtimeId,
@@ -867,7 +894,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
       sessionId: session.sessionId,
       runtimeId,
       sessionRevision: session.sessionRevision,
-      attachmentKey: `codex-integration:${paneId}`,
+      attachmentKey: `${pane.kind}-integration:${paneId}`,
     };
     const dispose = await this.stream.attach(
       binding,
@@ -880,7 +907,9 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
         }
         if (frame.type === "terminal.exit") {
           this.codexIntegration?.observeExit(paneId, runtimeId, frame.exitCode);
+          this.claudeIntegration?.observeExit(paneId, runtimeId, frame.exitCode);
           this.codexIntegration?.disposeRuntime(paneId, runtimeId);
+          this.claudeIntegration?.disposeRuntime(paneId, runtimeId);
           const current = this.#integrationObservers.get(paneId);
           if (current?.runtimeId === runtimeId) {
             current.dispose();

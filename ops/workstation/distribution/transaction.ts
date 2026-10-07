@@ -14,6 +14,7 @@ import { createServer, type Server } from "node:net";
 import { dirname, join, normalize } from "node:path";
 import { digestPrivateIngressIntentV0 } from "../../../packages/contracts/src/private-ingress/v0/index.js";
 import { parseNaruAppBasePath } from "../../../packages/contracts/src/naru-app/v1/index.js";
+import { loadGatewayVerifierKeys } from "../../../apps/server/src/gateway-auth.js";
 import {
   ARTIFACT_FEATURE_LOCAL_SESSION_CLI,
   DISTRIBUTION_SCHEMA_VERSION,
@@ -87,9 +88,11 @@ export type DistributionOperation = "install" | "upgrade" | "reconfigure" | "rol
 export type DistributionPlanStatus = "ready" | "blocked" | "needs-input";
 export type DistributionCheckStatus = "ok" | "warning" | "blocked" | "unavailable";
 
-const HOST_CODEX_ENTRYPOINTS = [
+const HOST_AGENT_ENTRYPOINTS = [
   "components/naru/dist/codex-integration-launcher.js",
   "components/naru/dist/codex-session-hook-cli.js",
+  "components/naru/dist/claude-integration-launcher.js",
+  "components/naru/dist/claude-integration-hook-cli.js",
 ] as const;
 
 export interface DistributionCheck {
@@ -266,6 +269,7 @@ export async function planDistribution(
     rollbackReceipt,
     artifact,
     layout,
+    targetIntent,
   );
   const configuration = createRuntimeConfiguration(
     targetIntent,
@@ -342,6 +346,45 @@ export async function planDistribution(
     actual: `${artifact.summary.buildId}:${artifact.summary.manifestDigest}`,
     owner: "package",
   });
+  if (targetIntent.externalGateway !== undefined) {
+    try {
+      assertPrivateFile(targetIntent.externalGateway.verifierKeysFile, layout.uid);
+      loadGatewayVerifierKeys(targetIntent.externalGateway.verifierKeysFile);
+      checks.push({
+        id: "credential.external-gateway-verifier-public",
+        status: "ok",
+        expected: "existing Gateway owner-only public verifier keys",
+        actual: "verified",
+        owner: "user",
+      });
+    } catch (error) {
+      checks.push({
+        id: "credential.external-gateway-verifier-public",
+        status: "blocked",
+        expected: "existing Gateway owner-only public verifier keys",
+        actual: safeError(error),
+        owner: "user",
+        remediation: "Bind the exact existing Gateway verifier file and create a new plan.",
+      });
+    }
+  }
+  if (targetIntent.claudeExecutable !== undefined) {
+    const hostManifest = verifyDistributionArtifact(runtimeReleases.host.root).manifest;
+    const hostPaths = new Set(hostManifest.files.map((file) => file.path));
+    const missing = HOST_AGENT_ENTRYPOINTS.slice(2).filter((path) => !hostPaths.has(path));
+    checks.push({
+      id: "artifact.claude-host-entrypoints",
+      status: missing.length === 0 ? "ok" : "blocked",
+      expected: "selected immutable Host release contains the Claude launcher and hook",
+      actual: missing.length === 0 ? "verified" : "missing Claude Host entrypoint",
+      owner: "package",
+      ...(missing.length === 0
+        ? {}
+        : {
+            remediation: "Use an approved upgrade that promotes the Claude-capable Host release.",
+          }),
+    });
+  }
   const managedIssues = inspectManagedInstancePaths(layout, layout.uid);
   checks.push({
     id: "filesystem.private-ancestors",
@@ -965,11 +1008,18 @@ function configurationDigest(
       installationId: intent.installationId,
       canonicalBrowserOrigin: intent.canonicalBrowserOrigin,
       naruAppBasePath: layout.appBasePath,
+      additionalGatewayApps: intent.additionalGatewayApps ?? [],
+      externalGateway: intent.externalGateway ?? null,
+      defaultAgentPaneKind: intent.defaultAgentPaneKind ?? "codex",
       allowedProjectRoots: intent.allowedProjectRoots,
+      exactProjectRoots: intent.exactProjectRoots ?? [],
       nodeExecutable: layout.runtime.nodeExecutable,
       nodeRuntime: artifact.nodeRuntime ?? null,
       shellExecutable: intent.shellExecutable,
       codexExecutable: intent.codexExecutable,
+      ...(intent.claudeExecutable === undefined
+        ? {}
+        : { claudeExecutable: intent.claudeExecutable }),
       vapidSubject: intent.vapidSubject ?? intent.canonicalBrowserOrigin,
       ingress: intent.ingress,
     }),
@@ -1095,9 +1145,14 @@ function nonRuntimeSettings(intent: WorkstationInstallationIntent): unknown {
     homeDirectory: intent.homeDirectory,
     canonicalBrowserOrigin: intent.canonicalBrowserOrigin,
     naruAppBasePath: intent.naruAppBasePath ?? "/",
+    additionalGatewayApps: intent.additionalGatewayApps ?? [],
+    externalGateway: intent.externalGateway ?? null,
+    defaultAgentPaneKind: intent.defaultAgentPaneKind ?? "codex",
     allowedProjectRoots: intent.allowedProjectRoots,
+    exactProjectRoots: intent.exactProjectRoots ?? [],
     shellExecutable: intent.shellExecutable,
     codexExecutable: intent.codexExecutable,
+    ...(intent.claudeExecutable === undefined ? {} : { claudeExecutable: intent.claudeExecutable }),
     vapidSubject: intent.vapidSubject ?? intent.canonicalBrowserOrigin,
     ingress: intent.ingress,
   };
@@ -1289,6 +1344,7 @@ function selectRuntimeReleases(
   rollback: InstallationReceiptV1 | undefined,
   candidate: VerifiedDistributionArtifact,
   layout: WorkstationInstanceLayout,
+  intent: WorkstationInstallationIntent,
 ): RuntimeReleaseSelection {
   if (rollback !== undefined) return verifyReceiptRuntimeReleases(rollback, layout);
   const allCandidate = {
@@ -1309,9 +1365,14 @@ function selectRuntimeReleases(
       "components/host/",
       "components/cli/",
     ]) ||
-    // Host-owned Codex processes execute only these Naru-packaged entrypoints and
-    // their generated module graph, not the Naru server bundle as a whole.
-    artifactModuleGraphChanged(previousHost, candidate, HOST_CODEX_ENTRYPOINTS) ||
+    // Only profiles configured for this Host contribute Naru-packaged launcher code.
+    artifactModuleGraphChanged(
+      previousHost,
+      candidate,
+      intent.claudeExecutable === undefined
+        ? HOST_AGENT_ENTRYPOINTS.slice(0, 2)
+        : HOST_AGENT_ENTRYPOINTS,
+    ) ||
     artifactHasUnclassifiedChanges(previousHost.manifest, candidate.manifest);
   const gatewayChanged = artifactFilesChanged(previousGateway.manifest, candidate.manifest, [
     "runtime/node/",

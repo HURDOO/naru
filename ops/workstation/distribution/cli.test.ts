@@ -85,6 +85,8 @@ describe("T14 Workstation CLI auth command", () => {
       "https://fixture.tailnet.ts.net",
       "--project-root",
       fixture.projectRoot,
+      "--exact-project-root",
+      fixture.projectRoot,
       "--shell",
       "/bin/zsh",
       "--codex",
@@ -102,7 +104,19 @@ describe("T14 Workstation CLI auth command", () => {
       expect(JSON.parse(output)).toMatchObject({
         naruAppBasePath: "/naru",
         nodeExecutable: fixture.nodeExecutable,
+        exactProjectRoots: [fixture.projectRoot],
       });
+      expect(JSON.parse(output)).not.toHaveProperty("claudeExecutable");
+      output = "";
+      expect(
+        await runDistributionCli([
+          ...base.slice(0, -1),
+          "--claude",
+          fixture.codexExecutable,
+          "--json",
+        ]),
+      ).toBe(0);
+      expect(JSON.parse(output)).toMatchObject({ claudeExecutable: fixture.codexExecutable });
       expect(
         await runDistributionCli([
           ...base.slice(0, -1),
@@ -153,6 +167,85 @@ describe("T14 Workstation CLI auth command", () => {
         canonicalBrowserOrigin: fixture.intent.canonicalBrowserOrigin,
         ingress: { kind: "direct-private-tls" },
       });
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
+  it("creates an isolated Claude app intent from an owner-only external Gateway binding", async () => {
+    const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+    const bindingFile = join(fixture.root, "external-gateway.json");
+    const binding = {
+      instanceId: "primary-u501-123456789abc",
+      appId: "claude-lab",
+      ownerSubject: "owner-u501-123456789abc",
+      verifierKeysFile: join(fixture.root, "gateway-verifier.json"),
+    };
+    writeFileSync(bindingFile, `${JSON.stringify(binding)}\n`, { mode: 0o600 });
+    chmodSync(bindingFile, 0o600);
+    let output = "";
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      output += String(chunk);
+      return true;
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(
+        await runDistributionCli([
+          "intent",
+          "--slug",
+          "claude-lab",
+          "--artifact",
+          fixture.artifactRoot,
+          "--origin",
+          "https://naru.example.test",
+          "--app-base-path",
+          "/claude-lab",
+          "--external-gateway",
+          bindingFile,
+          "--default-agent-pane-kind",
+          "claude",
+          "--project-root",
+          fixture.projectRoot,
+          "--shell",
+          "/bin/zsh",
+          "--codex",
+          fixture.codexExecutable,
+          "--claude",
+          fixture.codexExecutable,
+          "--json",
+        ]),
+      ).toBe(0);
+      expect(JSON.parse(output)).toMatchObject({
+        naruAppBasePath: "/claude-lab",
+        externalGateway: binding,
+        defaultAgentPaneKind: "claude",
+      });
+      chmodSync(bindingFile, 0o644);
+      output = "";
+      expect(
+        await runDistributionCli([
+          "intent",
+          "--slug",
+          "claude-lab",
+          "--artifact",
+          fixture.artifactRoot,
+          "--origin",
+          "https://naru.example.test",
+          "--app-base-path",
+          "/claude-lab",
+          "--external-gateway",
+          bindingFile,
+          "--project-root",
+          fixture.projectRoot,
+          "--shell",
+          "/bin/zsh",
+          "--codex",
+          fixture.codexExecutable,
+          "--json",
+        ]),
+      ).toBe(2);
     } finally {
       stdout.mockRestore();
       stderr.mockRestore();

@@ -82,3 +82,30 @@ remote push 승인으로 해석하지 않는다.
   `manual-required`로 종료한다. 정상적인 readiness 실패는 기존 자동 복구를 유지한다.
 - 호환성: 기존 결과 상태와 receipt schema를 그대로 사용하며 데이터 migration은 없다.
   이미 가동 중인 runtime에는 영향이 없고 새 maintenance 실행기 배포 이후 적용된다.
+
+## WV0-D011. 별도 upstream app은 승인된 intent로만 Gateway에 추가한다
+
+- 상태: 기존 운영 릴리스의 additive 계약을 현재 source에 통합. 신규 앱의 운영 등록·배포는 별도 계획과 승인 대상.
+- 결정: 기존 intent의 선택적 `additionalGatewayApps`는 app ID, 겹치지 않는 route prefix, 정확한
+  `127.0.0.1` upstream port만 받는다. Gateway assertion audience는 app ID로 분리하고 Gateway
+  인증·Origin·source policy는 공유한다. 기존 Naru의 Host registration, DB, profile와 environment는
+  변경하지 않는다. 등록 앱의 별도 Host·Naru 프로세스, 자격 증명과 가용성은 이 Workstation
+  transaction 밖에서 독립적으로 준비한다.
+- 운영 경계: receipt-owned Gateway config를 수동 편집하지 않는다. 새 artifact를 검증한 뒤 기존
+  설치의 `reconfigure`와 exact plan digest로 Gateway/Naru만 교체한다. 운영 Host 재시작을 요구하는
+  artifact upgrade와 설정 변경을 하나의 plan으로 합치지 않는다.
+- 호환성·제거: 필드가 없는 기존 intent/receipt는 추가 앱 0개로 읽는다. 구 CLI는 새 필드를
+  거부하므로 지원하는 CLI artifact가 필요하다. 등록 해제는 필드를 제거한 새 `reconfigure` plan으로
+  수행하고 기존 receipt·backup을 보존한다. 별도 upstream의 설치·제거는 별도 승인 경계다.
+
+## WV0-D012. 단일 Project는 opt-in exact root로만 허용한다
+
+- 상태: T67 source 구현·운영 적용 전.
+- 결정: Workstation intent의 선택적 `exactProjectRoots`는 `allowedProjectRoots`에 이미 열거된
+  canonical root만 지정한다. 지정된 root 자체와 그 하위 경로를 Project로 사용할 수 있고,
+  나머지 root는 기존처럼 strict-child 정책을 유지한다. Naru에는 JSON 환경값
+  `NARU_EXACT_PROJECT_ROOTS`로 전달하며 `ProjectPathPolicy`의 realpath·symlink escape 검사가
+  적용된다. 이를 통해 특정 Project를 열기 위해 상위 디렉터리의 다른 Project를 함께 허용하지 않는다.
+- 호환성·migration: 필드가 없는 기존 intent/receipt와 Naru 환경은 기존 strict-child 의미로
+  유지된다. settings digest에 필드를 결합해 값 변경은 새 plan과 승인 대상으로 다룬다.
+  기존 설치의 설정을 소급 수정하지 않는다.

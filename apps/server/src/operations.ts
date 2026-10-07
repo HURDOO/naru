@@ -176,6 +176,9 @@ export function preflightProductionEnvironment(
   if (config.codexExecutable !== undefined) {
     assertExecutableFile(config.codexExecutable, "NARU_CODEX_PATH");
   }
+  if (config.claudeExecutable !== undefined) {
+    assertExecutableFile(config.claudeExecutable, "NARU_CLAUDE_PATH");
+  }
 
   return {
     status: "ok",

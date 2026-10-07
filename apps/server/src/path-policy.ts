@@ -10,12 +10,17 @@ export interface ValidatedProjectPath {
 
 export class ProjectPathPolicy {
   readonly #roots: readonly string[];
+  readonly #exactRoots: ReadonlySet<string>;
 
-  private constructor(roots: readonly string[]) {
+  private constructor(roots: readonly string[], exactRoots: ReadonlySet<string>) {
     this.#roots = roots;
+    this.#exactRoots = exactRoots;
   }
 
-  static async create(configuredRoots: readonly string[]): Promise<ProjectPathPolicy> {
+  static async create(
+    configuredRoots: readonly string[],
+    options: { readonly allowExactRoots?: readonly string[] } = {},
+  ): Promise<ProjectPathPolicy> {
     const roots = await Promise.all(
       configuredRoots.map(async (root) => {
         const resolved = await realpath(resolve(root));
@@ -24,7 +29,14 @@ export class ProjectPathPolicy {
         return resolved;
       }),
     );
-    return new ProjectPathPolicy(roots);
+    const exactRoots = new Set<string>();
+    for (const path of options.allowExactRoots ?? []) {
+      if (!isAbsolute(path) || (await realpath(path)) !== resolve(path) || !roots.includes(path)) {
+        throw new Error("Exact project root must be a configured canonical directory.");
+      }
+      exactRoots.add(path);
+    }
+    return new ProjectPathPolicy(roots, exactRoots);
   }
 
   async validate(input: string): Promise<ValidatedProjectPath> {
@@ -69,7 +81,7 @@ export class ProjectPathPolicy {
     return this.#roots.find((root) => {
       const segment = relative(root, candidate);
       return (
-        segment !== "" &&
+        (segment !== "" || this.#exactRoots.has(root)) &&
         segment !== ".." &&
         !segment.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) &&
         !isAbsolute(segment)

@@ -118,34 +118,43 @@ describe("terminal touch scroll", () => {
     screen.remove();
   });
 
-  it("routes alternate-screen touch drags through negotiated wheel input without focusing", () => {
+  it("sends an alternate-screen drag through xterm's mouse wheel protocol", () => {
     const screen = document.createElement("div");
     document.body.appendChild(screen);
     screen.getBoundingClientRect = () =>
       ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }) as DOMRect;
+    const scrollLines = vi.fn();
+    const focusInput = vi.fn();
     const terminal = {
       rows: 10,
-      buffer: { active: { type: "alternate" as const, baseY: 0, viewportY: 0 } },
       modes: { mouseTrackingMode: "any" },
+      buffer: { active: { type: "alternate" as const, baseY: 0, viewportY: 0 } },
       focus: vi.fn(),
-      scrollLines: vi.fn(),
+      scrollLines,
       scrollToLine: vi.fn(),
     };
-    const wheel: WheelEvent[] = [];
-    screen.addEventListener("wheel", (event) => wheel.push(event));
-    const detach = attachTerminalTouchScroll(screen, terminal);
+    const wheels: WheelEvent[] = [];
+    screen.addEventListener("wheel", (event) => wheels.push(event));
+    const detach = attachTerminalTouchScroll(screen, terminal, undefined, focusInput);
+
     screen.dispatchEvent(touchPointer("pointerdown", 1, 50, 40));
     screen.dispatchEvent(touchPointer("pointermove", 1, 50, 70));
     screen.dispatchEvent(touchPointer("pointerup", 1, 50, 70));
-    expect(wheel).toHaveLength(3);
-    expect(wheel.every((event) => event.deltaY === -1 && event.deltaMode === 1)).toBe(true);
-    expect(terminal.scrollLines).not.toHaveBeenCalled();
-    expect(terminal.focus).not.toHaveBeenCalled();
+
+    expect(wheels).toHaveLength(3);
+    expect(
+      wheels.map((event) => [event.deltaY, event.deltaMode, event.clientX, event.clientY]),
+    ).toEqual(Array.from({ length: 3 }, () => [-1, WheelEvent.DOM_DELTA_LINE, 50, 70]));
+    expect(scrollLines).not.toHaveBeenCalled();
+    expect(focusInput).not.toHaveBeenCalled();
+
     terminal.modes.mouseTrackingMode = "none";
-    screen.dispatchEvent(touchPointer("pointerdown", 2, 50, 70));
-    screen.dispatchEvent(touchPointer("pointermove", 2, 50, 40));
-    screen.dispatchEvent(touchPointer("pointerup", 2, 50, 40));
-    expect(terminal.scrollLines).toHaveBeenCalledWith(3);
+    screen.dispatchEvent(touchPointer("pointerdown", 2, 50, 40));
+    screen.dispatchEvent(touchPointer("pointermove", 2, 50, 70));
+    screen.dispatchEvent(touchPointer("pointerup", 2, 50, 70));
+    expect(wheels).toHaveLength(3);
+    expect(scrollLines).toHaveBeenCalledWith(-3);
+
     detach();
     screen.remove();
   });

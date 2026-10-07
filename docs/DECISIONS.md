@@ -1,5 +1,97 @@
 # Naru 결정 기록
 
+## D018. Claude fullscreen 터치 스크롤은 협상된 mouse 입력으로 전달한다
+
+- 상태: T68 격리 fixture 검증 완료, 운영 적용 전
+- Claude fullscreen의 alternate buffer는 native terminal scrollback 대신 CLI가 대화 viewport를
+  소유한다. Naru는 해당 buffer에서 mouse tracking이 활성화됐을 때만 모바일 수직 드래그를 xterm의
+  wheel 경로로 전달한다. normal buffer와 mouse mode off는 기존 local scrollback을 유지한다.
+- xterm serializer가 복원하지 않는 DEC mouse encoding 1006/1016만 Host와 standalone PTY의
+  public parser hook에서 추적해 snapshot에 더한다. tracking mode는 기존 serializer에 맡기고,
+  같은 sequence barrier와 state 상한을 적용한다. public event schema/version과 DB migration은 없다.
+- wheel report도 기존 attachment/controller generation fence를 통과한다. observer의 터치는 PTY
+  입력이 되지 않는다. 입력이 아닌 mouse report는 live tail 이동·모바일 modifier 소비를 일으키지
+  않는다. `/tui default` 렌더링과 CLI 설정을 임의 변경하지 않는다.
+- 새 Host 코드 적용은 별도 immutable release와 승인된 Host restart가 필요하다. 이미 실행 중인 PTY
+  연속성은 보장하지 않으며, 실제 모바일·Claude 인수 전에는 운영 동작을 해결했다고 주장하지 않는다.
+
+## D017. 별도 Gateway 앱의 Claude PTY와 작업 상태는 독립 Host가 소유한다
+
+- 상태: T67 구현 중. 기존 Gateway 아래 별도 앱 선택은 사용자 확인 완료; 운영 변경은 아직 하지 않는다.
+- 별도 Claude Naru는 기존 Gateway의 canonical Origin·Passkey session을 공유하되 독립 app assertion
+  audience, private data, Host credential, Host socket와 launchd namespace를 사용한다. 기존 운영 Host와
+  Naru DB는 공유하거나 재시작하지 않는다. Gateway route는 WV0-D011의 승인된 intent로만 추가한다.
+- Claude Host profile은 직접 CLI가 아닌 package-owned launcher를 시작한다. Host가 서명한
+  current Session/runtime/cwd/profile/bootstrap과 Naru DB의 Pane binding을 양쪽에서 확인한 뒤
+  canonical Claude 실행 파일을 시작하고 관측 훅을 주입한다. 훅은 lifecycle 종류·session ID·cwd만
+  owner-only integration socket으로 보내고 원문은 전송·저장하지 않는다.
+- Naru/Gateway 재시작은 Host PTY를 종료하지 않는다. Host 재시작은 Session을 stopped로 복구한다.
+  기존 Claude runtime은 새 훅을 소급 주입하지 않고, 새 runtime부터 적용한다. Host public protocol과
+  Codex integration의 기존 wire 형식은 유지하며 private Naru integration에 additive 메시지만 더한다.
+- 별도 앱 설치·Gateway reconfigure·source admission·필요한 DB backup은 각각 정확한 plan과 승인으로
+  실행한다. 완료된 D013/D016 standalone 계약과 운영 기본 Naru 설정은 소급 변경하지 않는다.
+- 별도 instance intent의 `externalGateway`와 `defaultAgentPaneKind`는 optional additive field다.
+  기존 intent/receipt는 로컬 Gateway·Codex 기본값으로 해석하고 schema version은 유지한다.
+  외부 binding은 v1 ingress none·non-root route에만 허용하며, 독립 Host credential과 subject는
+  외부 Gateway assertion subject와 섞지 않는다. 제거·rollback은 선택된 receipt의 binding을 복원한다.
+  현재 distribution은 새 instance의 loopback 내부 Gateway job도 관리하지만 브라우저·Passkey route는
+  기존 Gateway만 사용한다. 이 job의 제거는 별도 lifecycle migration으로 남긴다.
+
+## D016. Claude 작업 상태는 분리된 관측 훅으로 반영한다
+
+- 상태: T66 로컬 구현·검증 완료, 실행 중인 9443·운영 배포 범위 밖
+- Claude Code `UserPromptSubmit`·`PermissionRequest`·`Notification`·`PostToolUse`·
+  `PostToolUseFailure`·`PermissionDenied`·`Stop`·`StopFailure`·`SessionStart`·`SessionEnd`
+  훅에서 redacted lifecycle 신호만 받는다. 훅은 Claude의 permission·stop 결정을 바꾸지 않고,
+  프롬프트·도구 payload·terminal/transcript 원문은 전송·저장·로그하지 않는다.
+- Pane/runtime별 짧은 수명 capability와 owner-only UDS, session identity·cwd 검사로 오래된
+  신호를 차단한다. 기존 Codex 훅·relay 의미, 기본 Pane/DB schema, production Host profile은
+  변경하지 않는다. 실제 승인 응답 시점은 훅으로 직접 관측할 수 없으므로 후속 도구 이벤트에서
+  `interaction-required`를 해제하며, 동시 승인 요청의 정확한 개수는 주장하지 않는다.
+- 이 단계는 standalone Naru의 opt-in Claude Pane 상태를 구현한다. Durable Host의 Claude
+  통합 및 실제 9443 적용은 별도 계약·배포 승인 이후로 둔다.
+- 기존 `PaneActivity` 값과 WebSocket 형식을 재사용하므로 public schema·DB migration은 없다.
+  새 배지를 보여 주는 Web consumer와 서버는 함께 빌드해야 한다. 기존 Claude runtime은
+  재시작 전까지 훅이 없으며, 이 변경만으로 자동 재시작하지 않는다.
+
+## D015. 격리 9443의 Cheers 연결 worktree 두 루트만 확장한다
+
+- 상태: T65 격리 9443 구현·검증 완료, 운영 적용 범위 밖
+- 사용자 승인에 따라 격리 비밀번호 서버의 기존 exact Cheers Project root는 유지하고,
+  그 상위 coding 디렉터리 아래의 `worktree`와 `worktrees` 형제 디렉터리만 추가한다.
+  두 새 root 자체는 Project가 아니며 각 root의 strict child만 등록할 수 있다. 상위 coding
+  디렉터리 전체, symlink escape, 다른 형제 디렉터리는 허용하지 않는다.
+- 이 범위는 격리 서버의 owner-only 설정에서만 활성화된다. Public API·DB migration은 없고,
+  테스트 Naru만 재시작한다. 운영 Host·Naru·Gateway 설정과 프로세스는 변경하지 않는다.
+
+## D014. 9443 Claude 인수는 운영 기본값과 분리한다
+
+- 상태: T64 격리 9443 구현·검증 완료, 운영 적용 범위 밖
+- Claude Code 2개와 Dev Terminal은 격리 9443 서버의 새 Project에만 적용하는 opt-in
+  default workspace다. 기존 Project/Pane 기록과 Workstation 기본 Codex workspace는 변경하지
+  않는다. DB schema migration은 필요 없으며 테스트 Naru 재시작 뒤 새 Project부터 적용한다.
+- 기존 Project root strict-child 계약은 운영에서 그대로 유지한다. 격리 서버는 사용자가 지정한
+  단일 Project의 canonical exact root만 명시적으로 추가 허용한다. `realpath`·directory·read/execute
+  검증을 거치며 sibling, symlink escape와 상위 경로는 계속 거부한다. 일반 root의 strict-child
+  규칙을 전역으로 완화하지 않는다.
+- Claude CLI 업그레이드는 Homebrew가 소유한 `claude-code@latest`만 대상으로 하며 운영
+  Workstation 서비스와 Naru/Gateway/Host release는 변경하지 않는다.
+
+## D013. Claude Code는 별도 Pane과 Host profile로 추가한다
+
+- 상태: T63 로컬 구현·검증 완료, 운영 적용 별도 승인 대기
+- 기존 `codex` Pane, session ID, hook/relay protocol은 그대로 유지한다. `claude` Pane과
+  `claude-code` launch profile은 additive public contract다. 구 web consumer는 새 Pane kind를
+  해석할 수 없으므로 server/web은 같은 release로 배포한다.
+- Host는 configured canonical Claude executable만 allowlisted profile로 실행하고 Gateway
+  authentication, Naru project authorization과 Host capability 경계는 기존과 같다. 새
+  Workstation intent의 `claudeExecutable`은 optional이며 기존 receipt/intent에서는 absent다.
+  Claude profile을 활성화하는 운영 변경은 reconfigure와 Host restart를 포함한다.
+- DB v17은 `claude` kind를 추가하며 기존 Pane과 Host Session link를 보존한다. 이 migration은
+  운영 데이터 변경이므로 사전 backup과 별도 plan 승인이 필요하다.
+- Claude CLI는 이 단계에서 terminal TUI로만 사용한다. Codex request lifecycle을 Claude에
+  재사용하지 않으며, 재시작 뒤 이전 대화는 TUI의 `/resume` picker로 선택한다.
+
 ## D001. PTY는 DurableSession Host가 소유한다
 
 - 상태: 승인
@@ -143,7 +235,7 @@
   세 runtime 재시작을 수반할 수 있고 PTY 연속성을 보장하지 않는다. 지원 버전은 실제 인수 결과로
   한정하며 이후 버전의 동일한 파일 형태만으로 전체 protocol 호환을 주장하지 않는다.
 
-## D013. Codex 기본 transcript 모드와 협상된 mouse encoding을 유지한다
+## D019. Codex 기본 transcript 모드와 협상된 mouse encoding을 유지한다
 
 - Codex의 alternate screen을 끄거나 별도 transcript UI로 대체하지 않는다. 실제 CLI 0.157.1의
   native transcript는 alternate screen과 mouse tracking을 사용하므로 일반 terminal scrollback과
@@ -160,7 +252,7 @@
   있으므로 데이터 migration은 없다. 실행 중 구 Host는 자동 교체하지 않으며, 운영 적용은 별도
   승인된 배포·Host restart가 필요하고 기존 PTY의 연속성을 보장하지 않는다.
 
-## D014. 마우스 추적 TUI의 기본 드래그는 Naru 출력 선택에 사용한다
+## D020. 마우스 추적 TUI의 기본 드래그는 Naru 출력 선택에 사용한다
 
 - 마우스 추적을 켠 Codex·Claude 등에서도 desktop 왼쪽 드래그는 Naru가 로컬 buffer에서 선택한다.
   Alt+마우스는 앱 입력 경로를 유지하고, 일반 shell은 기존 xterm 선택을 사용한다. 명시적 선택
@@ -169,16 +261,16 @@
 - 선택 원문은 해당 renderer 메모리에만 보관하며 TUI repaint가 같은 좌표를 다른 문자로 바꾸어도
   이미 선택한 복사 문구를 바꾸지 않는다. 취소·새 선택·dispose 시 회수하고 로그·저장·Host 전송은
   하지 않는다. 별도 clipboard protocol이나 OSC 52 권한을 추가하지 않는다.
-- 선택 drag와 handle의 가장자리 scroll은 D013과 같은 wheel 경로를 사용한다. normal buffer는
+- 선택 drag와 handle의 가장자리 scroll은 D019과 같은 wheel 경로를 사용한다. normal buffer는
   로컬 scrollback, tracking alternate buffer는 controller fence를 통과하는 TUI wheel 입력이다.
   alternate buffer의 화면 밖 원문은 Naru가 갖고 있지 않으므로 여러 redraw에 걸친 전체 transcript
   범위를 합성하지 않는다. 범위 조정은 현재 buffer 좌표에 적용되고 마지막으로 선택한 문구를 복사한다.
 - wire/schema/Host payload 변경은 없다. 이 웹 변경만 배포하면 Naru-only upgrade가 가능하지만
-  D013 등의 Host 변경을 함께 넣으면 실제 distribution plan의 restartServices를 따라야 한다.
+  D019 등의 Host 변경을 함께 넣으면 실제 distribution plan의 restartServices를 따라야 한다.
 
-## D015. 일반 클릭은 TUI에 전달하고 드래그가 확인된 뒤에만 선택한다
+## D021. 일반 클릭은 TUI에 전달하고 드래그가 확인된 뒤에만 선택한다
 
-- D014 구현은 mouse down 순간 선택을 시작해 일반 클릭에도 선택 도구가 잠깐 나타나고 TUI
+- D020 구현은 mouse down 순간 선택을 시작해 일반 클릭에도 선택 도구가 잠깐 나타나고 TUI
   클릭을 막았다. 이를 보완해 mouse down은 선택 UI 없이 보류하고, 3px를 넘는 이동이 확인된
   경우에만 최초 위치에서 로컬 드래그 선택을 시작한다.
 - 이동이 없는 클릭과 작은 손떨림은 mouse up에서 원래 좌표·modifier의 down/up을 xterm 경로로
@@ -187,3 +279,14 @@
   즉시 TUI 경로를 사용한다. Blur·dispose는 보류한 클릭을 전달하지 않고 회수한다.
 - 일반 shell, 모바일 길게 누르기·선택, 기존 드래그 copy와 edge scroll은 유지한다.
   Host·wire contract·저장 형식 변경은 없으며 새 web artifact와 별도 배포 plan으로 적용한다.
+
+## D022. 병렬 브랜치의 결정·Task 번호 충돌은 main 쪽을 재부여한다
+
+- 상태: `model/claude` 통합(2026-10-07)
+- `main`과 `model/claude`가 같은 시기에 D013·D014·D015와 T63을 각각 다른 의미로 사용했다. Claude 계열은
+  운영 별도 앱 배포 문서와 workstation 결정에서 참조하므로 그대로 두고, `main` 쪽만 D013 → D019,
+  D014 → D020, D015 → D021, T63 → T69로 바꿨다. 이미 기록된 커밋 메시지는 바꾸지 않으므로 이전
+  번호는 이 대응으로 읽는다.
+- D018과 D019는 같은 mouse encoding 복원·touch wheel 경로를 서로 다른 CLI 인수로 기록한 것이다.
+  통합 source는 하나의 `TerminalMouseEncoding`과 `scrollTerminalAt` 구현만 유지한다. wire·DB 계약
+  변경은 없다.

@@ -31,6 +31,85 @@ describe("ProjectPathPolicy", () => {
     expect(policy.approvedRootFor(await realpath(root))).toBeUndefined();
   });
 
+  it("allows only an explicitly opted-in exact root without admitting its sibling", async () => {
+    const base = await mkdtemp(join(tmpdir(), "naru-path-"));
+    temporaryDirectories.push(base);
+    const project = join(base, "approved");
+    const sibling = join(base, "sibling");
+    await Promise.all([mkdir(project), mkdir(sibling)]);
+    const escape = join(project, "escape");
+    await symlink(sibling, escape);
+    const canonicalProject = await realpath(project);
+    const policy = await ProjectPathPolicy.create([canonicalProject], {
+      allowExactRoots: [canonicalProject],
+    });
+
+    await expect(policy.validate(project)).resolves.toEqual({
+      realPath: await realpath(project),
+      defaultName: "approved",
+    });
+    await expect(policy.validate(sibling)).rejects.toMatchObject({
+      code: "PROJECT_OUTSIDE_ROOT",
+    });
+    await expect(policy.validate(escape)).rejects.toMatchObject({
+      code: "PROJECT_OUTSIDE_ROOT",
+    });
+    await expect(policy.validate(base)).rejects.toMatchObject({ code: "PROJECT_OUTSIDE_ROOT" });
+  });
+
+  it("keeps two sibling worktree roots strict-child while allowing one exact project", async () => {
+    const base = await mkdtemp(join(tmpdir(), "naru-path-"));
+    temporaryDirectories.push(base);
+    const exactProject = join(base, "projects", "approved");
+    const worktree = join(base, "worktree");
+    const worktrees = join(base, "worktrees");
+    const firstLinked = join(worktree, "linked-one");
+    const secondLinked = join(worktrees, "linked-two");
+    const sibling = join(base, "other", "unapproved");
+    await Promise.all([
+      mkdir(exactProject, { recursive: true }),
+      mkdir(firstLinked, { recursive: true }),
+      mkdir(secondLinked, { recursive: true }),
+      mkdir(sibling, { recursive: true }),
+    ]);
+
+    const canonicalProject = await realpath(exactProject);
+    const policy = await ProjectPathPolicy.create([canonicalProject, worktree, worktrees], {
+      allowExactRoots: [canonicalProject],
+    });
+    await expect(policy.validate(exactProject)).resolves.toMatchObject({
+      realPath: canonicalProject,
+    });
+    await expect(policy.validate(firstLinked)).resolves.toMatchObject({
+      realPath: await realpath(firstLinked),
+    });
+    await expect(policy.validate(secondLinked)).resolves.toMatchObject({
+      realPath: await realpath(secondLinked),
+    });
+    for (const rejected of [worktree, worktrees, sibling, base]) {
+      await expect(policy.validate(rejected)).rejects.toMatchObject({
+        code: "PROJECT_OUTSIDE_ROOT",
+      });
+    }
+  });
+
+  it("rejects an exact root that is not itself configured or canonical", async () => {
+    const base = await mkdtemp(join(tmpdir(), "naru-path-"));
+    temporaryDirectories.push(base);
+    const project = join(base, "approved");
+    const sibling = join(base, "sibling");
+    const alias = join(base, "alias");
+    await Promise.all([mkdir(project), mkdir(sibling)]);
+    await symlink(project, alias);
+
+    await expect(
+      ProjectPathPolicy.create([project], { allowExactRoots: [sibling] }),
+    ).rejects.toThrow("Exact project root");
+    await expect(ProjectPathPolicy.create([project], { allowExactRoots: [alias] })).rejects.toThrow(
+      "Exact project root",
+    );
+  });
+
   it("rejects a symlink that escapes the approved root", async () => {
     const base = await mkdtemp(join(tmpdir(), "naru-path-"));
     temporaryDirectories.push(base);

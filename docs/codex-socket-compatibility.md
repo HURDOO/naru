@@ -56,7 +56,7 @@ Codex 기본 transcript의 휠·터치·reconnect·controller/observer 검증은
 NARU_ACTUAL_CODEX=/absolute/path/to/codex pnpm exec playwright test --config playwright.codex-scroll.config.ts
 ```
 
-T63 조사에서 한 세션의 화면 폭을 연속 변경하면 출력 일부가 어긋나는 현상도 관찰했다.
+T69 조사에서 한 세션의 화면 폭을 연속 변경하면 출력 일부가 어긋나는 현상도 관찰했다.
 고정 viewport의 스크롤 검증과 별개이며 원인과 운영 재현 여부는 아직 확정하지 않았다.
 
 ## 배포와 rollback

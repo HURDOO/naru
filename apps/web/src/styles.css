@@ -1397,6 +1397,7 @@ button:disabled {
 
 .terminal-pane,
 .codex-pane,
+.claude-pane,
 .files-pane,
 .docs-pane,
 .tasks-pane {
@@ -1445,6 +1446,11 @@ button:disabled {
 
 .codex-glyph {
   color: #a99cf4;
+  font-size: 13px;
+}
+
+.claude-glyph {
+  color: #e59263;
   font-size: 13px;
 }
 
@@ -4207,6 +4213,7 @@ button:disabled {
 
   .terminal-pane,
   .codex-pane,
+  .claude-pane,
   .files-pane,
   .docs-pane,
   .tasks-pane {

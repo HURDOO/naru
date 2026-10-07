@@ -239,6 +239,34 @@ describe("NaruRepository", () => {
     }
   });
 
+  it("opts new projects into two Claude Code Panes without rewriting existing Codex workspaces", () => {
+    const filename = temporaryDatabase();
+    const original = new NaruRepository(filename);
+    const existing = original.createProject("/tmp/existing-codex-project", "existing");
+    original.close();
+
+    const repository = new NaruRepository(filename, { defaultAgentPaneKind: "claude" });
+    try {
+      expect(repository.getWorkspace(existing.id).panes.map((pane) => pane.kind)).toEqual([
+        "codex",
+        "codex",
+        "terminal",
+      ]);
+      const project = repository.createProject("/tmp/new-claude-project", "new");
+      const workspace = repository.getWorkspace(project.id);
+      expect(
+        workspace.panes.map(({ title, kind, launchProfile }) => ({ title, kind, launchProfile })),
+      ).toEqual([
+        { title: "Claude Code 1", kind: "claude", launchProfile: "claude-code" },
+        { title: "Claude Code 2", kind: "claude", launchProfile: "claude-code" },
+        { title: "Dev Terminal", kind: "terminal", launchProfile: "shell" },
+      ]);
+      expect(workspace.activePaneId).toBe(workspace.panes[0]?.id);
+    } finally {
+      repository.close();
+    }
+  });
+
   it("groups concrete Project targets without changing their Workspace identity", () => {
     const repository = new NaruRepository(temporaryDatabase());
     try {
@@ -938,6 +966,7 @@ describe("database migrations", () => {
         { version: 14 },
         { version: 15 },
         { version: 16 },
+        { version: 17 },
       ]);
       expect(database.prepare("SELECT * FROM project_groups").get()).toMatchObject({
         id: "11111111-1111-4111-8111-111111111111",
@@ -991,6 +1020,75 @@ describe("database migrations", () => {
           .all()
           .map((row) => (row as { name: string }).name),
       ).not.toEqual(expect.arrayContaining(["runtime_id", "session_revision", "host_lifecycle"]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("adds Claude panes without losing an active Host session link", () => {
+    const database = new Database(":memory:");
+    database.pragma("foreign_keys = ON");
+    try {
+      runDatabaseMigrations(database, DATABASE_MIGRATIONS.slice(0, 16));
+      const projectId = "11111111-1111-4111-8111-111111111111";
+      const paneId = "22222222-2222-4222-8222-222222222222";
+      const sessionId = "33333333-3333-4333-8333-333333333333";
+      const timestamp = "2026-09-26T00:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO project_groups
+        (id, name, kind, created_at, updated_at) VALUES (?, 'fixture', 'standalone', ?, ?)`,
+        )
+        .run(projectId, timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO projects
+        (id, name, real_path, group_id, created_at, updated_at)
+        VALUES (?, 'fixture', '/tmp/fixture', ?, ?, ?)`,
+        )
+        .run(projectId, projectId, timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO workspaces
+        (project_id, schema_version, version, updated_at) VALUES (?, ?, 0, ?)`,
+        )
+        .run(projectId, LAYOUT_SCHEMA_VERSION, timestamp);
+      database
+        .prepare(
+          `INSERT INTO panes
+        (id, project_id, kind, title, launch_profile, status, activity_updated_at,
+         created_at, updated_at) VALUES (?, ?, 'codex', 'Main Codex', 'codex-main',
+         'running', ?, ?, ?)`,
+        )
+        .run(paneId, projectId, timestamp, timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO pane_session_links
+        (pane_id, session_id, state, created_at, updated_at)
+        VALUES (?, ?, 'linked', ?, ?)`,
+        )
+        .run(paneId, sessionId, timestamp, timestamp);
+
+      runDatabaseMigrations(database);
+
+      expect(database.prepare("SELECT * FROM pragma_foreign_key_check").all()).toEqual([]);
+      expect(
+        database.prepare("SELECT pane_id, session_id, state FROM pane_session_links").get(),
+      ).toEqual({ pane_id: paneId, session_id: sessionId, state: "linked" });
+      expect(database.prepare("SELECT kind, status FROM panes WHERE id = ?").get(paneId)).toEqual({
+        kind: "codex",
+        status: "running",
+      });
+      expect(() =>
+        database
+          .prepare(
+            `INSERT INTO panes
+        (id, project_id, kind, title, launch_profile, status, activity_updated_at,
+         created_at, updated_at) VALUES (?, ?, 'claude', 'Claude Code', 'claude-code',
+         'stopped', ?, ?, ?)`,
+          )
+          .run("44444444-4444-4444-8444-444444444444", projectId, timestamp, timestamp, timestamp),
+      ).not.toThrow();
     } finally {
       database.close();
     }

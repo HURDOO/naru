@@ -54,6 +54,7 @@ export function createDistributionFixture(
     readonly slug?: string;
     readonly packagedNodeRuntime?: boolean;
     readonly localSessionCliFeature?: boolean;
+    readonly claudeEntrypoints?: boolean;
   } = {},
 ): DistributionFixture {
   const root = mkdtempSync("/private/tmp/n");
@@ -83,6 +84,9 @@ export function createDistributionFixture(
     ...(options.localSessionCliFeature === undefined
       ? {}
       : { localSessionCliFeature: options.localSessionCliFeature }),
+    ...(options.claudeEntrypoints === undefined
+      ? {}
+      : { claudeEntrypoints: options.claudeEntrypoints }),
   });
   const selectedNodeExecutable =
     options.packagedNodeRuntime === true
@@ -179,6 +183,7 @@ export function createArtifactFixture(
   options: {
     readonly packagedNodeRuntime?: boolean;
     readonly localSessionCliFeature?: boolean;
+    readonly claudeEntrypoints?: boolean;
     readonly fileOverrides?: Readonly<Record<string, string>>;
   } = {},
 ): string {
@@ -215,6 +220,18 @@ export function createArtifactFixture(
       contents: 'import "./chunk-codex-shared.js";\nexport {};\n',
     },
     { path: "components/naru/dist/chunk-codex-shared.js", contents: "export {};\n" },
+    ...(options.claudeEntrypoints === true
+      ? [
+          {
+            path: "components/naru/dist/claude-integration-launcher.js",
+            contents: "export {};\n",
+          },
+          {
+            path: "components/naru/dist/claude-integration-hook-cli.js",
+            contents: "export {};\n",
+          },
+        ]
+      : []),
     {
       path: "components/host/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
       contents: "fixture-native",

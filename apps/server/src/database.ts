@@ -131,6 +131,7 @@ export interface PaneSessionLink {
 
 export interface NaruRepositoryOptions {
   readonly sessionOwner?: "legacy" | "durable-host";
+  readonly defaultAgentPaneKind?: "codex" | "claude";
 }
 
 interface PasskeyRow {
@@ -622,6 +623,86 @@ export const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
       `);
     },
   },
+  {
+    version: 17,
+    migrate(database) {
+      database.exec(`
+        CREATE TEMP TABLE retained_pane_session_links AS SELECT * FROM pane_session_links;
+        DROP TABLE pane_session_links;
+        CREATE TABLE panes_v17 (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('terminal', 'codex', 'claude', 'files', 'docs', 'tasks')),
+          title TEXT NOT NULL,
+          launch_profile TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('stopped', 'running', 'exited', 'error', 'ready')),
+          exit_code INTEGER,
+          codex_session_id TEXT,
+          codex_session_resumable INTEGER NOT NULL DEFAULT 0
+            CHECK (codex_session_resumable IN (0, 1)),
+          last_error_code TEXT,
+          last_exited_at TEXT,
+          activity_state TEXT NOT NULL DEFAULT 'idle'
+            CHECK (activity_state IN (
+              'idle', 'running', 'interaction-required', 'completed', 'canceled',
+              'server-stopped', 'failed'
+            )),
+          activity_event_id TEXT,
+          activity_updated_at TEXT,
+          view_state_json TEXT NOT NULL
+            DEFAULT '{"selectedDocumentPath":null,"navigationOpen":true,"expandedDirectories":[]}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          activity_runtime_id TEXT,
+          activity_revision INTEGER NOT NULL DEFAULT 0 CHECK (activity_revision >= 0)
+        );
+        INSERT INTO panes_v17 SELECT * FROM panes ORDER BY rowid;
+        DROP TABLE panes;
+        ALTER TABLE panes_v17 RENAME TO panes;
+        CREATE INDEX panes_project_id ON panes(project_id);
+        CREATE TABLE pane_session_links (
+          pane_id TEXT PRIMARY KEY REFERENCES panes(id) ON DELETE CASCADE,
+          session_id TEXT UNIQUE,
+          state TEXT NOT NULL CHECK (state IN ('pending', 'linked', 'missing')),
+          pending_operation TEXT CHECK (pending_operation IN ('create', 'start', 'stop', 'forget')),
+          operation_key TEXT UNIQUE,
+          expected_session_revision INTEGER
+            CHECK (expected_session_revision IS NULL OR expected_session_revision >= 0),
+          expected_runtime_id TEXT,
+          last_error_code TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          integration_binding_id TEXT,
+          integration_launch_runtime_id TEXT,
+          CHECK (
+            (state = 'pending' AND pending_operation IS NOT NULL AND operation_key IS NOT NULL)
+            OR (state IN ('linked', 'missing') AND pending_operation IS NULL
+              AND operation_key IS NULL AND expected_session_revision IS NULL
+              AND expected_runtime_id IS NULL)
+          ),
+          CHECK (pending_operation = 'create' OR session_id IS NOT NULL),
+          CHECK (
+            (pending_operation = 'create' AND expected_session_revision IS NULL
+              AND expected_runtime_id IS NULL)
+            OR (pending_operation = 'start' AND expected_session_revision IS NOT NULL
+              AND expected_runtime_id IS NULL)
+            OR (pending_operation = 'stop' AND expected_session_revision IS NOT NULL
+              AND expected_runtime_id IS NOT NULL)
+            OR (pending_operation = 'forget' AND expected_session_revision IS NOT NULL
+              AND expected_runtime_id IS NULL)
+            OR pending_operation IS NULL
+          ),
+          CHECK (state != 'linked' OR session_id IS NOT NULL)
+        );
+        INSERT INTO pane_session_links SELECT * FROM retained_pane_session_links;
+        DROP TABLE retained_pane_session_links;
+        CREATE INDEX pane_session_links_state ON pane_session_links(state);
+        CREATE UNIQUE INDEX pane_session_links_integration_binding
+          ON pane_session_links(integration_binding_id)
+          WHERE integration_binding_id IS NOT NULL;
+      `);
+    },
+  },
 ];
 
 export function runDatabaseMigrations(
@@ -663,8 +744,10 @@ export function runDatabaseMigrations(
 
 export class NaruRepository {
   readonly #database: Database.Database;
+  readonly #defaultAgentPaneKind: "codex" | "claude";
 
   constructor(filename: string, options: NaruRepositoryOptions = {}) {
+    this.#defaultAgentPaneKind = options.defaultAgentPaneKind ?? "codex";
     const existingDatabase =
       filename !== ":memory:" && existsSync(filename) && statSync(filename).size > 0;
     this.#database = new Database(filename);
@@ -1025,7 +1108,7 @@ export class NaruRepository {
       createdAt: now,
       updatedAt: now,
     };
-    const defaultWorkspace = createDefaultWorkspace(project.id, now);
+    const defaultWorkspace = createDefaultWorkspace(project.id, now, this.#defaultAgentPaneKind);
 
     const transaction = this.#database.transaction(() => {
       const projectGroupId = groupId ?? project.id;
@@ -1399,7 +1482,11 @@ export class NaruRepository {
       .transaction(() => {
         const context = this.getPaneContext(paneId);
         if (!context) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
-        if (context.pane.kind !== "terminal" && context.pane.kind !== "codex") {
+        if (
+          context.pane.kind !== "terminal" &&
+          context.pane.kind !== "codex" &&
+          context.pane.kind !== "claude"
+        ) {
           throw new AppError("REQUEST_INVALID", 400, "이 Pane은 Session을 소유하지 않습니다.");
         }
         const existing = this.getPaneSessionLink(paneId);
@@ -2148,9 +2235,16 @@ function firstPaneFromLayout(layout: LayoutNode | null): string | null {
 function createDefaultWorkspace(
   projectId: string,
   now: string,
+  agentKind: "codex" | "claude",
 ): { panes: [Pane, Pane, Pane]; layout: LayoutNode; activePaneId: string } {
-  const mainCodex = createPaneRecord(projectId, "codex", "Main Codex", "codex-main", now);
-  const quickCodex = createPaneRecord(projectId, "codex", "Quick Codex", "codex-quick", now);
+  const mainAgent =
+    agentKind === "claude"
+      ? createPaneRecord(projectId, "claude", "Claude Code 1", "claude-code", now)
+      : createPaneRecord(projectId, "codex", "Main Codex", "codex-main", now);
+  const secondAgent =
+    agentKind === "claude"
+      ? createPaneRecord(projectId, "claude", "Claude Code 2", "claude-code", now)
+      : createPaneRecord(projectId, "codex", "Quick Codex", "codex-quick", now);
   const devTerminal = createPaneRecord(projectId, "terminal", "Dev Terminal", "shell", now);
   const layout: LayoutNode = {
     type: "split",
@@ -2162,16 +2256,16 @@ function createDefaultWorkspace(
       id: randomUUID(),
       direction: "horizontal",
       ratio: 0.5,
-      first: { type: "pane", paneId: mainCodex.id, collapsed: false },
-      second: { type: "pane", paneId: quickCodex.id, collapsed: false },
+      first: { type: "pane", paneId: mainAgent.id, collapsed: false },
+      second: { type: "pane", paneId: secondAgent.id, collapsed: false },
     },
     second: { type: "pane", paneId: devTerminal.id, collapsed: false },
   };
-  validateLayout(layout, new Set([mainCodex.id, quickCodex.id, devTerminal.id]));
+  validateLayout(layout, new Set([mainAgent.id, secondAgent.id, devTerminal.id]));
   return {
-    panes: [mainCodex, quickCodex, devTerminal],
+    panes: [mainAgent, secondAgent, devTerminal],
     layout,
-    activePaneId: mainCodex.id,
+    activePaneId: mainAgent.id,
   };
 }
 
@@ -2206,6 +2300,8 @@ function defaultPaneTitle(kind: PaneKind, paneNumber: number): string {
   switch (kind) {
     case "codex":
       return `Codex ${paneNumber}`;
+    case "claude":
+      return `Claude Code ${paneNumber}`;
     case "terminal":
       return `Terminal ${paneNumber}`;
     case "files":
@@ -2221,6 +2317,8 @@ function paneLaunchProfile(input: CreatePaneRequest): string {
   switch (input.kind) {
     case "codex":
       return input.launchProfile ?? "codex-main";
+    case "claude":
+      return input.launchProfile ?? "claude-code";
     case "terminal":
       return input.launchProfile ?? "shell";
     case "files":

@@ -7,6 +7,7 @@ import {
 } from "@naru/contracts";
 
 export type SplitDirection = SplitNode["direction"];
+export { TerminalMouseEncoding } from "./terminal-mouse-encoding.js";
 
 export function paneNode(paneId: string): PaneNode {
   return { type: "pane", paneId, collapsed: false };
@@ -258,4 +259,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export * as DurableSessionCore from "./durable-session/index.js";
-export { TerminalMouseEncoding } from "./terminal-mouse-encoding.js";

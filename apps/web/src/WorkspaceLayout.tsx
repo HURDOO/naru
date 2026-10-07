@@ -167,7 +167,9 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
   const active = props.workspace.activePaneId === props.pane.id;
   const toolbar = (
     <>
-      {(props.pane.kind === "codex" || props.pane.activity.state === "failed") && (
+      {(props.pane.kind === "codex" ||
+        props.pane.kind === "claude" ||
+        props.pane.activity.state === "failed") && (
         <ActivityStatus
           state={props.pane.activity.state}
           context={`${props.pane.title} 작업 상태`}
@@ -350,6 +352,12 @@ function PaneSplitMenu({
         </button>
         <button type="button" onClick={(event) => split(event, "codex", "vertical")}>
           <span aria-hidden="true">▤</span> 아래에 Codex
+        </button>
+        <button type="button" onClick={(event) => split(event, "claude", "horizontal")}>
+          <span aria-hidden="true">▥</span> 오른쪽에 Claude Code
+        </button>
+        <button type="button" onClick={(event) => split(event, "claude", "vertical")}>
+          <span aria-hidden="true">▤</span> 아래에 Claude Code
         </button>
         <button type="button" onClick={(event) => split(event, "files", "horizontal")}>
           <span aria-hidden="true">▥</span> 오른쪽에 Files

@@ -38,11 +38,44 @@ const validPushEnvironment = {
 };
 
 describe("loadConfig", () => {
+  it("keeps Codex as the default Pane and requires Claude for a Claude-first app", () => {
+    expect(loadConfig(validEnvironment).defaultAgentPaneKind).toBe("codex");
+    expect(() =>
+      loadConfig({ ...validEnvironment, NARU_DEFAULT_AGENT_PANE_KIND: "claude" }),
+    ).toThrow(/requires NARU_CLAUDE_PATH/);
+    expect(
+      loadConfig({
+        ...validEnvironment,
+        NARU_CLAUDE_PATH: "/bin/sh",
+        NARU_DEFAULT_AGENT_PANE_KIND: "claude",
+      }).defaultAgentPaneKind,
+    ).toBe("claude");
+  });
+
   it("requires an explicit project root allowlist", () => {
     const environment = { ...validEnvironment };
     delete environment.NARU_PROJECT_ROOTS;
 
     expect(() => loadConfig(environment)).toThrow(/NARU_PROJECT_ROOTS/);
+  });
+
+  it("opts into only listed exact Project roots", () => {
+    const exact = "/safe/projects/cheers";
+    const environment = {
+      ...validEnvironment,
+      NARU_PROJECT_ROOTS: `${exact},/safe/worktrees`,
+      NARU_EXACT_PROJECT_ROOTS: JSON.stringify([exact]),
+    };
+    expect(loadConfig(environment).exactProjectRoots).toEqual([exact]);
+    expect(() =>
+      loadConfig({ ...environment, NARU_EXACT_PROJECT_ROOTS: JSON.stringify(["/safe/projects"]) }),
+    ).toThrow(/exact configured Project roots/);
+    expect(() =>
+      loadConfig({ ...environment, NARU_EXACT_PROJECT_ROOTS: JSON.stringify([exact, exact]) }),
+    ).toThrow(/unique/);
+    expect(() => loadConfig({ ...environment, NARU_EXACT_PROJECT_ROOTS: "not-json" })).toThrow(
+      /JSON array/,
+    );
   });
 
   it("keeps legacy ownership as the explicit default and rejects mixed Host settings", () => {

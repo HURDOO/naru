@@ -20,7 +20,11 @@ program은 Private Ingress v0다.
   발견만으로 Project, Pane 또는 PTY를 만들지 않고 사용자의 명시적 연결을 요구한다.
 - desktop은 split tree를, 좁은 화면은 같은 tree의 한 Pane projection을 사용한다. viewport 변경으로
   Pane이나 PTY를 재시작하지 않는다.
-- Codex와 shell process는 DurableSession Host가 소유한다. Naru와 Gateway restart는 Host PTY를
+- Claude Code는 별도 `claude` Pane에서 실행한다. 기존 Codex Pane과 세션 기록은 유지한다.
+- Standalone Naru에서 Claude Pane의 opt-in lifecycle hook은 기존 Pane activity 상태에
+  작업 중·입력 필요·완료·실패를 투영한다. 상태는 원문이 아닌 redacted 신호로만 계산하며,
+  permission 응답 직후의 정확한 해소 시점이나 동시 요청 수는 보장하지 않는다.
+- Codex, Claude Code와 shell process는 DurableSession Host가 소유한다. Naru와 Gateway restart는 Host PTY를
   종료하지 않으며 Host restart 뒤에는 Session을 정직하게 stopped로 복구한다.
 - 정확히 한 controller만 terminal input과 authoritative resize를 수행한다. observer는 read-only다.
 - gateway-managed mode는 Gateway passkey/session과 signed app assertion을 사용한다. standalone

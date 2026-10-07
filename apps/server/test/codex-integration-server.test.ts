@@ -15,12 +15,70 @@ import { sendCodexHookEvent } from "../src/codex-session-hook-client.js";
 import { requestCodexIntegration } from "../src/integrations/codex/client.js";
 import type { CodexHookEvent, CodexInteractionSnapshot } from "../src/integrations/codex/events.js";
 import type { CodexLaunchPlan, NaruCodexIntegrationPort } from "../src/integrations/codex/port.js";
+import type { NaruClaudeIntegrationPort } from "../src/integrations/claude/port.js";
+import type { ClaudeActivityEvent } from "../src/claude-activity-events.js";
 import { CodexIntegrationServer } from "../src/integrations/codex/server.js";
 
 const BOOTSTRAP = "b".repeat(64);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("private Naru Codex integration transport", () => {
+  it("keeps Claude launch and redacted hooks separate from Codex messages", async () => {
+    const dataDirectory = privateTemporaryDirectory("naru-claude-integration-");
+    const claude = new FakeClaudePort();
+    const server = new CodexIntegrationServer(dataDirectory, new FakeCodexPort(), {
+      claudeIntegration: claude,
+    });
+    await bounded(server.start(), "Claude integration start");
+    try {
+      expect(
+        await bounded(
+          requestCodexIntegration(server.socketPath, {
+            version: 1,
+            type: "claude-launch",
+            bootstrap: BOOTSTRAP,
+          }),
+          "Claude launch",
+        ),
+      ).toEqual({
+        version: 1,
+        ok: true,
+        type: "claude-launch",
+        plan: { executable: "/fixture/claude", args: ["--fixture"] },
+      });
+      const event: ClaudeActivityEvent = {
+        type: "turn-start",
+        sessionId: "claude-session-1",
+        cwd: "/fixture/project",
+      };
+      expect(
+        await bounded(
+          requestCodexIntegration(server.socketPath, {
+            version: 1,
+            type: "claude-hook",
+            bootstrap: BOOTSTRAP,
+            event,
+          }),
+          "Claude hook",
+        ),
+      ).toEqual({ version: 1, ok: true, type: "claude-hook" });
+      expect(claude.events).toEqual([event]);
+      expect(
+        await bounded(
+          requestCodexIntegration(server.socketPath, {
+            version: 1,
+            type: "claude-hook",
+            bootstrap: "x".repeat(64),
+            event,
+          }),
+          "wrong Claude hook",
+        ),
+      ).toEqual({ version: 1, ok: false, code: "DENIED" });
+    } finally {
+      await bounded(server.close(), "Claude integration close");
+    }
+  });
+
   it("serves bounded launch and durable hook requests on an owner-only socket", async () => {
     const dataDirectory = privateTemporaryDirectory("naru-codex-integration-");
     const port = new FakeCodexPort();
@@ -132,6 +190,41 @@ describe("private Naru Codex integration transport", () => {
     await expect(server.start()).rejects.toThrow(/regular directory|symbolic links/);
   });
 });
+
+class FakeClaudePort implements NaruClaudeIntegrationPort {
+  readonly events: ClaudeActivityEvent[] = [];
+
+  descriptor(bindingId: string): IntegrationDescriptor {
+    return { kind: "claude", config: { policyRef: "fixture", bindingId } };
+  }
+
+  preflight(): void {}
+
+  launch(bootstrap: string): { executable: string; args: string[] } {
+    if (bootstrap !== BOOTSTRAP) throw new Error("Denied");
+    return { executable: "/fixture/claude", args: ["--fixture"] };
+  }
+
+  acceptHook(bootstrap: string, event: ClaudeActivityEvent): boolean {
+    if (bootstrap !== BOOTSTRAP) return false;
+    this.events.push(event);
+    return true;
+  }
+
+  bindRuntime(): void {}
+
+  markStopping(): void {}
+
+  cancelStopping(): void {}
+
+  observeExit(): void {}
+
+  disposeRuntime(): void {}
+
+  onActivity(): () => void {
+    return () => undefined;
+  }
+}
 
 class FakeCodexPort implements NaruCodexIntegrationPort {
   readonly launches: string[] = [];

@@ -42,6 +42,8 @@ export const ErrorCodeSchema = z.enum([
   "CODEX_EXECUTABLE_MISSING",
   "CODEX_AUTH_REQUIRED",
   "CODEX_CONFIG_INVALID",
+  "CLAUDE_EXECUTABLE_MISSING",
+  "CLAUDE_AUTH_REQUIRED",
   "LEASE_REQUIRED",
   "LEASE_REPLACED",
   "WS_BACKPRESSURE",
@@ -286,7 +288,7 @@ export const UpdateProjectRequestSchema = z.object({
 });
 export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;
 
-export const PaneKindSchema = z.enum(["terminal", "codex", "files", "docs", "tasks"]);
+export const PaneKindSchema = z.enum(["terminal", "codex", "claude", "files", "docs", "tasks"]);
 export type PaneKind = z.infer<typeof PaneKindSchema>;
 
 export const PaneStatusSchema = z.enum(["stopped", "running", "exited", "error", "ready"]);
@@ -469,6 +471,7 @@ export type PushProjectSummary = z.infer<typeof PushProjectSummarySchema>;
 
 export const CodexLaunchProfileSchema = z.enum(["codex-main", "codex-quick"]);
 export type CodexLaunchProfile = z.infer<typeof CodexLaunchProfileSchema>;
+export const ClaudeLaunchProfileSchema = z.literal("claude-code");
 export const CodexSessionIdSchema = z.string().uuid();
 
 export const DocumentRelativePathSchema = z
@@ -571,6 +574,11 @@ export const CreatePaneRequestSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("codex"),
     launchProfile: CodexLaunchProfileSchema.optional(),
+    ...CreatePaneRequestBase,
+  }),
+  z.strictObject({
+    kind: z.literal("claude"),
+    launchProfile: ClaudeLaunchProfileSchema.optional(),
     ...CreatePaneRequestBase,
   }),
   z.strictObject({

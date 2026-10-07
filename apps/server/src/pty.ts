@@ -23,6 +23,8 @@ import type {
   CodexSessionHookBridge,
   CodexSessionHookRegistration,
 } from "./codex-session-hook.js";
+import type { ClaudeActivityEvent } from "./claude-activity-events.js";
+import { ClaudeActivitySemantics } from "./claude-activity-semantics.js";
 import { AppError } from "./errors.js";
 import { CodexRuntimeSemantics } from "./integrations/codex/semantics.js";
 import type {
@@ -80,7 +82,9 @@ interface Runtime {
   readonly serializer: SerializeAddonInstance;
   readonly mouseEncoding: TerminalMouseEncoding;
   readonly codexSemantics: CodexRuntimeSemantics | null;
+  readonly claudeSemantics: ClaudeActivitySemantics | null;
   readonly codexSessionHookRegistration: CodexSessionHookRegistration | null;
+  readonly claudeHookRegistration: CodexSessionHookRegistration | null;
   readonly listeners: Set<FrameListener>;
   readonly exitPromise: Promise<void>;
   resolveExit: () => void;
@@ -133,15 +137,21 @@ export class PtySupervisor {
   start(paneId: string, columns = DEFAULT_COLUMNS, rows = DEFAULT_ROWS): void {
     if (this.#runtimes.has(paneId)) return;
     const context = this.#requirePane(paneId);
-    if (context.pane.kind !== "terminal" && context.pane.kind !== "codex") {
+    if (
+      context.pane.kind !== "terminal" &&
+      context.pane.kind !== "codex" &&
+      context.pane.kind !== "claude"
+    ) {
       throw new AppError("REQUEST_INVALID", 400, "읽기 전용 Pane은 PTY를 시작하지 않습니다.");
     }
     const runtimeId = randomUUID();
     this.#emitActivity(this.repository.beginPaneRuntime(paneId, runtimeId));
     let activeRuntime: Runtime | null = null;
     const pendingCodexEvents: CodexHookEvent[] = [];
+    const pendingClaudeEvents: ClaudeActivityEvent[] = [];
     let launchCommand: PaneLaunchCommand;
     let codexSessionHookRegistration: CodexSessionHookRegistration | null = null;
+    let claudeHookRegistration: CodexSessionHookRegistration | null = null;
     try {
       launchCommand = this.launchProfiles.resolve(context);
       if (context.pane.kind === "codex" && this.codexSessionHooks !== undefined) {
@@ -166,8 +176,31 @@ export class PtySupervisor {
           },
         };
       }
+      if (context.pane.kind === "claude" && this.codexSessionHooks?.registerClaude !== undefined) {
+        claudeHookRegistration = this.codexSessionHooks.registerClaude({
+          paneId,
+          runtimeId,
+          cwd: context.projectPath,
+          onEvent: (event) => {
+            if (activeRuntime === null) {
+              pendingClaudeEvents.push(event);
+              return;
+            }
+            if (activeRuntime.disposed) return;
+            activeRuntime.claudeSemantics?.accept(event);
+          },
+        });
+        launchCommand = {
+          ...launchCommand,
+          environment: {
+            ...launchCommand.environment,
+            ...claudeHookRegistration.environment,
+          },
+        };
+      }
     } catch (error) {
       codexSessionHookRegistration?.dispose();
+      claudeHookRegistration?.dispose();
       const normalized = normalizeLaunchError(error, context.pane.kind);
       this.repository.setPaneStatusForRuntime(paneId, runtimeId, "error", null, normalized.code);
       this.#transitionActivity(paneId, "failed", runtimeId);
@@ -208,6 +241,7 @@ export class PtySupervisor {
       });
     } catch {
       codexSessionHookRegistration?.dispose();
+      claudeHookRegistration?.dispose();
       terminal.dispose();
       this.repository.setPaneStatusForRuntime(paneId, runtimeId, "error", null, "PTY_SPAWN_FAILED");
       this.#transitionActivity(paneId, "failed", runtimeId);
@@ -216,7 +250,9 @@ export class PtySupervisor {
         500,
         context.pane.kind === "codex"
           ? "Codex CLI 프로세스를 시작하지 못했습니다."
-          : "터미널 프로세스를 시작하지 못했습니다.",
+          : context.pane.kind === "claude"
+            ? "Claude Code 프로세스를 시작하지 못했습니다."
+            : "터미널 프로세스를 시작하지 못했습니다.",
       );
     }
 
@@ -242,7 +278,17 @@ export class PtySupervisor {
                 this.#emitCodexIdentityForRuntime(paneId, runtimeId, sessionId, resumable),
             })
           : null,
+      claudeSemantics:
+        context.pane.kind === "claude" && claudeHookRegistration !== null
+          ? new ClaudeActivitySemantics({
+              repository: this.repository,
+              paneId,
+              runtimeId,
+              emitActivity: (change) => this.#emitActivity(change),
+            })
+          : null,
       codexSessionHookRegistration,
+      claudeHookRegistration,
       listeners: new Set(),
       exitPromise,
       resolveExit,
@@ -255,6 +301,7 @@ export class PtySupervisor {
     activeRuntime = runtime;
     this.#runtimes.set(paneId, runtime);
     for (const event of pendingCodexEvents) runtime.codexSemantics?.acceptHook(event);
+    for (const event of pendingClaudeEvents) runtime.claudeSemantics?.accept(event);
     if (runtime.codexSemantics !== null && runtime.codexSemantics.sessionId !== null) {
       this.#emitCodexIdentity({
         paneId,
@@ -303,6 +350,8 @@ export class PtySupervisor {
         if (currentRuntime) {
           if (runtime.codexSemantics !== null) {
             runtime.codexSemantics.observeExit(event.exitCode);
+          } else if (runtime.claudeSemantics !== null) {
+            if (!serverStopped) runtime.claudeSemantics.observeExit(event.exitCode);
           } else if (serverStopped) {
             this.#transitionActivity(paneId, "server-stopped", runtime.runtimeId);
           } else if (event.exitCode !== 0) {
@@ -323,6 +372,7 @@ export class PtySupervisor {
         });
         runtime.disposed = true;
         runtime.codexSessionHookRegistration?.dispose();
+        runtime.claudeHookRegistration?.dispose();
         runtime.listeners.clear();
         runtime.terminal.dispose();
         runtime.resolveExit();
@@ -597,6 +647,7 @@ export class PtySupervisor {
     if (runtime.terminationCause === "server-stop") return;
     runtime.terminationCause = "server-stop";
     runtime.codexSemantics?.markStopping();
+    runtime.claudeSemantics?.markStopping();
     if (!this.repository.getPaneContext(runtime.paneId)) return;
     this.repository.setPaneStatusForRuntime(
       runtime.paneId,
@@ -614,6 +665,7 @@ export class PtySupervisor {
     runtime.disposed = true;
     if (this.#runtimes.get(runtime.paneId) === runtime) this.#runtimes.delete(runtime.paneId);
     runtime.codexSessionHookRegistration?.dispose();
+    runtime.claudeHookRegistration?.dispose();
     runtime.listeners.clear();
     runtime.terminal.dispose();
     runtime.resolveExit();
@@ -641,12 +693,16 @@ function ensurePtyHelperExecutable(): void {
   ptyHelperChecked = true;
 }
 
-function normalizeLaunchError(error: unknown, kind: "terminal" | "codex"): AppError {
+function normalizeLaunchError(error: unknown, kind: "terminal" | "codex" | "claude"): AppError {
   if (error instanceof AppError) return error;
   return new AppError(
     "PTY_SPAWN_FAILED",
     500,
-    kind === "codex" ? "Codex CLI 실행 준비에 실패했습니다." : "터미널 실행 준비에 실패했습니다.",
+    kind === "codex"
+      ? "Codex CLI 실행 준비에 실패했습니다."
+      : kind === "claude"
+        ? "Claude Code 실행 준비에 실패했습니다."
+        : "터미널 실행 준비에 실패했습니다.",
   );
 }
 

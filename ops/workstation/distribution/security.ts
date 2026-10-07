@@ -62,6 +62,7 @@ export function inspectTargetEnvironment(
   readonly node: NodeRuntimeInspection;
   readonly shell: ExecutableInspection;
   readonly codex: ExecutableInspection;
+  readonly claude?: ExecutableInspection;
   readonly projectRoots: readonly string[];
 } {
   const currentUid = process.getuid?.();
@@ -79,10 +80,12 @@ export function inspectTargetEnvironment(
   })();
   const shell = inspectExecutable(intent.shellExecutable);
   const codex = inspectExecutable(intent.codexExecutable);
+  const claude =
+    intent.claudeExecutable === undefined ? undefined : inspectExecutable(intent.claudeExecutable);
   const projectRoots = intent.allowedProjectRoots.map((path) =>
     assertCanonicalDirectory(path, intent.targetUid, false),
   );
-  return { node, shell, codex, projectRoots };
+  return { node, shell, codex, ...(claude === undefined ? {} : { claude }), projectRoots };
 }
 
 export function inspectPackagedNodeRuntime(

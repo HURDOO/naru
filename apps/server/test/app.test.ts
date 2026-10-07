@@ -401,6 +401,17 @@ describe("Naru HTTP API", () => {
       });
       expect(connectWithoutCsrf.statusCode).toBe(403);
 
+      const outsidePath = join(fixture.projectRoot, "..", "outside-worktree");
+      runGit(fixture.projectPath, ["worktree", "add", "-b", "feature/outside", outsidePath]);
+      const outsideConnect = await fixture.app.inject({
+        method: "POST",
+        url: `/api/project-groups/${group.id}/targets`,
+        headers: unsafeHeaders,
+        payload: { path: await realpath(outsidePath) },
+      });
+      expect(outsideConnect.statusCode).toBe(403);
+      expect(outsideConnect.json()).toMatchObject({ code: "PROJECT_OUTSIDE_ROOT" });
+
       const connected = await fixture.app.inject({
         method: "POST",
         url: `/api/project-groups/${group.id}/targets`,

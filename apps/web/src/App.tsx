@@ -2734,7 +2734,9 @@ function PaneTabs({
             >
               <span aria-hidden="true">＋</span>
               {pane.title}
-              {(pane.kind === "codex" || pane.activity.state === "failed") && (
+              {(pane.kind === "codex" ||
+                pane.kind === "claude" ||
+                pane.activity.state === "failed") && (
                 <ActivityStatus state={pane.activity.state} context={`${pane.title} 작업 상태`} />
               )}
             </button>
@@ -2772,6 +2774,8 @@ function paneKindIcon(kind: PaneKind): string {
   switch (kind) {
     case "codex":
       return "✦";
+    case "claude":
+      return "◆";
     case "terminal":
       return ">_";
     case "files":
@@ -2999,6 +3003,8 @@ function createPaneRequest(
     case "terminal":
       return { kind, ...base };
     case "codex":
+      return { kind, ...base };
+    case "claude":
       return { kind, ...base };
     case "files":
       return { kind, ...base, ...(selectedDocumentPath ? { selectedDocumentPath } : {}) };

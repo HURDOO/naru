@@ -21,8 +21,8 @@ ownership과 integration gate를 지킨다.
 
 - 마우스 추적 TUI에서 desktop 왼쪽 드래그를 로컬 선택으로 처리하고 Ctrl/Cmd+C·V와 연결했다.
   일반 shell 선택과 Alt+앱 마우스 입력은 유지한다. 선택 후 repaint가 원문을 바꾸지 않도록
-  선택 문구를 renderer 메모리에 보관하고, 실제 입력·붙여넣기 뒤 선택을 종료한다(D014).
-- 모바일 선택 drag·handle 가장자리 scroll도 alternate buffer에서는 D013의 wheel 경로를 쓴다.
+  선택 문구를 renderer 메모리에 보관하고, 실제 입력·붙여넣기 뒤 선택을 종료한다(D020).
+- 모바일 선택 drag·handle 가장자리 scroll도 alternate buffer에서는 D019의 wheel 경로를 쓴다.
   화면 밖 TUI 원문을 이어 붙이는 transcript 전체 선택은 제공하지 않는다.
 - 검증: Node 24.19.0, 관련 unit 31건, 기존 모바일 복사 E2E 3건과 mouse-tracking TUI fixture E2E
   4건 통과. 1440/768/360px 드래그·한글/emoji copy·paste, 동적 높이, keyboard focus, 양방향
@@ -32,15 +32,15 @@ ownership과 integration gate를 지킨다.
   claude-lab → 운영 순서로 Naru-only upgrade를 완료했다. 두 artifact의 non-web payload는 이전과
   동일하며 새 receipt·승인 digest·maintenance completed를 확인했다. Doctor는 claude-lab 25개,
   운영 29개 check 모두 통과했고, 양쪽 Host/Gateway PID는 유지되며 Naru PID만 바뀌었다.
-  실제 기기의 새 웹 버전 선택·복사 인수와 기존 T63의 미완료 인수·상태는 변경하지 않는다.
+  실제 기기의 새 웹 버전 선택·복사 인수와 기존 T69의 미완료 인수·상태는 변경하지 않는다.
 - 배포 후 일반 클릭 회귀 보완: down에서 즉시 선택하던 동작을 3px 초과 drag 판정 뒤로 옮겼다.
   일반·반복 클릭은 원래 좌표/modifier의 down/up을 xterm에 한 번씩 전달하며 선택 UI를 켜지 않는다
-  (D015). 로컬 관련 unit 22건, 1440/768/360px 클릭 전달·드래그 copy와 모바일 E2E 7건 및
+  (D021). 로컬 관련 unit 22건, 1440/768/360px 클릭 전달·드래그 copy와 모바일 E2E 7건 및
   web build·typecheck·변경 파일 lint 통과. 별도 승인된 정확한 계획으로 claude-lab과 운영에
   `tui-click-claude-20260929-r1`, `tui-click-primary-20260929-r1`을 순서대로 적용했다.
   양쪽 새 receipt·승인 digest·maintenance completed와 Doctor 25/25·29/29를 확인했으며,
   Host/Gateway release 및 PID는 유지되고 Naru만 재시작됐다. 실제 사용자 기기의 클릭 인수는
-  남아 있으며 기존 T63의 미완료 인수·상태는 변경하지 않는다.
+  남아 있으며 기존 T69의 미완료 인수·상태는 변경하지 않는다.
 - 후속 사용자 확인: 일반 클릭·드래그 copy는 동작하지만 드래그를 놓은 뒤 선택 강조가 사라졌다.
   Any-event mouse tracking의 hover 입력이 xterm 선택을 지우는 경로를 로컬 Chrome에서 재현했다.
   Naru 선택이 활성 상태이면 보관한 범위로 native 강조만 복원하고, repaint 뒤에도 복사 원문은
@@ -59,6 +59,100 @@ ownership과 integration gate를 지킨다.
   실행하지 않는다. 새 후보 배포·설정 변경은 아직 수행하지 않았다.
 
 ## 대기 작업
+
+### T68. Claude fullscreen 터치 스크롤
+
+- [x] Claude Code fullscreen의 alternate buffer에서 모바일 수직 드래그를 CLI가 협상한 mouse wheel
+      입력으로 전달한다. 일반 shell의 local scrollback과 선택·focus 동작은 유지한다.
+- 선행 조건: T52, T56, T63, D002 및 DurableSession snapshot barrier. `main`의 진행 중 Codex
+  스크롤 변경은 읽기 전용 참고로만 사용하고 해당 작업 트리는 변경하지 않는다.
+- 범위: Host와 standalone PTY snapshot에서 xterm serializer가 누락한 mouse encoding만 복원한다.
+  public wire schema·DB를 바꾸지 않고 observer input과 오래된 controller generation을 계속 거부한다.
+  `/tui default`의 빈 화면은 별도 원인 조사 대상으로 남긴다.
+- 완료 조건: normal/alternate buffer, mouse mode off/on, snapshot/reconnect, observer와 controller
+  handoff, 선택·focus 및 1440px·768px·360px·동적 viewport를 격리 fixture에서 검증한다. 실제
+  Claude Code·모바일 기기 인수와 운영 배포·Host restart는 별도 승인 경계다.
+- 로컬 검증(2026-09-27): Node 24 format·lint·typecheck·build, 관련 unit/integration 42건,
+  외부 보호 소켓 권한이 필요한 4개 파일을 제외한 Vitest 810건 통과. Node 26 브라우저 E2E에서
+  Claude touch·기존 모바일 복사·Claude reconnect 5건 통과했다. 전체 Vitest의 나머지 4개 파일은
+  현재 sandbox의 보호 소켓/외부 프로세스 접근 제약으로 15건 실패했고, Node 24 Playwright의
+  Chrome 실행은 같은 sandbox에서 SIGABRT로 막혔다. 실제 Claude Code와 실기기·운영 서비스는
+  건드리지 않았다.
+
+### T67. Claude 별도 운영 앱 배포 준비
+
+- [-] Claude용 Naru를 운영 Mac의 별도 앱으로 준비·인수한다. 9443 테스트 서버는
+  사용자 후속 승인 전까지 보존하고, 승인 후 별도로 중지한다.
+  기존 Gateway의 추가 앱 등록과 DurableSession 경계를 조사하고, 기존 운영 앱 등록을 잃지 않도록
+  운영 릴리스의 `additionalGatewayApps` 계약을 현재 source에 통합한다.
+- 선행 조건: T63, T66, WV0-D011, 현재 운영 receipt/intent와 기존 등록 앱의 보존 확인.
+- 완료 조건: 선택한 별도 앱 topology의 Host·Gateway·Naru 격리, Claude activity의 Durable Host
+  경로, 인증·project root·runtime fencing, 배포 artifact와 정확한 읽기 전용 plan, operations·
+  distribution·production smoke를 검증한다. 실제 mutation은 plan digest 승인 후 별도 수행한다.
+- 현재 상태: 외부 Gateway assertion을 받는 별도 Workstation instance와 Claude Host launcher/hook,
+  Claude 기본 Pane 2개를 구현했다. Host app ID·subject는 외부 Gateway binding과 일치하고
+  credential/socket/data는 독립이다. Cheers만 허용할 수 있도록 선택적 exact root 계약
+  (WV0-D012)을 추가했다. Node 24 아티팩트는 clean commit에서 빌드했고 distribution 85건,
+  operations 64건, unit 816건(사용 중인 Codex daemon에 접근하는 2개 파일 제외)과 로컬 production
+  smoke를 통과했다. 브라우저 E2E 23건 중 첫 실행의 2건은 단독 재실행에 통과했다.
+- 운영 적용(2026-09-27): 후속 사용자 승인으로 9443 LaunchAgent만 중지하고 테스트 데이터는
+  보존했다. 독립 Claude Workstation을 설치한 뒤 기존 Gateway에 앱을 등록했다. 기존 추가 앱
+  2개를 보존했고 기존 Host PID를 유지한 채 Gateway·Naru만 재시작했다. 두 instance의
+  `status`·`doctor`는 정상이며, 새 HTTPS 경로는 미인증 요청에 401을 반환한다. 실제 패스키
+  로그인, Cheers 연결, Claude Pane 2개 및 hook 상태의 휴대폰 인수는 아직 남아 있어 T67은 진행 중이다.
+
+### T66. Claude Code 훅 기반 Pane 작업 상태
+
+- [x] Claude Code의 lifecycle hook을 Pane별 runtime capability로 수신해 `running`,
+      `interaction-required`, `completed`, `failed` 상태에 반영한다. 프롬프트·도구 입력·응답·
+      transcript 원문은 수신 경계에서 버리고 저장·로그에 남기지 않는다.
+- 선행 조건: T63, D013 및 공식 Claude Code hooks 계약 확인. 사용자 요청에 따라 실행 중인
+  9443 서버의 설정·프로세스·데이터와 운영 Host·Naru·Gateway는 건드리지 않는다.
+- 검증: hook 입력·설정, 인증된 private IPC, Pane/runtime·cwd fence, 세션 전환·늦은 이벤트,
+  승인 대기와 해제·오류·종료, 새로고침·단일 controller 및 Node 24 회귀. 실제 9443 인수는
+  사용자가 별도로 승인할 때까지 보류한다.
+- 로컬 검증(2026-09-26, Node 24): redacted hook parser·owner-only UDS·capability/cwd/runtime
+  fence·상태 전환·후속 도구 이벤트 해제와 stale callback을 검증했다. 모의 Claude 브라우저
+  E2E에서 작업 중→입력 필요→작업 중→완료, 1440px·768px·360px와 새로고침을 확인했다.
+  format·lint·typecheck·build, Vitest 828건 통과(6건 건너뜀), 민감정보 scan 0건이다.
+  전체 E2E 23건 중 21건 통과, 기존 모바일 복사·Codex 스크롤 2건은 전체 실행에서 실패했으나
+  별도 재실행은 둘 다 통과했다. 실행 중인 9443·운영 서비스는 변경하지 않았다.
+
+### T65. 격리 9443 Cheers 연결 worktree 루트 허용
+
+- [x] Cheers의 연결 worktree가 놓인 `worktree`·`worktrees` 두 형제 디렉터리를 격리 9443
+      서버의 strict-child project root에만 추가한다. 운영 서비스와 일반 root 계약은 변경하지 않는다.
+- 선행 조건: T64, D014 및 사용자의 두 디렉터리 허용·테스트 서버 재시작 승인.
+- 검증: canonical·owner·symlink 검사, 두 연결 worktree의 발견과 연결 가능성, 범위 밖 경로
+  거부, 9443 TLS·로그인·Claude Pane 재연결. 운영 Host·Naru·Gateway는 재시작하지 않는다.
+- 로컬 검증(2026-09-26, Node 24): 두 root의 canonical·owner 확인 후 9443 설정을 원자적으로
+  갱신하고 테스트 LaunchAgent만 재시작했다. 실제 Cheers Git metadata에서 primary 1개와 연결
+  worktree 3개를 허용했고 거부 0개였으며, 각 연결 worktree의 독립 Git 검사도 통과했다. 브라우저
+  Cheers 그룹에 발견된 3개가 표시되고 기존 Claude Pane 2개 재시작·새로고침 재연결을 확인했다.
+  TLS·Origin 거부·비밀번호 로그인·세션 smoke, format·lint·typecheck·build 및 전체 Vitest
+  820건 통과(6건 건너뜀). 첫 전체 Vitest 실행의 보호 소켓 EPERM 11건은 샌드박스 경계로,
+  승인된 로컬 실행에서 모두 통과했다. 연결 worktree는 계속 사용자 명시 연결을 요구한다.
+
+### T64. 격리 Claude 9443 인수 기본 작업공간과 명시 프로젝트 연결
+
+- [x] 격리 비밀번호 서버의 새 Project 기본 Pane을 Claude Code 2개와 Dev Terminal로 생성하고,
+      사용자 지정 Project 한 경로만 `realpath` 뒤 exact root로 허용한다. 기존 Workspace와 운영
+      Workstation 기본값은 변경하지 않는다.
+- 선행 조건: T63, D013 및 9443 격리 서버 승인. 운영 배포·Host restart는 범위 밖이다.
+- 검증: 기본 Pane 저장·시작, exact root와 sibling/symlink escape 거부, 기존 Workspace 보존,
+  9443 TLS·로그인·Claude 실행·reconnect, Node 24 전체 회귀.
+
+### T63. Claude Code Pane 실험 구현
+
+- [x] Codex Pane과 저장된 Codex 세션을 보존하면서 별도 Claude Code Pane을 생성·실행한다.
+      Host allowlisted `claude-code` 프로필, standalone 실행, UI와 distribution intent의 선택적
+      `claudeExecutable`을 연결한다. 기존 intent는 필드가 없어도 그대로 읽는다.
+- 선행 조건: D001~D003, D009, T53, T59 및 Workstation v0 distribution.
+- 검증: v16 DB의 Pane/Host 연결 보존 migration, 인증·실행 실패, Pane 생성·재연결·단일
+  controller, distribution 구성 및 로컬 UI. 운영 Gateway 등록·reconfigure·실기기 인수는
+  exact artifact/intent plan을 별도로 검토한 뒤 수행한다.
+- 범위: Claude CLI 자체의 대화 재개 선택기를 사용한다. Claude hook 기반 activity·입력 필요·
+  Files 전송·이미지 paste는 이 초기 구현에 포함하지 않는다.
 
 ### T52. Pane resize·로딩·유휴 상태의 blink와 입력 focus 유실 개선
 
@@ -449,14 +543,14 @@ ownership과 integration gate를 지킨다.
 - 선행 조건: T52, T56. 사용자가 다음 작업으로 지정했으므로 T46/T48보다 먼저 수행한다.
 - lane: Mobile UI performance
 
-### T63. Codex native transcript의 휠·터치 스크롤
+### T69. Codex native transcript의 휠·터치 스크롤
 
 - [-] Codex 기본 화면 모드를 유지하고 Naru의 PC 휠과 모바일 터치를 지원한다.
 - 조사: 실제 CLI 0.156.1은 normal buffer 이력을 쌓지만 0.157.1은 alternate buffer와
   mouse tracking을 사용했다. 일반 scrollback API만 호출하는 터치 경로로는 움직일 수 없다.
 - 구현: xterm serializer가 누락한 SGR/pixel mouse encoding을 Host·legacy snapshot에서 복원한다.
   PC reload 후 휠 실패를 수정 전 재현했고 수정 후 통과했다. 터치는 alternate screen의 tracking이
-  활성화된 경우 xterm wheel 경로를 사용하고 기존 controller generation fence를 유지한다(D013).
+  활성화된 경우 xterm wheel 경로를 사용하고 기존 controller generation fence를 유지한다(D019).
 - 검증(2026-09-27, Node 24): 실제 CLI 0.157.1 + synthetic model + Chrome에서 고정 1440/768/360px
   각각 휠·합성 터치·reload·observer 입력 거부·takeover 후 스크롤 3건 통과. 동적 높이의 화면 넘침도
   확인했다. keyboard/focus·접근성 및 observer 기존 E2E 2건, production-smoke 1건, 관련 unit 51건,
@@ -471,6 +565,13 @@ ownership과 integration gate를 지킨다.
 - 완료 조건: 실제 CLI의 격리 synthetic model에서 PC·터치 스크롤을 확인하고, 일반 shell scrollback,
   observer 입력 거부·controller handoff·reconnect, 키보드·focus와 1440/768/360px·동적 viewport를
   관련 unit/E2E로 검증한다. 운영 설정·배포·restart는 하지 않는다.
+- 운영 상태 정정(2026-10-07): 위 "운영 배포·restart는 하지 않았다"는 기록 뒤 운영 instance에
+  `t63-native-scroll-20260927-r1` release가 설치되어 현재 Host·Gateway가 이를 실행 중이다. 설치본
+  source map의 server·Host·Gateway·CLI source는 이 Task의 커밋 `b3dc7a8` 이후 main과 파일 단위로
+  일치한다. 해당 release의 원래 source commit은 정리된 임시 저장소에만 있었다. 실제 기기 인수와
+  연속 크기 전환 검증은 여전히 미완료이므로 상태는 `[-]`로 유지한다.
+- 번호 재부여(2026-10-07): `model/claude` 통합 시 Claude 계열 T63과 겹쳐 T69로 바꿨다. 커밋 메시지의
+  T63·D013·D014·D015 표기는 각각 T69·D019·D020·D021이다(D022).
 
 ### 기타 backlog
 

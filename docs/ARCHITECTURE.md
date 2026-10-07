@@ -59,6 +59,10 @@ Gateway assertion, Naru app authorization과 Host capability는 서로 대체할
   투명 중계하고 activity snapshot·DB·구조화 로그에는 담지 않는다.
 - 기존 runtime은 자동 재시작하지 않고 hook-only 관측을 유지한다. 새 relay runtime에서는 request 해소
   hook 추론을 사용하지 않으며, Naru 재연결 시 같은 relay snapshot이 권위 상태를 복원한다.
+- Standalone Claude Pane은 CLI의 추가 session settings에 관측 전용 command hook을 주입한다.
+  hook subprocess는 원문 JSON에서 lifecycle 종류·session ID·cwd만 추출해 owner-only UDS로 보낸다.
+  Naru는 Pane/runtime capability·cwd·현재 session을 검증한 뒤 기존 activity DB/WS 경로로 투영한다.
+  이 경로는 Codex relay·Durable Host integration과 분리하며, 후자의 Claude 지원은 별도 결정으로 둔다.
 - Naru 또는 Gateway가 재시작되면 같은 Host runtime에 재attach한다.
 - Host restart 뒤 process continuity를 주장하지 않고 persisted Session을 stopped로 표시한다.
 

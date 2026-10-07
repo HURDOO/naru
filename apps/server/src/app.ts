@@ -65,7 +65,7 @@ import { WebPushNotificationService, type PushNotificationService } from "./push
 import { configurationReadiness, readinessStatus } from "./readiness.js";
 import { LoginRateLimiter, type Session, SessionStore } from "./sessions.js";
 import { sendFrame, type SocketLike } from "./transport.js";
-import { TlsCertificateManager } from "./tls-certificate.js";
+import { TlsCertificateManager, type TlsCertificateService } from "./tls-certificate.js";
 
 const CSRF_HEADER = "x-csrf-token";
 const IdParamsSchema = z.object({ id: z.string().uuid() });
@@ -123,7 +123,7 @@ export interface AppDependencies {
   leaseManager?: LeaseManager;
   observability?: Observability;
   clipboardImageWriter?: ClipboardImageWriter;
-  tlsCertificateManager?: TlsCertificateManager;
+  tlsCertificateManager?: TlsCertificateService;
   passkeys?: PasskeyService;
   pushNotifications?: PushNotificationService;
   clientPresence?: ClientPresenceRegistry;
@@ -590,10 +590,11 @@ export async function buildApp(
     requireSurfaceController(request, leases);
     const { id } = IdParamsSchema.parse(request.params);
     const { path } = ConnectDiscoveredProjectTargetRequestSchema.parse(request.body);
-    const project = await projectCatalog.connect(id, path);
+    const validated = await dependencies.pathPolicy.validate(path);
+    const project = await projectCatalog.connect(id, validated.realPath);
     const workspace = dependencies.repository.getWorkspace(project.id);
     for (const pane of workspace.panes) {
-      if (pane.kind === "codex") {
+      if (pane.kind === "codex" || pane.kind === "claude") {
         await startPaneWithPersistedFailure(dependencies.supervisor, pane.id, observability);
       }
     }
@@ -611,7 +612,7 @@ export async function buildApp(
     );
     const workspace = dependencies.repository.getWorkspace(project.id);
     for (const pane of workspace.panes) {
-      if (pane.kind === "codex") {
+      if (pane.kind === "codex" || pane.kind === "claude") {
         await startPaneWithPersistedFailure(dependencies.supervisor, pane.id, observability);
       }
     }
@@ -724,8 +725,19 @@ export async function buildApp(
     if (input.kind === "files" && input.selectedDocumentPath) {
       await files.read(project.path, input.selectedDocumentPath, true);
     }
+    if (
+      input.kind === "claude" &&
+      config.sessionRuntime?.owner === "durable-host" &&
+      config.claudeExecutable === undefined
+    ) {
+      throw new AppError(
+        "CLAUDE_EXECUTABLE_MISSING",
+        503,
+        "Claude Code 실행 파일이 Host에 설정되지 않았습니다.",
+      );
+    }
     const pane = dependencies.repository.createPane(id, input);
-    if (pane.kind === "terminal" || pane.kind === "codex") {
+    if (pane.kind === "terminal" || pane.kind === "codex" || pane.kind === "claude") {
       await startPaneWithPersistedFailure(dependencies.supervisor, pane.id, observability);
     }
     return reply.code(201).send(dependencies.repository.getWorkspace(id));
@@ -739,6 +751,17 @@ export async function buildApp(
     if (!pane) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
     if (pane.kind === "files" || pane.kind === "docs" || pane.kind === "tasks") {
       throw new AppError("REQUEST_INVALID", 400, "이 Pane은 재시작할 프로세스가 없습니다.");
+    }
+    if (
+      pane.kind === "claude" &&
+      config.sessionRuntime?.owner === "durable-host" &&
+      config.claudeExecutable === undefined
+    ) {
+      throw new AppError(
+        "CLAUDE_EXECUTABLE_MISSING",
+        503,
+        "Claude Code 실행 파일이 Host에 설정되지 않았습니다.",
+      );
     }
     await requireUsableProject(pane.projectId, dependencies);
     await dependencies.supervisor.restart(id);
