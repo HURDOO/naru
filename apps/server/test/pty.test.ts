@@ -1032,7 +1032,7 @@ describe("PtySupervisor", () => {
       expect(snapshotState(primaryFrames)).toContain("PRIMARY SCREEN");
       detachPrimary();
 
-      fixture.process.emitData("\u001b[?1049h\u001b[2J\u001b[HALTERNATE SCREEN");
+      fixture.process.emitData("\u001b[?1049h\u001b[?1003;1006h\u001b[2J\u001b[HALTERNATE SCREEN");
       const alternateFrames: ServerWsFrame[] = [];
       const detachAlternate = await supervisor.attach(fixture.pane.id, 80, 24, (frame) =>
         alternateFrames.push(frame),
@@ -1041,17 +1041,19 @@ describe("PtySupervisor", () => {
       expect(alternateSnapshot).toContain("PRIMARY SCREEN");
       expect(alternateSnapshot).toContain("\u001b[?1049h");
       expect(alternateSnapshot).toContain("ALTERNATE SCREEN");
+      expect(alternateSnapshot).toContain("\u001b[?1006h");
       expect(alternateSnapshot.indexOf("\u001b[?1049h")).toBeLessThan(
         alternateSnapshot.indexOf("ALTERNATE SCREEN"),
       );
       detachAlternate();
 
-      fixture.process.emitData("\u001b[?1049l");
+      fixture.process.emitData("\u001b[?1049;1003;1006l");
       const restoredFrames: ServerWsFrame[] = [];
       const detachRestored = await supervisor.attach(fixture.pane.id, 80, 24, (frame) =>
         restoredFrames.push(frame),
       );
       expect(snapshotState(restoredFrames)).toContain("PRIMARY SCREEN");
+      expect(snapshotState(restoredFrames)).not.toContain("\u001b[?1006h");
       detachRestored();
     } finally {
       await supervisor.shutdown();

@@ -1,4 +1,5 @@
 import type { TerminalTouchSelectionController } from "./terminal-touch-selection";
+import { scrollTerminalAt } from "./terminal-scroll";
 
 const TOUCH_SCROLL_ACTIVATION_PX = 8;
 const TOUCH_SELECTION_HOLD_MS = 500;
@@ -30,8 +31,10 @@ export interface TerminalScrollbarTouchDrag {
 
 interface ScrollableTerminal {
   rows: number;
+  readonly modes?: { readonly mouseTrackingMode: string };
   buffer: {
     active: {
+      readonly type?: "normal" | "alternate";
       readonly baseY: number;
       readonly viewportY: number;
     };
@@ -244,7 +247,9 @@ export function attachTerminalTouchScroll(
     if (!update.scrolling) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
-    if (update.lines !== 0) terminal.scrollLines(update.lines);
+    if (update.lines !== 0) {
+      scrollTerminalAt(screen, terminal, update.lines, event.clientX, event.clientY);
+    }
   };
 
   const finishPointer = (event: PointerEvent, canceled: boolean): void => {

@@ -203,6 +203,11 @@ flush한다. 동일 sequence를 snapshot과 live 양쪽에 적용하거나 건�
 확인하지 못하거나 bounded queue를 넘으면 incremental recovery를 추측하지 않고 full resync를
 요구한다.
 
+serialize addon이 보존하지 않는 mouse encoding(DEC 1006/1016)은 emulator의 public parser hook에서
+상수 크기의 상태로 추적하고 같은 write barrier 안에서 snapshot 끝에 포함한다. 전체·축소 snapshot
+모두 최종 serialized state 문자 수 제한을 적용한다. tracking mode는 기존 serializer가 보존한다. wire shape와
+sequence 계약은 바뀌지 않으며 기존 client도 표준 escape sequence로 복원한다(D013).
+
 ### 5.5 metadata repository
 
 SQLite에는 다음 redacted metadata만 저장한다.

@@ -25,6 +25,7 @@ import { ProjectPathPolicy } from "../src/path-policy.js";
 export async function startCodexAcceptanceFixture(
   codexExecutable: string,
   testPassword: string = randomUUID(),
+  responseText = "NARU_T59_READY",
 ) {
   if (process.versions.node.split(".")[0] !== "24") throw new Error("Node 24 required");
   const fixture = createHostFixture();
@@ -109,7 +110,7 @@ readline.createInterface({input:process.stdin}).on("line", line => {
             type: "message",
             role: "assistant",
             status: "completed",
-            content: [{ type: "output_text", text: "NARU_T59_READY", annotations: [] }],
+            content: [{ type: "output_text", text: responseText, annotations: [] }],
           };
       response.writeHead(200, { "content-type": "text/event-stream" });
       for (const event of [

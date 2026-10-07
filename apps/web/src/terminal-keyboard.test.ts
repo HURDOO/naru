@@ -4,6 +4,7 @@ import {
   codexShiftEnterSequence,
   ctrlSequenceForKeyboardEvent,
   isTerminalFocusReport,
+  isTerminalMouseReport,
   latchedModifierSequenceForKeyboardEvent,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
@@ -16,6 +17,14 @@ const keydown = {
   altKey: false,
   shiftKey: false,
 };
+
+it("distinguishes negotiated mouse reports from typing and focus reports", () => {
+  expect(isTerminalMouseReport("\u001b[<64;30;12M", "any")).toBe(true);
+  expect(isTerminalMouseReport("\u001b[<0;30;12m", "drag")).toBe(true);
+  expect(isTerminalMouseReport("\u001b[<64;30;12M", "none")).toBe(false);
+  expect(isTerminalMouseReport("\u001b[I", "any")).toBe(false);
+  expect(isTerminalMouseReport("hello", "any")).toBe(false);
+});
 
 describe("terminal keyboard boundary", () => {
   it("leaves paste and selected-copy shortcuts to the browser", () => {

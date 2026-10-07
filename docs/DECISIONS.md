@@ -142,3 +142,20 @@
 - 새 launcher부터 적용하며 구 runtime은 변경하지 않는다. 패키지 배포는 Host payload 변경으로
   세 runtime 재시작을 수반할 수 있고 PTY 연속성을 보장하지 않는다. 지원 버전은 실제 인수 결과로
   한정하며 이후 버전의 동일한 파일 형태만으로 전체 protocol 호환을 주장하지 않는다.
+
+## D013. Codex 기본 transcript 모드와 협상된 mouse encoding을 유지한다
+
+- Codex의 alternate screen을 끄거나 별도 transcript UI로 대체하지 않는다. 실제 CLI 0.157.1의
+  native transcript는 alternate screen과 mouse tracking을 사용하므로 일반 terminal scrollback과
+  달리 휠을 PTY 입력으로 전달해야 한다.
+- xterm serialize addon이 누락하는 DEC mouse encoding 1006/1016을 public parser hook으로 추적하고
+  Host 및 legacy PTY snapshot 끝에 복원한다. tracking mode는 기존 serializer가 담당한다.
+  분할된 escape sequence도 emulator parser가 처리하며 reset과 mode 해제도 반영한다.
+- alternate screen에서 tracking이 활성화된 터치는 xterm wheel event로 변환한다. 좌표와 encoding은
+  xterm이 결정하며, 일반 shell의 local scrollback·선택·focus 동작은 유지한다. SGR mouse report는
+  문자 입력용 Ctrl/Alt modifier나 live-tail 이동을 적용하지 않는다.
+- mouse report도 기존 attachment/controller generation fence를 통과한다. observer는 공유된 Codex
+  viewport를 입력으로 바꿀 수 없다. 독립적인 observer transcript 탐색은 이번 범위가 아니다.
+- wire schema와 protocol version은 변하지 않는다. 기존 client도 표준 escape sequence를 읽을 수
+  있으므로 데이터 migration은 없다. 실행 중 구 Host는 자동 교체하지 않으며, 운영 적용은 별도
+  승인된 배포·Host restart가 필요하고 기존 PTY의 연속성을 보장하지 않는다.

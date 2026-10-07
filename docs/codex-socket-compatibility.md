@@ -48,6 +48,17 @@ NARU_ACTUAL_CODEX=/absolute/path/to/codex node --import tsx ops/workstation/dev/
 운영 저장소·세션·global Codex config와 분리되어 있고, CLI 응답은 local synthetic model 결과다.
 실제 OpenAI 계정 인증·실서비스 모델 품질·운영 ingress 인수를 대체하지 않는다.
 
+Codex 기본 transcript의 휠·터치·reconnect·controller/observer 검증은 별도 browser fixture로 실행한다.
+운영 설정을 읽거나 바꾸지 않으며 1440/768/360px 각각 독립된 실제 CLI와 synthetic model을 사용한다.
+터치는 Chrome의 합성 pointer event이므로 실제 모바일 브라우저 인수를 대체하지 않는다.
+
+```sh
+NARU_ACTUAL_CODEX=/absolute/path/to/codex pnpm exec playwright test --config playwright.codex-scroll.config.ts
+```
+
+T63 조사에서 한 세션의 화면 폭을 연속 변경하면 출력 일부가 어긋나는 현상도 관찰했다.
+고정 viewport의 스크롤 검증과 별개이며 원인과 운영 재현 여부는 아직 확정하지 않았다.
+
 ## 배포와 rollback
 
 기존 runtime은 자동 변경하지 않는다. 새 launcher는 Host 의존 payload이므로 upgrade plan의

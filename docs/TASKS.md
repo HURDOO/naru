@@ -408,6 +408,29 @@ ownership과 integration gate를 지킨다.
 - 선행 조건: T52, T56. 사용자가 다음 작업으로 지정했으므로 T46/T48보다 먼저 수행한다.
 - lane: Mobile UI performance
 
+### T63. Codex native transcript의 휠·터치 스크롤
+
+- [-] Codex 기본 화면 모드를 유지하고 Naru의 PC 휠과 모바일 터치를 지원한다.
+- 조사: 실제 CLI 0.156.1은 normal buffer 이력을 쌓지만 0.157.1은 alternate buffer와
+  mouse tracking을 사용했다. 일반 scrollback API만 호출하는 터치 경로로는 움직일 수 없다.
+- 구현: xterm serializer가 누락한 SGR/pixel mouse encoding을 Host·legacy snapshot에서 복원한다.
+  PC reload 후 휠 실패를 수정 전 재현했고 수정 후 통과했다. 터치는 alternate screen의 tracking이
+  활성화된 경우 xterm wheel 경로를 사용하고 기존 controller generation fence를 유지한다(D013).
+- 검증(2026-09-27, Node 24): 실제 CLI 0.157.1 + synthetic model + Chrome에서 고정 1440/768/360px
+  각각 휠·합성 터치·reload·observer 입력 거부·takeover 후 스크롤 3건 통과. 동적 높이의 화면 넘침도
+  확인했다. keyboard/focus·접근성 및 observer 기존 E2E 2건, production-smoke 1건, 관련 unit 51건,
+  operations 64건, distribution 77건 통과. build·typecheck 통과.
+- 전체 unit은 일반 OS 권한에서 806 통과·4 실패·6 skip이었다. hook 3건은 현재 Naru PTY가 상속한
+  relay/bootstrap 환경을 테스트 자식에서 제외하자 통과했고 process-runner 1건은 단독 재검증에서
+  통과했다. 이들을 스크롤 변경의 회귀로 확인한 것은 아니다.
+- 미완료: 같은 세션을 1440 → 768(900 → 620 높이) → 360px로 연속 전환하며 스크롤하면
+  출력 일부가 어긋나는 현상이 간헐적으로 관찰됐다. 원인 및 이번 변경과의 인과는 미확정이다.
+  고정 viewport 테스트로 대체해 이 문제까지 해결됐다고 판단하지 않는다. 실제 모바일 기기 인수와
+  연속 크기 전환 검증을 남기고 Task를 진행 중으로 유지한다. 운영 배포·restart는 하지 않았다.
+- 완료 조건: 실제 CLI의 격리 synthetic model에서 PC·터치 스크롤을 확인하고, 일반 shell scrollback,
+  observer 입력 거부·controller handoff·reconnect, 키보드·focus와 1440/768/360px·동적 viewport를
+  관련 unit/E2E로 검증한다. 운영 설정·배포·restart는 하지 않는다.
+
 ### 기타 backlog
 
 - [x] T29 모바일 prompt·image input 완성

@@ -26,6 +26,7 @@ import { isAndroidTouchInput, MobileTerminalImeBridge } from "./mobile-terminal-
 import {
   codexShiftEnterSequence,
   isTerminalFocusReport,
+  isTerminalMouseReport,
   latchedModifierSequenceForKeyboardEvent,
   shouldUseBrowserClipboard,
 } from "./terminal-keyboard";
@@ -753,7 +754,13 @@ export function TerminalPane({
         : () => undefined;
       const onData = terminal.onData((data) => {
         if (!mobileIme || mobileIme.allowNativeData(data)) {
-          sendTerminalData(data, !isTerminalFocusReport(data, terminal.modes.sendFocusMode));
+          sendTerminalData(
+            data,
+            !(
+              isTerminalFocusReport(data, terminal.modes.sendFocusMode) ||
+              isTerminalMouseReport(data, terminal.modes.mouseTrackingMode)
+            ),
+          );
         }
       });
       const onScroll = terminal.onScroll(() => reportViewport(terminal));

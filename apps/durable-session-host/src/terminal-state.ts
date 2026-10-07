@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { TerminalMouseEncoding } from "@naru/domain";
 import type { SerializeAddon as SerializeAddonInstance } from "@xterm/addon-serialize";
 import type {
   ITerminalInitOnlyOptions,
@@ -37,6 +38,7 @@ export interface TerminalStateSnapshot {
 export class BoundedTerminalState {
   readonly #terminal: HeadlessTerminalInstance;
   readonly #serializer: SerializeAddonInstance;
+  readonly #mouseEncoding = new TerminalMouseEncoding();
   readonly #frames: TerminalOutputFrame[] = [];
   readonly #scrollbackRows: number;
   readonly #outputRingCharacters: number;
@@ -61,6 +63,19 @@ export class BoundedTerminalState {
     });
     this.#serializer = new SerializeAddon();
     this.#terminal.loadAddon(this.#serializer);
+    for (const [final, enabled] of [
+      ["h", true],
+      ["l", false],
+    ] as const) {
+      this.#terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
+        this.#mouseEncoding.set(params, enabled);
+        return false;
+      });
+    }
+    this.#terminal.parser.registerEscHandler({ final: "c" }, () => {
+      this.#mouseEncoding.reset();
+      return false;
+    });
   }
 
   get sequence(): number {
@@ -96,9 +111,12 @@ export class BoundedTerminalState {
 
   async snapshot(): Promise<TerminalStateSnapshot> {
     await this.#barrier;
-    let serializedState = this.#serializer.serialize({ scrollback: this.#scrollbackRows });
+    let serializedState =
+      this.#serializer.serialize({ scrollback: this.#scrollbackRows }) +
+      this.#mouseEncoding.serialize();
     if (serializedState.length > DURABLE_SESSION_LIMITS.terminalStateCharacters) {
-      serializedState = this.#serializer.serialize({ scrollback: 0 });
+      serializedState =
+        this.#serializer.serialize({ scrollback: 0 }) + this.#mouseEncoding.serialize();
     }
     if (serializedState.length > DURABLE_SESSION_LIMITS.terminalStateCharacters) {
       throw new HostOperationError(

@@ -258,3 +258,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export * as DurableSessionCore from "./durable-session/index.js";
+export { TerminalMouseEncoding } from "./terminal-mouse-encoding.js";

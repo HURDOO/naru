@@ -63,7 +63,7 @@ describe("public client over the T07 UDS stream", () => {
         kind: "snapshot",
         runtimeId: TEST_IDS.runtime1,
         sequence: 0,
-        serializedState: "",
+        serializedState: "\u001b[?1006;1016l",
       });
 
       const second = await DurableSessionAttachmentHandle.open(client, {
