@@ -270,6 +270,7 @@ export function TerminalPane({
           ? applyMobileModifiersToTerminalData(data, ctrlArmedRef.current, altArmedRef.current)
           : data;
       if (!attachment.input(output)) return;
+      if (revealLiveTail && touchSelectionRef.current?.active) touchSelectionRef.current.cancel();
       if (revealLiveTail && modifiersArmed) clearMobileModifiers();
       if (revealLiveTail) returnToLiveTail();
     },
@@ -702,7 +703,14 @@ export function TerminalPane({
             return false;
           }
         }
-        if (shouldUseBrowserClipboard(event, terminal.hasSelection())) {
+        if (
+          shouldUseBrowserClipboard(
+            event,
+            terminal.hasSelection() ||
+              (touchSelectionRef.current?.active === true &&
+                touchSelectionRef.current.hasSelection()),
+          )
+        ) {
           clearMobileModifiers();
           return false;
         }

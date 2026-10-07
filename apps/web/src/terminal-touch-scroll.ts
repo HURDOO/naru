@@ -175,8 +175,16 @@ export function attachTerminalTouchScroll(
     selectionEdgeDirection = edge;
     if (selectionEdgeDirection === 0) return;
     selectionEdgeTimer = setInterval(() => {
-      terminal.scrollLines(selectionEdgeDirection);
-      if (lastSelectionPoint) selection?.move(lastSelectionPoint.x, lastSelectionPoint.y);
+      if (lastSelectionPoint) {
+        scrollTerminalAt(
+          screen,
+          terminal,
+          selectionEdgeDirection,
+          lastSelectionPoint.x,
+          lastSelectionPoint.y,
+        );
+        selection?.move(lastSelectionPoint.x, lastSelectionPoint.y);
+      }
     }, TOUCH_SELECTION_EDGE_INTERVAL_MS);
   };
 

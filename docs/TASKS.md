@@ -17,6 +17,47 @@
 PI-00 public baseline은 완료됐다. 각 작업은 public repository의 별도 worktree에서 lane
 ownership과 integration gate를 지킨다.
 
+## 요청 범위 유지보수: TUI 출력 선택·복사 (2026-09-29)
+
+- 마우스 추적 TUI에서 desktop 왼쪽 드래그를 로컬 선택으로 처리하고 Ctrl/Cmd+C·V와 연결했다.
+  일반 shell 선택과 Alt+앱 마우스 입력은 유지한다. 선택 후 repaint가 원문을 바꾸지 않도록
+  선택 문구를 renderer 메모리에 보관하고, 실제 입력·붙여넣기 뒤 선택을 종료한다(D014).
+- 모바일 선택 drag·handle 가장자리 scroll도 alternate buffer에서는 D013의 wheel 경로를 쓴다.
+  화면 밖 TUI 원문을 이어 붙이는 transcript 전체 선택은 제공하지 않는다.
+- 검증: Node 24.19.0, 관련 unit 31건, 기존 모바일 복사 E2E 3건과 mouse-tracking TUI fixture E2E
+  4건 통과. 1440/768/360px 드래그·한글/emoji copy·paste, 동적 높이, keyboard focus, 양방향
+  edge scroll 및 release 후 정지를 확인했다. 세 크기 screenshot 확인, web typecheck·build와
+  변경 파일 lint·format 통과. 실제 Codex/Claude 버전별·실제 모바일 기기 인수는 수행하지 않았다.
+- 사용자 승인 후 각 현재 배포 source 위에 이번 web 수정만 추가한 별도 artifact를 만들고
+  claude-lab → 운영 순서로 Naru-only upgrade를 완료했다. 두 artifact의 non-web payload는 이전과
+  동일하며 새 receipt·승인 digest·maintenance completed를 확인했다. Doctor는 claude-lab 25개,
+  운영 29개 check 모두 통과했고, 양쪽 Host/Gateway PID는 유지되며 Naru PID만 바뀌었다.
+  실제 기기의 새 웹 버전 선택·복사 인수와 기존 T63의 미완료 인수·상태는 변경하지 않는다.
+- 배포 후 일반 클릭 회귀 보완: down에서 즉시 선택하던 동작을 3px 초과 drag 판정 뒤로 옮겼다.
+  일반·반복 클릭은 원래 좌표/modifier의 down/up을 xterm에 한 번씩 전달하며 선택 UI를 켜지 않는다
+  (D015). 로컬 관련 unit 22건, 1440/768/360px 클릭 전달·드래그 copy와 모바일 E2E 7건 및
+  web build·typecheck·변경 파일 lint 통과. 별도 승인된 정확한 계획으로 claude-lab과 운영에
+  `tui-click-claude-20260929-r1`, `tui-click-primary-20260929-r1`을 순서대로 적용했다.
+  양쪽 새 receipt·승인 digest·maintenance completed와 Doctor 25/25·29/29를 확인했으며,
+  Host/Gateway release 및 PID는 유지되고 Naru만 재시작됐다. 실제 사용자 기기의 클릭 인수는
+  남아 있으며 기존 T63의 미완료 인수·상태는 변경하지 않는다.
+- 후속 사용자 확인: 일반 클릭·드래그 copy는 동작하지만 드래그를 놓은 뒤 선택 강조가 사라졌다.
+  Any-event mouse tracking의 hover 입력이 xterm 선택을 지우는 경로를 로컬 Chrome에서 재현했다.
+  Naru 선택이 활성 상태이면 보관한 범위로 native 강조만 복원하고, repaint 뒤에도 복사 원문은
+  갱신하지 않도록 보완했다. 입력·붙여넣기·취소에 따른 선택 종료는 유지한다.
+  관련 unit 28건과 E2E 7건, web typecheck·build·변경 파일 lint 통과. 1440/768/360px에서 release 후
+  hover에도 강조가 보이는 screenshot과 keyboard focus·동적 viewport·모바일 copy/scroll 회귀를
+  확인했다. 이 강조 보완은 아직 미배포이며 새 artifact와 별도 승인 계획이 필요하다.
+- 재개(2026-10-06): 임시 배포본·checkout 파일이 정리되어 canonical Git에 남은 base와 설치본의
+  source map에서 source를 복구하고 후보를 다시 만들었다. 두 후보 모두 non-web payload가 현재
+  설치본과 동일하다. 운영 unit/distribution 106건·claude 114건, 각 operations 64건·E2E 7건·
+  production-mode smoke 1건, build·typecheck·변경 파일 lint/format이 통과했다.
+  운영은 Doctor 29/29이고 Naru-only 새 계획을 준비했다. claude-lab의 이전 readiness 실패는
+  해소됐지만 Claude 업데이트 뒤 사라진 이전 executable 경로를 설정이 참조하여 target environment
+  검사가 차단된다. 설치 패키지의 native import는 정상이다. 현재 canonical Claude 경로로 바꾸는
+  read-only reconfigure 계획은 Host/Gateway/Naru 재시작을 요구하므로 Naru-only 승인 범위로
+  실행하지 않는다. 새 후보 배포·설정 변경은 아직 수행하지 않았다.
+
 ## 대기 작업
 
 ### T52. Pane resize·로딩·유휴 상태의 blink와 입력 focus 유실 개선

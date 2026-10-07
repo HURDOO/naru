@@ -159,3 +159,31 @@
 - wire schema와 protocol version은 변하지 않는다. 기존 client도 표준 escape sequence를 읽을 수
   있으므로 데이터 migration은 없다. 실행 중 구 Host는 자동 교체하지 않으며, 운영 적용은 별도
   승인된 배포·Host restart가 필요하고 기존 PTY의 연속성을 보장하지 않는다.
+
+## D014. 마우스 추적 TUI의 기본 드래그는 Naru 출력 선택에 사용한다
+
+- 마우스 추적을 켠 Codex·Claude 등에서도 desktop 왼쪽 드래그는 Naru가 로컬 buffer에서 선택한다.
+  Alt+마우스는 앱 입력 경로를 유지하고, 일반 shell은 기존 xterm 선택을 사용한다. 명시적 선택
+  도구도 desktop 드래그를 지원한다. 선택이 있으면 Ctrl/Cmd+C는 browser copy에 맡기고, 실제
+  문자 입력·붙여넣기가 승인되면 선택을 종료한다. 선택 없는 Ctrl+C는 기존 interrupt 입력이다.
+- 선택 원문은 해당 renderer 메모리에만 보관하며 TUI repaint가 같은 좌표를 다른 문자로 바꾸어도
+  이미 선택한 복사 문구를 바꾸지 않는다. 취소·새 선택·dispose 시 회수하고 로그·저장·Host 전송은
+  하지 않는다. 별도 clipboard protocol이나 OSC 52 권한을 추가하지 않는다.
+- 선택 drag와 handle의 가장자리 scroll은 D013과 같은 wheel 경로를 사용한다. normal buffer는
+  로컬 scrollback, tracking alternate buffer는 controller fence를 통과하는 TUI wheel 입력이다.
+  alternate buffer의 화면 밖 원문은 Naru가 갖고 있지 않으므로 여러 redraw에 걸친 전체 transcript
+  범위를 합성하지 않는다. 범위 조정은 현재 buffer 좌표에 적용되고 마지막으로 선택한 문구를 복사한다.
+- wire/schema/Host payload 변경은 없다. 이 웹 변경만 배포하면 Naru-only upgrade가 가능하지만
+  D013 등의 Host 변경을 함께 넣으면 실제 distribution plan의 restartServices를 따라야 한다.
+
+## D015. 일반 클릭은 TUI에 전달하고 드래그가 확인된 뒤에만 선택한다
+
+- D014 구현은 mouse down 순간 선택을 시작해 일반 클릭에도 선택 도구가 잠깐 나타나고 TUI
+  클릭을 막았다. 이를 보완해 mouse down은 선택 UI 없이 보류하고, 3px를 넘는 이동이 확인된
+  경우에만 최초 위치에서 로컬 드래그 선택을 시작한다.
+- 이동이 없는 클릭과 작은 손떨림은 mouse up에서 원래 좌표·modifier의 down/up을 xterm 경로로
+  한 번씩 전달한다. 협상된 mouse encoding과 기존 controller fence를 그대로 사용한다.
+  반복 클릭도 TUI로 전달한다. 일반 클릭 판정까지 press 전달이 지연되며, Alt 입력은 기존처럼
+  즉시 TUI 경로를 사용한다. Blur·dispose는 보류한 클릭을 전달하지 않고 회수한다.
+- 일반 shell, 모바일 길게 누르기·선택, 기존 드래그 copy와 edge scroll은 유지한다.
+  Host·wire contract·저장 형식 변경은 없으며 새 web artifact와 별도 배포 plan으로 적용한다.

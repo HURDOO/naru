@@ -1,4 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
+import { scrollTerminalAt } from "./terminal-scroll";
 
 export interface TerminalTouchSelectionController {
   readonly active: boolean;
@@ -104,11 +105,15 @@ export function attachTerminalTouchSelection(
   let dragging: BufferSpan | null = null;
   let retainedSpan: BufferSpan | null = null;
   let retainedText = "";
+  let restoringHighlight = false;
   let handleDrag: { pointerId: number; edge: "start" | "end"; span: BufferSpan } | null = null;
   let edgeScrollTimer: ReturnType<typeof setInterval> | null = null;
   let edgeScrollDirection = 0;
   let lastHandlePoint: { x: number; y: number } | null = null;
   let focusAfterPaneTouch = false;
+  let pointerType = "mouse";
+  let mouseDrag: { x: number; y: number; moved: boolean; down: MouseEvent } | null = null;
+  let forwardingClick = false;
   const touchCopyToken = {};
   const ownerDocument = screen.ownerDocument;
   const paneSurface = screen.closest<HTMLElement>(".pane-surface");
@@ -140,18 +145,8 @@ export function attachTerminalTouchSelection(
   const selectedSpan = (): BufferSpan | null => currentSpan() ?? retainedSpan;
 
   const selectionText = (): string => {
-    const current = terminal.getSelection();
-    if (current) {
-      retainedText = current;
-      return current;
-    }
-    if (retainedText) return retainedText;
-    if (!active) return "";
-    if (!retainedSpan) return "";
-    selectSpan(retainedSpan);
-    const restored = terminal.getSelection();
-    if (restored) retainedText = restored;
-    return restored;
+    // A TUI may repaint these cells after selection; retain what the user actually selected.
+    return active ? retainedText : "";
   };
 
   const updateHandles = (): void => {
@@ -188,7 +183,7 @@ export function attachTerminalTouchSelection(
     );
     retainedSpan = { start, end };
     terminal.select(start % terminal.cols, Math.floor(start / terminal.cols), end - start);
-    retainedText = terminal.getSelection() || retainedText;
+    retainedText = terminal.getSelection();
     publish();
   };
 
@@ -263,27 +258,43 @@ export function attachTerminalTouchSelection(
     }
   };
 
-  const onWindowPointerMove = (event: PointerEvent): void => {
-    if (!handleDrag || event.pointerId !== handleDrag.pointerId) return;
-    if (event.cancelable) event.preventDefault();
-    moveHandle(event.clientX, event.clientY);
+  const updateEdgeScroll = (clientX: number, clientY: number): void => {
     const bounds = screen.getBoundingClientRect();
     const edge =
-      event.clientY < bounds.top + HANDLE_EDGE_PX
-        ? -1
-        : event.clientY > bounds.bottom - HANDLE_EDGE_PX
-          ? 1
-          : 0;
+      clientY < bounds.top + HANDLE_EDGE_PX ? -1 : clientY > bounds.bottom - HANDLE_EDGE_PX ? 1 : 0;
     if (edge !== edgeScrollDirection) {
       stopEdgeScroll();
       edgeScrollDirection = edge;
     }
     if (edgeScrollDirection !== 0 && edgeScrollTimer === null) {
       edgeScrollTimer = setInterval(() => {
-        terminal.scrollLines(edgeScrollDirection);
-        if (lastHandlePoint) moveHandle(lastHandlePoint.x, lastHandlePoint.y);
+        if (!lastHandlePoint) return;
+        scrollTerminalAt(
+          screen,
+          terminal,
+          edgeScrollDirection,
+          lastHandlePoint.x,
+          lastHandlePoint.y,
+        );
+        if (handleDrag) moveHandle(lastHandlePoint.x, lastHandlePoint.y);
+        else if (mouseDrag && dragging) {
+          selectSpan(
+            touchSelectionSpan(
+              dragging,
+              pointAt(lastHandlePoint.x, lastHandlePoint.y),
+              terminal.cols,
+            ),
+          );
+        }
       }, 80);
     }
+  };
+
+  const onWindowPointerMove = (event: PointerEvent): void => {
+    if (!handleDrag || event.pointerId !== handleDrag.pointerId) return;
+    if (event.cancelable) event.preventDefault();
+    moveHandle(event.clientX, event.clientY);
+    updateEdgeScroll(event.clientX, event.clientY);
   };
 
   const onWindowPointerEnd = (event: PointerEvent): void => {
@@ -316,13 +327,73 @@ export function attachTerminalTouchSelection(
     event.stopPropagation();
   };
   const onMouseDown = (event: MouseEvent): void => {
-    if (!active && screen.dataset.naruTouchLongPress !== "pending") return;
+    if (forwardingClick) return;
     const target = event.target;
     if (!(target instanceof Element) || !screen.contains(target)) return;
+    if (target.closest(".terminal-selection-handle")) return;
+    if (pointerType === "mouse") {
+      if (event.button !== 0) return;
+      // Alt retains application-owned mouse interactions; ordinary shell selection uses xterm.
+      if (event.altKey) {
+        if (active) cancelSelection();
+        return;
+      }
+      if (!active && (!terminal.modes || terminal.modes.mouseTrackingMode === "none")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Defer the press until click vs drag is known. Replaying a click through xterm keeps
+      // negotiated mouse encoding and the controller fence, without sending a drag to the TUI.
+      mouseDrag = { x: event.clientX, y: event.clientY, moved: false, down: event };
+      terminal.focus();
+      return;
+    }
+    if (!active && screen.dataset.naruTouchLongPress !== "pending") return;
     // Android may emit a compatibility mousedown after the touch gesture. xterm focuses its
     // textarea from that event, which can reopen the IME after the app selection is complete.
     event.preventDefault();
     event.stopPropagation();
+  };
+  const onPointerDown = (event: PointerEvent): void => {
+    pointerType = event.pointerType;
+  };
+  const onMouseMove = (event: MouseEvent): void => {
+    if (!mouseDrag) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!mouseDrag.moved) {
+      if (Math.hypot(event.clientX - mouseDrag.x, event.clientY - mouseDrag.y) <= 3) return;
+      mouseDrag.moved = true;
+      beginSelection(mouseDrag.x, mouseDrag.y, mouseDrag.down.detail >= 2);
+      terminal.focus();
+    }
+    if (!dragging) return;
+    lastHandlePoint = { x: event.clientX, y: event.clientY };
+    selectSpan(touchSelectionSpan(dragging, pointAt(event.clientX, event.clientY), terminal.cols));
+    updateEdgeScroll(event.clientX, event.clientY);
+  };
+  const finishMouse = (): void => {
+    if (!mouseDrag) return;
+    mouseDrag = null;
+    dragging = null;
+    lastHandlePoint = null;
+    stopEdgeScroll();
+  };
+  const onMouseUp = (event: MouseEvent): void => {
+    if (!mouseDrag || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const gesture = mouseDrag;
+    finishMouse();
+    if (!gesture.moved && screen.isConnected) {
+      if (active) cancelSelection();
+      forwardingClick = true;
+      try {
+        screen.dispatchEvent(new MouseEvent("mousedown", gesture.down));
+        screen.dispatchEvent(new MouseEvent("mouseup", event));
+      } finally {
+        forwardingClick = false;
+      }
+    }
   };
   const onCopy = (event: ClipboardEvent): void => {
     if (!ownsTouchCopy() || !active || selectedSpan() === null) return;
@@ -370,8 +441,24 @@ export function attachTerminalTouchSelection(
   };
 
   const selectionChange = terminal.onSelectionChange(() => {
-    retainedSpan = currentSpan() ?? retainedSpan;
-    retainedText = terminal.getSelection() || retainedText;
+    if (!active) {
+      retainedSpan = currentSpan();
+      retainedText = terminal.getSelection();
+    } else if (retainedSpan && !currentSpan() && !restoringHighlight) {
+      // Mouse-tracking hover and TUI mode changes can clear xterm's selection even
+      // though Naru still owns it. Restore only the highlight, not the saved copy text:
+      // these buffer cells may already contain a newer repaint.
+      restoringHighlight = true;
+      try {
+        terminal.select(
+          retainedSpan.start % terminal.cols,
+          Math.floor(retainedSpan.start / terminal.cols),
+          retainedSpan.end - retainedSpan.start,
+        );
+      } finally {
+        restoringHighlight = false;
+      }
+    }
     publish();
   });
   const scrollChange = terminal.onScroll(updateHandles);
@@ -387,6 +474,10 @@ export function attachTerminalTouchSelection(
   screen.ownerDocument.defaultView?.addEventListener("pointercancel", onWindowPointerEnd, true);
   paneSurface?.addEventListener("contextmenu", onContextMenu, true);
   paneSurface?.addEventListener("mousedown", onMouseDown, true);
+  screen.addEventListener("pointerdown", onPointerDown, true);
+  ownerDocument.defaultView?.addEventListener("mousemove", onMouseMove, true);
+  ownerDocument.defaultView?.addEventListener("mouseup", onMouseUp, true);
+  ownerDocument.defaultView?.addEventListener("blur", finishMouse);
   ownerDocument.addEventListener("copy", onCopy, true);
   paneSurface?.addEventListener("touchstart", onPaneTouchStart, { capture: true, passive: true });
   paneSurface?.addEventListener("touchend", onPaneTouchEnd, { capture: true, passive: true });
@@ -394,6 +485,7 @@ export function attachTerminalTouchSelection(
 
   const cancelSelection = (): void => {
     stopEdgeScroll();
+    mouseDrag = null;
     handleDrag = null;
     lastHandlePoint = null;
     dragging = null;
@@ -406,6 +498,23 @@ export function attachTerminalTouchSelection(
     }
     clearRetainedSelection();
     publish();
+  };
+
+  const beginSelection = (clientX: number, clientY: number, longPress = false): void => {
+    if (!active) {
+      clearRetainedSelection();
+      active = true;
+      terminal.blur();
+      screen.classList.add("naru-touch-select");
+    }
+    claimTouchCopy();
+    const point = pointAt(clientX, clientY);
+    const index = point.row * terminal.cols + point.column;
+    dragging = (longPress ? touchWordSpan(terminal, point) : null) ?? {
+      start: index,
+      end: index + 1,
+    };
+    selectSpan(dragging);
   };
 
   return {
@@ -424,22 +533,7 @@ export function attachTerminalTouchSelection(
       screen.classList.add("naru-touch-select");
       publish();
     },
-    begin: (clientX, clientY, longPress = false) => {
-      if (!active) {
-        clearRetainedSelection();
-        active = true;
-        terminal.blur();
-        screen.classList.add("naru-touch-select");
-      }
-      claimTouchCopy();
-      const point = pointAt(clientX, clientY);
-      const index = point.row * terminal.cols + point.column;
-      dragging = (longPress ? touchWordSpan(terminal, point) : null) ?? {
-        start: index,
-        end: index + 1,
-      };
-      selectSpan(dragging);
-    },
+    begin: beginSelection,
     move: (clientX, clientY) => {
       if (!dragging) return;
       selectSpan(touchSelectionSpan(dragging, pointAt(clientX, clientY), terminal.cols));
@@ -480,6 +574,10 @@ export function attachTerminalTouchSelection(
       );
       paneSurface?.removeEventListener("contextmenu", onContextMenu, true);
       paneSurface?.removeEventListener("mousedown", onMouseDown, true);
+      screen.removeEventListener("pointerdown", onPointerDown, true);
+      ownerDocument.defaultView?.removeEventListener("mousemove", onMouseMove, true);
+      ownerDocument.defaultView?.removeEventListener("mouseup", onMouseUp, true);
+      ownerDocument.defaultView?.removeEventListener("blur", finishMouse);
       ownerDocument.removeEventListener("copy", onCopy, true);
       paneSurface?.removeEventListener("touchstart", onPaneTouchStart, true);
       paneSurface?.removeEventListener("touchend", onPaneTouchEnd, true);

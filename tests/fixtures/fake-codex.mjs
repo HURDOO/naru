@@ -70,7 +70,38 @@ process.stdin.setEncoding("utf8");
 let commandBuffer = "";
 let completedTurnSequence = 0;
 let activeInterruptTurnId = null;
+let mouseTui = null;
+const drawMouseTui = () => {
+  const rows = process.stdout.rows || 24;
+  process.stdout.write("\u001b[H\u001b[2J");
+  process.stdout.write(`TUI offset=${mouseTui.offset} clicks=${mouseTui.clicks}`);
+  for (let row = 1; row < rows - 1; row += 1) {
+    process.stdout.write(
+      `\u001b[${row + 1};1HROW_${String(mouseTui.offset + row).padStart(4, "0")} 한글 😀 copy`,
+    );
+  }
+  process.stdout.write(`\u001b[${rows};1HPASTE:${mouseTui.paste}`);
+};
+process.stdout.on("resize", () => {
+  if (mouseTui) drawMouseTui();
+});
 process.stdin.on("data", (data) => {
+  if (mouseTui) {
+    // eslint-disable-next-line no-control-regex -- fixture decodes terminal mouse reports
+    const reports = [...data.matchAll(/\u001b\[<(\d+);\d+;\d+[Mm]/g)];
+    for (const report of reports) {
+      const button = Number(report[1]);
+      if (button === 64 || button === 65) {
+        mouseTui.offset = Math.max(0, mouseTui.offset + (button === 64 ? -1 : 1));
+      } else if (button < 32) mouseTui.clicks += 1;
+    }
+    // eslint-disable-next-line no-control-regex -- strip terminal mouse reports
+    const input = data.replace(/\u001b\[<\d+;\d+;\d+[Mm]/g, "");
+    // eslint-disable-next-line no-control-regex -- strip bracketed paste delimiters
+    if (input) mouseTui.paste = input.replace(/\u001b\[20[01]~/g, "").replace(/[\r\n]/g, " ");
+    drawMouseTui();
+    return;
+  }
   if ((data === "\u0003" || data === "\u001b") && activeInterruptTurnId !== null) {
     process.stdout.write(`FAKE_CODEX_INTERRUPTED ${activeInterruptTurnId}\r\n`);
     activeInterruptTurnId = null;
@@ -91,6 +122,13 @@ process.stdin.on("data", (data) => {
   commandBuffer = `${commandBuffer}${data}`.slice(-256);
   if (/[\r\n]/.test(data)) {
     const submittedCommand = commandBuffer.trim();
+    if (submittedCommand.endsWith("/naru-e2e-mouse-tui")) {
+      mouseTui = { offset: 100, clicks: 0, paste: "" };
+      process.stdout.write("\u001b[?1004l\u001b[?1049h\u001b[?1003h\u001b[?1006h\u001b[?2004h");
+      drawMouseTui();
+      commandBuffer = "";
+      return;
+    }
     if (submittedCommand === "/status") {
       process.stdout.write(`\u001b[2mSession ID:\u001b[0m ${sessionId}\r\n`);
     }
