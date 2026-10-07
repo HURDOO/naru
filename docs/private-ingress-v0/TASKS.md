@@ -18,13 +18,21 @@
 - `[~]`: 보류
 - `[x]`: 완료·검증
 
-## 새 세션 시작 절차
+## Private Ingress 작업 시작
 
-1. root `AGENTS.md`와 root SPEC/ARCHITECTURE/TASKS/DECISIONS를 읽는다.
-2. 이 directory의 SPEC/ARCHITECTURE/DECISIONS/TASKS를 전부 읽는다.
-3. current repository status, worktree, stash와 remote를 read-only로 확인한다.
-4. 명시적 next task만 `[-]`로 바꾸고 범위 밖 Naru code나 production을 변경하지 않는다.
-5. Remote push와 release publish는 root `AGENTS.md`에 따라 별도 사용자 결정을 받는다.
+이 절차는 Private Ingress 작업에 적용한다. 다른 Naru 작업은 root `AGENTS.md`의 영역별 안내를 따른다.
+
+1. root `AGENTS.md`와 이 원장의 현재 상태를 확인한다. 등록된 Task를 수행하면 해당 Task의 선행
+   조건·범위·완료 조건을 확인한다. 다음 Task 표기를 사용자 실행 승인으로 해석하지 않는다.
+2. ingress 계약 변경은 이 directory의 SPEC과 DECISIONS, 구현 경계 변경은 ARCHITECTURE의 관련
+   절을 읽는다. Naru application이나 Workstation에 걸치는 변경은 root `AGENTS.md`가 안내하는
+   해당 영역의 계약을 추가로 확인한다. 단순 문서 수정에 전체 문서 선독을 요구하지 않는다.
+3. 변경 전에 current repository status와 작업 위치를 확인한다. worktree·stash·remote 상세는
+   작업 격리, 기존 변경 보존 또는 명시적으로 요청된 Git 작업에 필요할 때 read-only로 확인한다.
+4. 승인된 대상 Task만 `[-]`로 바꾸고 범위 밖 Naru code나 production을 변경하지 않는다. 작은
+   유지보수와 완료 처리는 root `AGENTS.md`의 Task 규칙을 따른다.
+5. Production 변경, remote push와 release publish는 root `AGENTS.md`와 해당 Task의 구체적인
+   승인 경계를 따른다.
 
 ## 병렬화 gate
 
