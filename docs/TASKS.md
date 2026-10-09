@@ -81,6 +81,16 @@ ownership과 integration gate를 지킨다.
   primary에서 Codex·Claude Pane 생성·입력·reconnect·Claude hook 상태와 선택 강조 실기기 인수,
   claude-lab route 401/404 확인과 서비스 부재. rollback은 이전 receipt와 migration 전 DB backup
   복원을 함께 계획한다.
+- 준비(2026-10-09): clean `ce01c94`에서 Node 24.20.0 artifact `t70-claude-primary-ce01c94`
+  (manifest `a4e74eaf…`, payload `66fb8357…`)를 빌드했다. 후보 intent는 현재 receipt의 승인 설정을
+  복사해 upgrade용은 artifact 경로만, reconfigure용은 `claudeExecutable` 추가와 claude-lab route
+  제거만 바꿨다. read-only upgrade plan은 `needs-input`(경고 `codex.hook-trust` 1건), 세 runtime
+  재시작, Origin·Gateway 설정 불변, digest `2fdeadb7…`이다. reconfigure 미리보기는 현재 Host
+  release에 Claude entrypoint가 없어 예상대로 차단되며 새 artifact에는 네 entrypoint가 모두 있다.
+  claude-lab의 project root는 모두 primary root의 strict child라 추가 root 설정이 필요 없다.
+  owner-only runbook·intent·admission 초안은 저장소 밖에 둔다. 운영 mutation은 수행하지 않았다.
+- 남은 결정: Homebrew cask의 Claude 실행 파일은 버전별 경로라 CLI 업데이트마다 reconfigure와
+  Host 재시작이 필요하다. 응답 없는 `naru-t62` 추가 앱 route의 제거 여부도 결정이 필요하다.
 
 ### T68. Claude fullscreen 터치 스크롤
 
