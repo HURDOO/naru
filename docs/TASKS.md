@@ -89,8 +89,11 @@ ownership과 integration gate를 지킨다.
   release에 Claude entrypoint가 없어 예상대로 차단되며 새 artifact에는 네 entrypoint가 모두 있다.
   claude-lab의 project root는 모두 primary root의 strict child라 추가 root 설정이 필요 없다.
   owner-only runbook·intent·admission 초안은 저장소 밖에 둔다. 운영 mutation은 수행하지 않았다.
-- 남은 결정: Homebrew cask의 Claude 실행 파일은 버전별 경로라 CLI 업데이트마다 reconfigure와
-  Host 재시작이 필요하다. 응답 없는 `naru-t62` 추가 앱 route의 제거 여부도 결정이 필요하다.
+- CLI 설치 정리(2026-10-10): Codex는 셸이 standalone, Pane이 npm 설치본을 써서 갈라졌고 Claude
+  Homebrew cask는 버전별 경로라 업데이트마다 실행 경로가 바뀐다. 셸·ssh·Pane 모두 npm 전역 설치본으로
+  통일하고 `claudeExecutable`은 npm package의 `bin/claude.exe`로 둔다. Claude 자동 업데이트는 끄고
+  `ops/workstation/agent-clis/update-agent-clis.sh`로 두 CLI를 함께 갱신한다. ChatGPT 앱 SSH 원격용
+  Codex daemon package는 앱 소유로 유지한다. 응답 없는 `naru-t62` route는 reconfigure에서 함께 제거한다.
 
 ### T68. Claude fullscreen 터치 스크롤
 
