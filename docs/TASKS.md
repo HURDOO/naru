@@ -60,6 +60,28 @@ ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 
+### T70. 운영 primary의 Claude 통합과 claude-lab 철거
+
+- [-] 통합 `main`(T63부터 T69까지의 Claude·Codex 변경과 D020/D021 선택 강조 보완 포함)을 운영 primary에
+  배포해 한 instance에서 Codex와 Claude Code Pane을 함께 사용한다. 이후 T67의 별도 claude-lab
+  route와 instance를 철거한다. 이번 단계는 준비만 하며 운영 mutation은 사용자 실행 승인 뒤 수행한다.
+- 선행 조건: `model/claude` 통합(D022), T67 사용자 인수 완료, primary 현재 receipt·추가 앱 등록 확인.
+- 단계와 승인 경계:
+  1. clean committed `main`에서 Node 24 artifact를 빌드·검증한다.
+  2. `upgrade`: 현재 receipt의 승인 설정을 그대로 두고 artifact만 바꾼다. Host payload가 바뀌므로
+     Host·Gateway·Naru가 모두 재시작되고 실행 중인 PTY는 종료된다. Naru 시작 시 DB v16 → v17
+     migration이 실행되며, Naru가 migration 전 무결성 검사를 거친 backup을 먼저 만든다.
+  3. `reconfigure`: 같은 artifact에서 `claudeExecutable`을 추가하고 claude-lab route를
+     `additionalGatewayApps`에서 제거한다. Host 설정이 바뀌므로 세 runtime이 다시 재시작된다.
+     2와 같은 maintenance window에서 연달아 수행한다. 이 plan은 2 적용 뒤에만 계산할 수 있다.
+  4. claude-lab instance의 서비스 중지·LaunchAgent 제거와 data 보관은 distribution 명령이 없으므로
+     별도 철거 절차와 승인을 준비한다. Claude 대화 원문은 CLI 소유이며 primary에서 `/resume`으로
+     다시 연다.
+- 완료 조건: 각 plan digest 승인과 maintenance `completed`, 새 receipt·build, Doctor 전체 통과,
+  primary에서 Codex·Claude Pane 생성·입력·reconnect·Claude hook 상태와 선택 강조 실기기 인수,
+  claude-lab route 401/404 확인과 서비스 부재. rollback은 이전 receipt와 migration 전 DB backup
+  복원을 함께 계획한다.
+
 ### T68. Claude fullscreen 터치 스크롤
 
 - [x] Claude Code fullscreen의 alternate buffer에서 모바일 수직 드래그를 CLI가 협상한 mouse wheel
@@ -81,10 +103,10 @@ ownership과 integration gate를 지킨다.
 
 ### T67. Claude 별도 운영 앱 배포 준비
 
-- [-] Claude용 Naru를 운영 Mac의 별도 앱으로 준비·인수한다. 9443 테스트 서버는
-  사용자 후속 승인 전까지 보존하고, 승인 후 별도로 중지한다.
-  기존 Gateway의 추가 앱 등록과 DurableSession 경계를 조사하고, 기존 운영 앱 등록을 잃지 않도록
-  운영 릴리스의 `additionalGatewayApps` 계약을 현재 source에 통합한다.
+- [x] Claude용 Naru를 운영 Mac의 별도 앱으로 준비·인수한다. 9443 테스트 서버는
+      사용자 후속 승인 전까지 보존하고, 승인 후 별도로 중지한다.
+      기존 Gateway의 추가 앱 등록과 DurableSession 경계를 조사하고, 기존 운영 앱 등록을 잃지 않도록
+      운영 릴리스의 `additionalGatewayApps` 계약을 현재 source에 통합한다.
 - 선행 조건: T63, T66, WV0-D011, 현재 운영 receipt/intent와 기존 등록 앱의 보존 확인.
 - 완료 조건: 선택한 별도 앱 topology의 Host·Gateway·Naru 격리, Claude activity의 Durable Host
   경로, 인증·project root·runtime fencing, 배포 artifact와 정확한 읽기 전용 plan, operations·
@@ -100,6 +122,8 @@ ownership과 integration gate를 지킨다.
   2개를 보존했고 기존 Host PID를 유지한 채 Gateway·Naru만 재시작했다. 두 instance의
   `status`·`doctor`는 정상이며, 새 HTTPS 경로는 미인증 요청에 401을 반환한다. 실제 패스키
   로그인, Cheers 연결, Claude Pane 2개 및 hook 상태의 휴대폰 인수는 아직 남아 있어 T67은 진행 중이다.
+- 인수 완료(2026-10-09): 사용자가 Claude 별도 앱의 테스트 완료를 확인했다. 별도 앱 운영은 끝내고
+  Claude 사용은 T70에서 primary로 통합하며, claude-lab route·instance 철거도 T70에서 수행한다.
 
 ### T66. Claude Code 훅 기반 Pane 작업 상태
 
