@@ -673,6 +673,10 @@ ownership과 integration gate를 지킨다.
   잘못된 payload를 무시함을 검증했다.
   migration v19, format·lint·typecheck·build, Vitest 860건(6 skip), production smoke 통과. 운영 배포와
   Android·Samsung Internet 실기기 인수는 남아 있다.
+- 운영 배포(2026-10-10, 사용자 승인): digest `239c03f5…`로 receipt 31, Host·Gateway·Naru 모두
+  `t47-push-clear-88bfacd`, maintenance `completed`, status `healthy`, Doctor 29/29다. v18 backup(무결성
+  `ok`) 뒤 v19 migration과 `push_project_clears` 생성을 확인했다. T72 Host 경계 수정이 함께 배포되어
+  이번이 Host payload가 바뀌는 배포였다. 기기별 PWA 갱신 뒤 실기기 알림 정리 인수가 남아 있다.
 - 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
 
 ### T38. 다중 접속과 동시 세션
