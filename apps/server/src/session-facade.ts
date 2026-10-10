@@ -73,6 +73,7 @@ export interface NaruSessionFacade {
   releaseControl(paneId: string, attachmentKey?: string): SessionOperation;
   restart(paneId: string): SessionOperation;
   startNewCodex(paneId: string): SessionOperation;
+  startNewClaude(paneId: string): SessionOperation;
   stop(paneId: string): SessionOperation;
   /** Stop the runtime and forget its durable identity before the Pane row is deleted. */
   remove(paneId: string): SessionOperation;

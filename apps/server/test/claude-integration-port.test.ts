@@ -75,6 +75,58 @@ describe("Naru-owned Claude Host integration", () => {
     }
   });
 
+  it("stores the conversation a Host-signed runtime reports before and after binding", () => {
+    const fixture = integrationFixture();
+    try {
+      const bindingId = randomUUID();
+      const pending = fixture.repository.preparePaneSessionOperation(
+        fixture.paneId,
+        "create",
+        null,
+        bindingId,
+      );
+      const session = sessionView();
+      const bootstrap = fixture.bootstrap(bindingId, session);
+      fixture.integration.launch(bootstrap);
+      const started = "33333333-3333-4333-8333-333333333333";
+      const cleared = "44444444-4444-4444-8444-444444444444";
+      // SessionStart can arrive while the Host create is still pending; it is replayed on bind.
+      expect(
+        fixture.integration.acceptHook(bootstrap, {
+          type: "session-start",
+          sessionId: started,
+          cwd: "/safe/project",
+        }),
+      ).toBe(true);
+      expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.claudeSessionId).toBeNull();
+      fixture.repository.completePaneSessionOperation(
+        fixture.paneId,
+        "create",
+        pending.operationKey as string,
+        session,
+      );
+      fixture.integration.bindRuntime(fixture.paneId, session);
+      expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.claudeSessionId).toBe(started);
+      expect(
+        fixture.integration.acceptHook(bootstrap, {
+          type: "session-start",
+          sessionId: cleared,
+          cwd: "/elsewhere",
+        }),
+      ).toBe(false);
+      expect(
+        fixture.integration.acceptHook(bootstrap, {
+          type: "session-start",
+          sessionId: cleared,
+          cwd: "/safe/project",
+        }),
+      ).toBe(true);
+      expect(fixture.repository.getPaneContext(fixture.paneId)?.pane.claudeSessionId).toBe(cleared);
+    } finally {
+      fixture.repository.close();
+    }
+  });
+
   it("rejects stale binding, wrong cwd, signature and session generation", () => {
     const fixture = integrationFixture();
     try {

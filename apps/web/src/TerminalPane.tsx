@@ -72,7 +72,9 @@ interface TerminalPaneProps {
   onActivate: () => void;
   onFocus?: () => void;
   onRestart: () => Promise<void>;
-  onStartNewCodex: () => Promise<void>;
+  onStartNewSession: () => Promise<void>;
+  /** Refresh the Pane after a Claude runtime ends so the stored conversation is known. */
+  onAgentExited?: () => void;
   onClose: () => Promise<boolean>;
 }
 
@@ -132,7 +134,8 @@ export function TerminalPane({
   onActivate,
   onFocus,
   onRestart,
-  onStartNewCodex,
+  onStartNewSession,
+  onAgentExited,
   onClose,
 }: TerminalPaneProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -1602,10 +1605,10 @@ export function TerminalPane({
     }
   };
 
-  const startNewCodex = async (): Promise<void> => {
+  const startNewSession = async (): Promise<void> => {
     setBusy(true);
     try {
-      await onStartNewCodex();
+      await onStartNewSession();
       setRuntimeStatus("running");
     } catch {
       setRuntimeStatus("error");
@@ -1617,6 +1620,18 @@ export function TerminalPane({
   const codexSessionId = pane.codexSessionId;
   const codexSessionResumable = pane.codexSessionResumable;
   const canResumeCodex = pane.kind === "codex" && codexSessionId !== null && codexSessionResumable;
+  const canResumeClaude = pane.kind === "claude" && (pane.claudeSessionId ?? null) !== null;
+  const canStartNewSession = canResumeCodex || canResumeClaude;
+
+  const previousRuntimeStatusRef = useRef(runtimeStatus);
+  useEffect(() => {
+    const previous = previousRuntimeStatusRef.current;
+    previousRuntimeStatusRef.current = runtimeStatus;
+    // Only a live runtime ending can have reported a newer conversation since the last load.
+    if (pane.kind === "claude" && previous === "running" && runtimeStatus === "exited") {
+      onAgentExited?.();
+    }
+  }, [onAgentExited, pane.kind, runtimeStatus]);
 
   return (
     <section
@@ -1909,13 +1924,21 @@ export function TerminalPane({
             ■
           </div>
           <strong>{overlayTitle(pane, runtimeStatus)}</strong>
-          <span>{overlayMessage(pane, runtimeStatus, codexSessionId, codexSessionResumable)}</span>
+          <span>
+            {overlayMessage(
+              pane,
+              runtimeStatus,
+              codexSessionId,
+              codexSessionResumable,
+              canResumeClaude,
+            )}
+          </span>
           <div className="overlay-actions">
             <button
               className="primary-button compact"
               type="button"
               onClick={() =>
-                void (pane.kind === "codex" && !canResumeCodex ? startNewCodex() : restart())
+                void (pane.kind === "codex" && !canResumeCodex ? startNewSession() : restart())
               }
               disabled={!mutationAllowed || busy}
             >
@@ -1925,18 +1948,20 @@ export function TerminalPane({
                   ? "Codex 작업 재개"
                   : pane.kind === "codex"
                     ? "새 Codex 시작"
-                    : pane.kind === "claude"
-                      ? "Claude Code 다시 시작"
-                      : "터미널 다시 시작"}
+                    : canResumeClaude
+                      ? "Claude 작업 재개"
+                      : pane.kind === "claude"
+                        ? "Claude Code 다시 시작"
+                        : "터미널 다시 시작"}
             </button>
-            {canResumeCodex && (
+            {canStartNewSession && (
               <button
                 className="secondary-button compact"
                 type="button"
-                onClick={() => void startNewCodex()}
+                onClick={() => void startNewSession()}
                 disabled={!mutationAllowed || busy}
               >
-                새 Codex 시작
+                {pane.kind === "claude" ? "새 Claude 시작" : "새 Codex 시작"}
               </button>
             )}
           </div>
@@ -2185,8 +2210,12 @@ function overlayMessage(
   status: PaneStatus,
   codexSessionId: string | null,
   codexSessionResumable: boolean,
+  claudeSessionResumable: boolean,
 ): ReactNode {
   if (status === "error" && pane.lastErrorCode) return launchErrorMessage(pane.lastErrorCode);
+  if (pane.kind === "claude" && claudeSessionResumable) {
+    return "마지막 Claude 대화를 이어서 열 수 있습니다. 대화를 찾지 못하면 새 Claude 시작을 눌러 주세요.";
+  }
   if (pane.kind === "claude") {
     return (
       <>

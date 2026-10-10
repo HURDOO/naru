@@ -43,7 +43,8 @@ interface WorkspaceLayoutProps {
   onClose: (pane: Pane) => Promise<boolean>;
   onResize: (splitId: string, ratio: number) => void;
   onRestart: (pane: Pane) => Promise<void>;
-  onStartNewCodex: (pane: Pane) => Promise<void>;
+  onStartNewSession: (pane: Pane) => Promise<void>;
+  onAgentExited: () => void;
   onSplit: (targetPane: Pane, kind: PaneKind, direction: SplitDirection) => Promise<void>;
   onOpenDocumentInNewPane: (
     targetPane: Pane,
@@ -256,7 +257,8 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
         onActivate={() => props.onActivate(props.pane.id)}
         onFocus={() => props.onFocus(props.pane.id)}
         onRestart={() => props.onRestart(props.pane)}
-        onStartNewCodex={() => props.onStartNewCodex(props.pane)}
+        onStartNewSession={() => props.onStartNewSession(props.pane)}
+        onAgentExited={props.onAgentExited}
         onClose={() => props.onClose(props.pane)}
       />
     </Suspense>

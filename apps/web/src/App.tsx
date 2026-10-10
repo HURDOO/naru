@@ -513,12 +513,14 @@ export default function App(): React.JSX.Element {
     }
   };
 
-  const startNewCodex = async (pane: Pane): Promise<void> => {
+  const startNewSession = async (pane: Pane): Promise<void> => {
     if (!mutationAllowed) return;
     setNotice(null);
     if (!(await flushWorkspace())) return;
     try {
-      updatePane(await api.startNewCodex(pane.id));
+      updatePane(
+        await (pane.kind === "claude" ? api.startNewClaude(pane.id) : api.startNewCodex(pane.id)),
+      );
       await loadWorkspace(selectedProjectId);
       focusPaneSoon(pane.id);
     } catch (error) {
@@ -1031,7 +1033,8 @@ export default function App(): React.JSX.Element {
                     onCollapse={collapseAndFocusPane}
                     onResize={resizePane}
                     onRestart={restartPane}
-                    onStartNewCodex={startNewCodex}
+                    onStartNewSession={startNewSession}
+                    onAgentExited={() => void loadWorkspace(selectedProjectId)}
                     onClose={closePane}
                     onSplit={(target, kind, direction) => createPane(target, kind, direction)}
                     onOpenDocumentInNewPane={(target, path, direction) =>

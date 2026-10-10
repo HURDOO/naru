@@ -967,6 +967,7 @@ describe("database migrations", () => {
         { version: 15 },
         { version: 16 },
         { version: 17 },
+        { version: 18 },
       ]);
       expect(database.prepare("SELECT * FROM project_groups").get()).toMatchObject({
         id: "11111111-1111-4111-8111-111111111111",
@@ -990,6 +991,7 @@ describe("database migrations", () => {
         expect.arrayContaining([
           "codex_session_id",
           "codex_session_resumable",
+          "claude_session_id",
           "last_error_code",
           "last_exited_at",
           "activity_state",

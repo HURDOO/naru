@@ -473,6 +473,7 @@ export const CodexLaunchProfileSchema = z.enum(["codex-main", "codex-quick"]);
 export type CodexLaunchProfile = z.infer<typeof CodexLaunchProfileSchema>;
 export const ClaudeLaunchProfileSchema = z.literal("claude-code");
 export const CodexSessionIdSchema = z.string().uuid();
+export const ClaudeSessionIdSchema = z.string().uuid();
 
 export const DocumentRelativePathSchema = z
   .string()
@@ -498,6 +499,8 @@ export const PaneSchema = z.object({
   exitCode: z.number().int().nullable(),
   codexSessionId: CodexSessionIdSchema.nullable(),
   codexSessionResumable: z.boolean(),
+  /** Latest Claude Code conversation for `claude --resume`; absent from older servers. */
+  claudeSessionId: ClaudeSessionIdSchema.nullable().optional(),
   lastErrorCode: ErrorCodeSchema.nullable(),
   lastExitedAt: z.string().datetime().nullable(),
   activity: PaneActivitySchema,

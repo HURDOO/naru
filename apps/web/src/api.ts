@@ -373,6 +373,10 @@ export class NaruApi {
     return this.#request<Pane>(`/api/panes/${paneId}/new-codex`, { method: "POST" }, true, true);
   }
 
+  startNewClaude(paneId: string): Promise<Pane> {
+    return this.#request<Pane>(`/api/panes/${paneId}/new-claude`, { method: "POST" }, true, true);
+  }
+
   updatePaneViewState(paneId: string, input: Partial<PaneViewState>): Promise<Pane> {
     return this.#request<Pane>(
       `/api/panes/${paneId}/view-state`,

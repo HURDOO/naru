@@ -290,3 +290,17 @@
 - D018과 D019는 같은 mouse encoding 복원·touch wheel 경로를 서로 다른 CLI 인수로 기록한 것이다.
   통합 source는 하나의 `TerminalMouseEncoding`과 `scrollTerminalAt` 구현만 유지한다. wire·DB 계약
   변경은 없다.
+
+## D023. Claude Pane은 마지막 Claude 대화 ID만 저장해 재개한다
+
+- 상태: T71 구현 중
+- hook `SessionStart`(시작·재개·`/clear`)가 보낸 Claude session ID를 기존 Pane/runtime·cwd fence를
+  통과한 경우에만 Pane별로 저장한다. 값은 UUID 형식만 받으며, 대화 원문·transcript 경로는 읽거나
+  저장하지 않는다.
+- Claude Pane 재시작은 저장된 ID가 있으면 `--resume <id>`로 실행한다. CLI의 기본 resume은 같은 session
+  ID를 유지한다. "새 Claude 시작"은 저장된 ID를 지운 뒤 인자 없이 시작한다. 대화가 CLI에서 사라졌다면
+  재개가 실패하고 사용자는 새로 시작한다.
+- DB v18은 `panes.claude_session_id` nullable 열만 추가한다. 기존 Pane은 NULL이며 migration 전 backup
+  계약을 그대로 따른다. Pane REST 응답은 선택 필드 `claudeSessionId`를 더하고 구 web은 이를 무시한다.
+  WebSocket frame과 Host public protocol은 바꾸지 않는다. web은 Claude Pane 종료 시 workspace를 다시
+  읽어 재개 가능 여부를 반영한다.

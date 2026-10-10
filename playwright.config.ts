@@ -33,6 +33,7 @@ for (const projectPath of [
   join(publicProjectRoot, "docs"),
   join(publicProjectRoot, "claude-fixture"),
   join(publicProjectRoot, "claude-scroll-fixture"),
+  join(publicProjectRoot, "claude-resume-fixture"),
 ]) {
   mkdirSync(projectPath, { recursive: true });
 }

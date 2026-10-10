@@ -1,7 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { CodexSessionIdSchema, type CodexLaunchProfile } from "@naru/contracts";
+import {
+  ClaudeSessionIdSchema,
+  CodexSessionIdSchema,
+  type CodexLaunchProfile,
+} from "@naru/contracts";
 import type { PaneContext } from "./database.js";
 import { claudeActivityHookSettings } from "./claude-activity-events.js";
 import { AppError } from "./errors.js";
@@ -111,14 +115,13 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
           "Claude Code 인증이 필요합니다. Mac mini에서 claude auth login을 완료해 주세요.",
         );
       }
-      return {
-        file: executable,
-        args:
-          this.#claudeActivityHookCommand === undefined
-            ? []
-            : ["--settings", claudeActivityHookSettings(this.#claudeActivityHookCommand)],
-        environment,
-      };
+      const args =
+        this.#claudeActivityHookCommand === undefined
+          ? []
+          : ["--settings", claudeActivityHookSettings(this.#claudeActivityHookCommand)];
+      const sessionId = ClaudeSessionIdSchema.safeParse(context.pane.claudeSessionId);
+      if (sessionId.success) args.push("--resume", sessionId.data);
+      return { file: executable, args, environment };
     }
 
     if (context.pane.kind !== "codex") {

@@ -11,7 +11,10 @@ if (process.argv[2] === "auth" && process.argv[3] === "status") {
 const settingsIndex = process.argv.indexOf("--settings");
 const settings =
   settingsIndex === -1 ? null : JSON.parse(process.argv[settingsIndex + 1] ?? "null");
-const sessionId = randomUUID();
+const resumeIndex = process.argv.indexOf("--resume");
+const resumedSessionId = resumeIndex === -1 ? null : (process.argv[resumeIndex + 1] ?? null);
+const sessionSource = resumedSessionId === null ? "startup" : "resume";
+const sessionId = resumedSessionId ?? randomUUID();
 const hookInput = (hook_event_name, extra = {}) => ({
   session_id: sessionId,
   cwd: process.cwd(),
@@ -34,8 +37,10 @@ async function emitHook(hook_event_name, extra = {}) {
   });
 }
 
-void emitHook("SessionStart", { source: "startup" }).then(() =>
-  process.stdout.write("FAKE_CLAUDE_READY\r\n"),
+void emitHook("SessionStart", { source: sessionSource }).then(() =>
+  process.stdout.write(
+    `FAKE_CLAUDE_SESSION ${sessionSource} ${sessionId}\r\nFAKE_CLAUDE_READY\r\n`,
+  ),
 );
 if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
   process.stdin.setRawMode(true);
@@ -76,6 +81,11 @@ process.stdin.on("data", (input) => {
       prompt: "not forwarded",
       tool_input: { command: "not forwarded" },
     }).then(() => process.stdout.write(`${marker}\r\n`));
+    return;
+  }
+  if (inputBuffer.includes("quit")) {
+    inputBuffer = "";
+    void emitHook("SessionEnd", { reason: "prompt_input_exit" }).then(() => process.exit(0));
     return;
   }
   if (inputBuffer.includes("ping")) {

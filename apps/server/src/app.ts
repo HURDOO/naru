@@ -782,6 +782,27 @@ export async function buildApp(
     return dependencies.repository.getPaneContext(id)?.pane;
   });
 
+  app.post("/api/panes/:id/new-claude", async (request) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id } = IdParamsSchema.parse(request.params);
+    const pane = dependencies.repository.getPaneContext(id)?.pane;
+    if (!pane) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
+    if (pane.kind !== "claude") {
+      throw new AppError("REQUEST_INVALID", 400, "Claude Pane에서만 새 대화를 시작할 수 있습니다.");
+    }
+    if (config.sessionRuntime?.owner === "durable-host" && config.claudeExecutable === undefined) {
+      throw new AppError(
+        "CLAUDE_EXECUTABLE_MISSING",
+        503,
+        "Claude Code 실행 파일이 Host에 설정되지 않았습니다.",
+      );
+    }
+    await requireUsableProject(pane.projectId, dependencies);
+    await dependencies.supervisor.startNewClaude(id);
+    return dependencies.repository.getPaneContext(id)?.pane;
+  });
+
   app.patch("/api/panes/:id/view-state", async (request) => {
     requireUnsafeRequest(request, config, sessions);
     const { id } = IdParamsSchema.parse(request.params);

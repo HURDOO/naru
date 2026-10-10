@@ -88,6 +88,24 @@ describe("LaunchProfileRegistry", () => {
     );
     expect(launch.args.join(" ")).not.toContain("test-only-api-key");
   });
+  it("reopens the stored Claude conversation and ignores a malformed stored ID", () => {
+    const registry = new LaunchProfileRegistry({
+      claudeExecutable: "/bin/sh",
+      claudeActivityHookCommand: CLAUDE_ACTIVITY_HOOK_COMMAND,
+      environment,
+      commandRunner: () => ({ stdout: '{"loggedIn":true}', stderr: "", status: 0 }),
+    });
+    const conversation = "33333333-3333-4333-8333-333333333333";
+    const resume = context("claude", "claude-code");
+    resume.pane.claudeSessionId = conversation;
+    expect(registry.resolve(resume).args.slice(-2)).toEqual(["--resume", conversation]);
+
+    const fresh = context("claude", "claude-code");
+    expect(registry.resolve(fresh).args).not.toContain("--resume");
+    fresh.pane.claudeSessionId = "--dangerously-skip-permissions";
+    expect(registry.resolve(fresh).args).not.toContain("--resume");
+    expect(registry.resolve(fresh).args).not.toContain("--dangerously-skip-permissions");
+  });
   it("resolves the two approved Codex profiles as structured spawn arguments", () => {
     const runner = vi.fn<CommandRunner>(() => doctorResult());
     let now = 1_000;

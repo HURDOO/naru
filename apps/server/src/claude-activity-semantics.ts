@@ -35,6 +35,7 @@ export class ClaudeActivitySemantics {
     if (this.#stopping) return;
     if (event.type === "session-start") {
       this.#sessionId = event.sessionId;
+      this.#rememberSession();
       this.#activeTurn = false;
       this.#recoverActiveTurn = false;
       this.#transition("idle");
@@ -45,6 +46,7 @@ export class ClaudeActivitySemantics {
       // SessionStart. Adopt only the first event from this already-fenced runtime.
       this.#sessionId = event.sessionId;
       this.#recoverActiveTurn = false;
+      this.#rememberSession();
     }
     if (event.sessionId !== this.#sessionId) return;
     switch (event.type) {
@@ -90,6 +92,12 @@ export class ClaudeActivitySemantics {
 
   cancelStopping(): void {
     this.#stopping = false;
+  }
+
+  // Startup, resume and /clear each report the conversation a later restart should reopen.
+  #rememberSession(): void {
+    if (this.#sessionId === null) return;
+    this.#repository.setClaudeSessionForRuntime(this.#paneId, this.#runtimeId, this.#sessionId);
   }
 
   #state(): PaneActivityState | null {

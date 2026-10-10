@@ -22,6 +22,7 @@ import type {
   Workspace,
 } from "@naru/contracts";
 import {
+  ClaudeSessionIdSchema,
   CodexSessionIdSchema,
   LAYOUT_SCHEMA_VERSION,
   PaneViewStateSchema,
@@ -84,6 +85,7 @@ interface PaneRow {
   exit_code: number | null;
   codex_session_id: string | null;
   codex_session_resumable: 0 | 1;
+  claude_session_id: string | null;
   last_error_code: ErrorCode | null;
   last_exited_at: string | null;
   activity_state: PaneActivityState;
@@ -700,6 +702,14 @@ export const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
         CREATE UNIQUE INDEX pane_session_links_integration_binding
           ON pane_session_links(integration_binding_id)
           WHERE integration_binding_id IS NOT NULL;
+      `);
+    },
+  },
+  {
+    version: 18,
+    migrate(database) {
+      database.exec(`
+        ALTER TABLE panes ADD COLUMN claude_session_id TEXT;
       `);
     },
   },
@@ -1802,6 +1812,31 @@ export class NaruRepository {
     return result.changes === 1;
   }
 
+  /** Remember the latest Claude conversation reported by the Pane's current runtime. */
+  setClaudeSessionForRuntime(paneId: string, runtimeId: string, sessionId: string): boolean {
+    if (!ClaudeSessionIdSchema.safeParse(sessionId).success) return false;
+    const context = this.getPaneContext(paneId);
+    if (context?.pane.kind !== "claude" || context.pane.claudeSessionId === sessionId) return false;
+    const result = this.#database
+      .prepare(
+        `UPDATE panes SET claude_session_id = ?, updated_at = ?
+         WHERE id = ? AND kind = 'claude' AND activity_runtime_id = ?`,
+      )
+      .run(sessionId, timestampAfter(context.pane.updatedAt), paneId, runtimeId);
+    return result.changes === 1;
+  }
+
+  clearClaudeSession(paneId: string): void {
+    const context = this.getPaneContext(paneId);
+    if (!context) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
+    if (context.pane.kind !== "claude") {
+      throw new AppError("REQUEST_INVALID", 400, "Claude Pane에서만 새 대화를 시작할 수 있습니다.");
+    }
+    this.#database
+      .prepare("UPDATE panes SET claude_session_id = NULL, updated_at = ? WHERE id = ?")
+      .run(timestampAfter(context.pane.updatedAt), paneId);
+  }
+
   beginPaneRuntime(paneId: string, runtimeId: string): PaneActivityChange {
     const context = this.getPaneContext(paneId);
     if (!context) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
@@ -2171,6 +2206,7 @@ function mapPane(row: PaneRow): Pane {
     exitCode: row.exit_code,
     codexSessionId: row.codex_session_id,
     codexSessionResumable: row.codex_session_resumable === 1,
+    claudeSessionId: row.claude_session_id,
     lastErrorCode: row.last_error_code,
     lastExitedAt: row.last_exited_at,
     activity: {

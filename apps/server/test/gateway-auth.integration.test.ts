@@ -252,6 +252,7 @@ class FakeSessionFacade implements NaruSessionFacade {
   releaseControl(): void {}
   restart(): void {}
   startNewCodex(): void {}
+  startNewClaude(): void {}
   stop(): void {}
   remove(): void {}
   async shutdown(): Promise<void> {}

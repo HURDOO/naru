@@ -60,6 +60,24 @@ ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 
+### T71. Claude Pane 작업 재개
+
+- [x] Codex Pane처럼 Claude Pane도 "Claude 작업 재개"와 "새 Claude 시작"을 제공한다. 재개는 마지막
+      Claude 대화를 `claude --resume <session-id>`로 이어 열고, 새로 시작은 저장된 대화를 잊는다.
+- 선행 조건: T66 hook 경로, T67 Durable Claude launch, T70 primary 배포, D023.
+- 범위: hook `SessionStart`에서 받은 최신 Claude session ID를 runtime fence 뒤 Pane에 저장하는 DB v18,
+  Claude 실행 인자, `POST /api/panes/:id/new-claude`, Pane REST의 선택 필드와 web 재개 UI. WebSocket
+  frame과 Host payload는 바꾸지 않는다. Claude transcript 저장소는 읽지 않는다.
+- 완료 조건: unit(migration v18, session 저장·runtime fence·`/clear` 갱신, 실행 인자, 새로 시작), fake
+  Claude E2E의 재개·새로 시작·reconnect, 1440/768/360px와 키보드·focus, 관련 typecheck·lint·format·
+  build. 운영 배포는 별도 plan 승인 뒤 수행한다.
+- 로컬 검증(2026-10-10, Node 24): migration v18, runtime fence·`/clear` 갱신·비UUID 거부, Durable
+  pending hook 재생 저장, `--resume` 인자와 인자 주입 거부, `new-claude` API를 unit으로 검증했다.
+  fake Claude E2E에서 종료 → 키보드로 재개(같은 ID) → 새로 시작(다른 ID)과 768/360px overlay를
+  확인했다. format·lint·typecheck·build, Vitest 856건(6 skip), production smoke 통과. 전체 E2E 29건 중
+  27건 통과, 실패 2건은 merge 전부터 있던 전체 실행 flaky(`mobile-output-copy:13`,
+  `terminal-stability:56`)다. 운영 배포와 실제 Claude CLI 재개 인수는 남아 있다.
+
 ### T70. 운영 primary의 Claude 통합과 claude-lab 철거
 
 - [-] 통합 `main`(T63부터 T69까지의 Claude·Codex 변경과 D020/D021 선택 강조 보완 포함)을 운영 primary에

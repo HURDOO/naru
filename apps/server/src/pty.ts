@@ -539,6 +539,18 @@ export class PtySupervisor {
     this.start(paneId);
   }
 
+  startNewClaude(paneId: string): void {
+    if (this.#runtimes.has(paneId)) {
+      throw new AppError(
+        "REQUEST_INVALID",
+        409,
+        "실행 중인 Claude Pane에서는 새 대화를 시작할 수 없습니다.",
+      );
+    }
+    this.repository.clearClaudeSession(paneId);
+    this.start(paneId);
+  }
+
   stop(paneId: string): void {
     const runtime = this.#runtimes.get(paneId);
     if (!runtime) return;

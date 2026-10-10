@@ -374,6 +374,24 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
     });
   }
 
+  startNewClaude(paneId: string): Promise<void> {
+    return this.#enqueue(paneId, async () => {
+      await this.#requireStartReady();
+      const context = this.repository.getPaneContext(paneId);
+      if (!context) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
+      if (context.pane.kind !== "claude") {
+        throw new AppError(
+          "REQUEST_INVALID",
+          400,
+          "Claude Pane에서만 새 대화를 시작할 수 있습니다.",
+        );
+      }
+      await this.#remove(paneId);
+      this.repository.clearClaudeSession(paneId);
+      await this.#create(paneId, DEFAULT_COLUMNS, DEFAULT_ROWS);
+    });
+  }
+
   stop(paneId: string): Promise<void> {
     return this.#enqueue(paneId, () => this.#stop(paneId));
   }

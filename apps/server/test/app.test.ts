@@ -1417,6 +1417,75 @@ describe("Naru HTTP API", () => {
     }
   });
 
+  it("starts a new Claude conversation by forgetting the stored resume target", async () => {
+    const fixture = await createFixture();
+    try {
+      const login = await fixture.app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers: { origin },
+        payload: { password: "naru-test-password" },
+      });
+      const cookie = firstHeader(login.headers["set-cookie"])?.split(";")[0] ?? "";
+      const csrfToken = login.json<{ csrfToken: string }>().csrfToken;
+      const { headers: unsafeHeaders } = await openControllerSurface(
+        fixture.app,
+        cookie,
+        csrfToken,
+      );
+      const created = await fixture.app.inject({
+        method: "POST",
+        url: "/api/projects",
+        headers: unsafeHeaders,
+        payload: { path: fixture.projectPath },
+      });
+      const projectId = created.json<{ id: string }>().id;
+      const workspace = fixture.repository.getWorkspace(projectId);
+      const terminalPane = workspace.panes.find((pane) => pane.kind === "terminal");
+      if (!terminalPane) throw new Error("default terminal Pane is missing");
+      const claudePane = fixture.repository.createPane(projectId, {
+        kind: "claude",
+        workspaceVersion: workspace.version,
+        targetPaneId: terminalPane.id,
+        direction: "horizontal",
+      });
+      const conversation = "33333333-3333-4333-8333-333333333333";
+      fixture.repository.beginPaneRuntime(claudePane.id, "44444444-4444-4444-8444-444444444444");
+      expect(
+        fixture.repository.setClaudeSessionForRuntime(
+          claudePane.id,
+          "44444444-4444-4444-8444-444444444444",
+          conversation,
+        ),
+      ).toBe(true);
+      const listed = await fixture.app.inject({
+        method: "GET",
+        url: `/api/projects/${projectId}/workspace`,
+        headers: { cookie },
+      });
+      expect(
+        listed.json<{ panes: Pane[] }>().panes.find((pane) => pane.id === claudePane.id),
+      ).toMatchObject({ claudeSessionId: conversation });
+
+      const fresh = await fixture.app.inject({
+        method: "POST",
+        url: `/api/panes/${claudePane.id}/new-claude`,
+        headers: unsafeHeaders,
+      });
+      expect(fresh.statusCode).toBe(200);
+      expect(fresh.json()).toMatchObject({ status: "running", claudeSessionId: null });
+
+      const wrongKind = await fixture.app.inject({
+        method: "POST",
+        url: `/api/panes/${terminalPane.id}/new-claude`,
+        headers: unsafeHeaders,
+      });
+      expect(wrongKind.statusCode).toBe(400);
+    } finally {
+      await fixture.app.close();
+    }
+  });
+
   it("keeps a Project usable while exposing a specific Codex availability failure", async () => {
     const launchProfiles: PaneLaunchResolver = {
       resolve(context) {

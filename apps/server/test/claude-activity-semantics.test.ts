@@ -58,6 +58,47 @@ describe("ClaudeActivitySemantics", () => {
     }
   });
 
+  it("remembers the current runtime's latest conversation for a later resume", () => {
+    const repository = new NaruRepository(":memory:", { defaultAgentPaneKind: "claude" });
+    try {
+      const project = repository.createProject("/tmp/naru-claude-resume", "fixture");
+      const pane = repository
+        .getWorkspace(project.id)
+        .panes.find((candidate) => candidate.kind === "claude");
+      if (pane === undefined) throw new Error("Claude fixture Pane is missing.");
+      repository.beginPaneRuntime(pane.id, firstRuntime);
+      const semantics = new ClaudeActivitySemantics({
+        repository,
+        paneId: pane.id,
+        runtimeId: firstRuntime,
+        emitActivity: () => undefined,
+      });
+      const started = "33333333-3333-4333-8333-333333333333";
+      const cleared = "44444444-4444-4444-8444-444444444444";
+      const stored = () => repository.getPaneContext(pane.id)?.pane.claudeSessionId;
+      expect(stored()).toBeNull();
+
+      semantics.accept({ type: "session-start", sessionId: started, cwd: project.path });
+      expect(stored()).toBe(started);
+      semantics.accept({ type: "session-start", sessionId: cleared, cwd: project.path });
+      expect(stored()).toBe(cleared);
+
+      // A non-UUID value is never persisted as a resume target.
+      semantics.accept({ type: "session-start", sessionId: "not-a-uuid", cwd: project.path });
+      expect(stored()).toBe(cleared);
+
+      // A runtime that is no longer current cannot replace the stored conversation.
+      repository.beginPaneRuntime(pane.id, secondRuntime);
+      semantics.accept({ type: "session-start", sessionId: started, cwd: project.path });
+      expect(stored()).toBe(cleared);
+
+      repository.clearClaudeSession(pane.id);
+      expect(stored()).toBeNull();
+    } finally {
+      repository.close();
+    }
+  });
+
   it("marks an interrupted or nonzero-exit turn failed, but not an idle clean exit", () => {
     const repository = new NaruRepository(":memory:", { defaultAgentPaneKind: "claude" });
     try {
