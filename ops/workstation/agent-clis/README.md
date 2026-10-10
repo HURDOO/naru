@@ -17,8 +17,8 @@ ops/workstation/agent-clis/update-agent-clis.sh --check   # 버전과 PATH 해�
 ops/workstation/agent-clis/update-agent-clis.sh           # 두 CLI를 최신으로 설치
 ```
 
-갱신할 Pane에서 Ctrl+C로 CLI를 종료한 뒤 Codex는 작업 재개, Claude Code는 다시 시작 후 `/resume`을
-사용한다. 실행 중인 다른 Pane은 기존 버전으로 계속 동작한다. Claude Code 자체 자동 업데이트는 사용자
+갱신할 Pane에서 Ctrl+C로 CLI를 종료한 뒤 "Codex 작업 재개" 또는 "Claude 작업 재개"로 같은 대화를
+다시 연다. 실행 중인 다른 Pane은 기존 버전으로 계속 동작한다. Claude Code 자체 자동 업데이트는 사용자
 설정 `DISABLE_AUTOUPDATER=1`로 끄고 이 명령으로만 갱신한다.
 
 `--ssh-daemon`은 ChatGPT 앱의 SSH 원격 접속이 쓰는 Codex app-server daemon package도 갱신한다.
