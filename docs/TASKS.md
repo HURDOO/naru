@@ -575,9 +575,9 @@ ownership과 integration gate를 지킨다.
 
 ### T62. 태블릿 다중 Pane keyboard resize stun·waterfall 해소
 
-- [>] 태블릿에서 소프트 키보드가 열리거나 닫힐 때 여러 visible Pane이 동시에 resize되며 입력과
-  화면 갱신이 잠시 멈추고 단계적인 waterfall처럼 보이는 성능 문제를 재현·계측하고 해소한다.
-  T52·T56에서 완료한 blank·focus·renderer lifecycle 안정화는 유지하며 완료 Task를 다시 열지 않는다.
+- [x] 태블릿에서 소프트 키보드가 열리거나 닫힐 때 여러 visible Pane이 동시에 resize되며 입력과
+      화면 갱신이 잠시 멈추고 단계적인 waterfall처럼 보이는 성능 문제를 재현·계측하고 해소한다.
+      T52·T56에서 완료한 blank·focus·renderer lifecycle 안정화는 유지하며 완료 Task를 다시 열지 않는다.
 - 사용자 보고(2026-09-24): 태블릿의 다중 Pane 레이아웃에서 키보드가 열리면 각 Pane의 크기 변경이
   한꺼번에 일어나고, 단일 Pane 모바일 화면보다 긴 stun과 resize waterfall이 체감된다.
 - 추가 보고(2026-09-24): 모바일 overlay 프로젝트 목록을 열어 다른 프로젝트를 선택하면 새 workspace가
@@ -618,6 +618,11 @@ ownership과 integration gate를 지킨다.
   public protocol 변경은 범위 밖이며 필요하면 별도 Task와 integration gate를 만든다.
 - 선행 조건: T52, T56. 사용자가 다음 작업으로 지정했으므로 T46/T48보다 먼저 수행한다.
 - lane: Mobile UI performance
+- 사용자 실사용 인수·완료(2026-10-10): 사용자가 이후 실제 사용에서 태블릿 다중 Pane 키보드 전환의
+  체감 stun·waterfall이 불편하지 않다고 확인하고 완료 처리를 요청했다. 사용자는 이후 buffer 기반 변경으로
+  해소된 것으로 보며, 원인은 확정하지 않았다. 위 완료 조건의 event 수·frame gap 계측과 자동화 검증은
+  수행하지 않았고, 2026-09-25 worktree의 미커밋 resize scheduler 구현은 main에 반영하지 않았다. 모바일
+  overlay 프로젝트 선택의 이중 로딩은 따로 확인하지 않았으며, 재발하면 별도 재현·수정 작업으로 다룬다.
 
 ### T69. Codex native transcript의 휠·터치 스크롤
 
@@ -706,7 +711,7 @@ ownership과 integration gate를 지킨다.
   - `Ctrl` latch, `Enter`, 방향키, `Esc`, `Tab`, Codex 이미지 paste와 helper control의 기존 PTY 전달 의미를 바꾸거나 중복 입력하지 않는다.
   - 키보드가 열린 동안 Fold·viewport resize·helper 전환으로 Terminal Pane·PTY runtime·lease를 재마운트하거나 잃지 않는다.
   - Chrome Android·Samsung Internet 실제 기기와 좁은 폴더블 화면에서 control별 keyboard visibility, IME 조합·취소·권한/지원 실패, 키보드 접근성 회귀를 검증한다.
-- 순서: T62와 `TerminalPane`·`App` 변경 범위가 겹치므로 T62 뒤에 직렬로 수행한다.
+- 순서: T62와 `TerminalPane`·`App` 변경 범위가 겹쳐 T62 뒤로 두었으며, T62가 완료(2026-10-10)되어 바로 진행할 수 있다.
 - 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
 
 ### T48. 한글 보조 입력창의 전환 보존과 전송 후 닫기
