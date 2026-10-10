@@ -655,7 +655,7 @@ ownership과 integration gate를 지킨다.
 
 ### T47. 상태 해소 후 모든 기기 Web Push 알림 정리
 
-- [-] 진행(2026-10-10): Private Ingress 전환이 끝나 재검토 조건이 충족됐다. 현재 서비스 워커는 같은 프로젝트의 새 push를 받을 때만 이미 해소된 알림을 닫고, 서버는 완료·입력 필요·실패에만 push를 보낸다. 다른 기기에서 확인·해소해도 정리 신호가 없어 알림이 남는다. 이번 범위는 해소 시 정리 push와 서비스 워커 처리다(D024).
+- [x] 진행(2026-10-10): Private Ingress 전환이 끝나 재검토 조건이 충족됐다. 현재 서비스 워커는 같은 프로젝트의 새 push를 받을 때만 이미 해소된 알림을 닫고, 서버는 완료·입력 필요·실패에만 push를 보낸다. 다른 기기에서 확인·해소해도 정리 신호가 없어 알림이 남는다. 이번 범위는 해소 시 정리 push와 서비스 워커 처리다(D024).
 - **범위**: 사용자가 Naru에 접속해 모든 프로젝트의 입력 필요·실패·완료 상태를 확인하고 해소하면, 해당 상태를 나타내던 Web Push 알림을 모든 등록 기기에서 정리한다. 서버 DB의 subscription 삭제와 OS에 이미 표시된 notification 정리를 혼동하지 않으며, 사용자 확인 뒤에만 알림을 닫는다.
 - **선행 조건**: T30 작업 상태 이벤트, T32 Web Push subscription·notification tag·다중 기기 억제, T33 인증 세션과 project activity acknowledgment
 - **산출물**: 상태 해소·알림 정리 event 계약, subscription별 worker close/clear protocol, 프로젝트별 tag·event ledger 정리 정책, offline·재접속·실패 fallback과 회귀 테스트
@@ -677,6 +677,8 @@ ownership과 integration gate를 지킨다.
   `t47-push-clear-88bfacd`, maintenance `completed`, status `healthy`, Doctor 29/29다. v18 backup(무결성
   `ok`) 뒤 v19 migration과 `push_project_clears` 생성을 확인했다. T72 Host 경계 수정이 함께 배포되어
   이번이 Host payload가 바뀌는 배포였다. 기기별 PWA 갱신 뒤 실기기 알림 정리 인수가 남아 있다.
+- 사용자 실기기 인수 완료(2026-10-10): 여러 기기에 뜬 같은 프로젝트 알림이 한 기기에서 확인한 뒤 다른
+  기기에서도 정리됨을 사용자가 확인했다.
 - 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
 
 ### T38. 다중 접속과 동시 세션
