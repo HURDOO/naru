@@ -85,9 +85,9 @@ ownership과 integration gate를 지킨다.
 
 ### T70. 운영 primary의 Claude 통합과 claude-lab 철거
 
-- [-] 통합 `main`(T63부터 T69까지의 Claude·Codex 변경과 D020/D021 선택 강조 보완 포함)을 운영 primary에
-  배포해 한 instance에서 Codex와 Claude Code Pane을 함께 사용한다. 이후 T67의 별도 claude-lab
-  route와 instance를 철거한다. 이번 단계는 준비만 하며 운영 mutation은 사용자 실행 승인 뒤 수행한다.
+- [x] 통합 `main`(T63부터 T69까지의 Claude·Codex 변경과 D020/D021 선택 강조 보완 포함)을 운영 primary에
+      배포해 한 instance에서 Codex와 Claude Code Pane을 함께 사용한다. 이후 T67의 별도 claude-lab
+      route와 instance를 철거한다. 이번 단계는 준비만 하며 운영 mutation은 사용자 실행 승인 뒤 수행한다.
 - 선행 조건: `model/claude` 통합(D022), T67 사용자 인수 완료, primary 현재 receipt·추가 앱 등록 확인.
 - 단계와 승인 경계:
   1. clean committed `main`에서 Node 24 artifact를 빌드·검증한다.
@@ -129,8 +129,10 @@ ownership과 integration gate를 지킨다.
 - reconfigure 완료(2026-10-10): 승인한 digest `31633591…`로 receipt 29, maintenance `completed`, status
   `healthy`, Doctor 29/29다. receipt intent의 `claudeExecutable`은 npm package 실행 파일이고 Gateway
   추가 앱은 omptest만 남았다(claude-lab·naru-t62 route 제거). claude-lab launchd 항목은 0개다.
-- 남은 인수: primary에서 Claude Pane 생성·입력·reconnect·hook 작업 상태, Codex Pane 재개와 hook trust
-  확인, TUI 선택 강조와 모바일 터치 스크롤을 실기기에서 확인한다. 확인 전까지 `[-]`를 유지한다.
+- 사용자 인수 완료(2026-10-10): 사용자가 운영 primary에서 T70이 정상 동작함을 확인했다.
+  Claude Pane 생성·입력·reconnect·hook 작업 상태, Codex Pane 재개와 hook trust, TUI 선택 강조와
+  모바일 터치 스크롤의 실기기 인수를 완료 처리한다. T69의 연속 화면 크기 전환 관찰 건은 아래
+  별도 사용자 실사용 인수·완료 기록을 따른다.
 
 ### T68. Claude fullscreen 터치 스크롤
 
@@ -619,7 +621,7 @@ ownership과 integration gate를 지킨다.
 
 ### T69. Codex native transcript의 휠·터치 스크롤
 
-- [-] Codex 기본 화면 모드를 유지하고 Naru의 PC 휠과 모바일 터치를 지원한다.
+- [x] Codex 기본 화면 모드를 유지하고 Naru의 PC 휠과 모바일 터치를 지원한다.
 - 조사: 실제 CLI 0.156.1은 normal buffer 이력을 쌓지만 0.157.1은 alternate buffer와
   mouse tracking을 사용했다. 일반 scrollback API만 호출하는 터치 경로로는 움직일 수 없다.
 - 구현: xterm serializer가 누락한 SGR/pixel mouse encoding을 Host·legacy snapshot에서 복원한다.
@@ -632,10 +634,10 @@ ownership과 integration gate를 지킨다.
 - 전체 unit은 일반 OS 권한에서 806 통과·4 실패·6 skip이었다. hook 3건은 현재 Naru PTY가 상속한
   relay/bootstrap 환경을 테스트 자식에서 제외하자 통과했고 process-runner 1건은 단독 재검증에서
   통과했다. 이들을 스크롤 변경의 회귀로 확인한 것은 아니다.
-- 미완료: 같은 세션을 1440 → 768(900 → 620 높이) → 360px로 연속 전환하며 스크롤하면
+- 당시 미완료(2026-09-27): 같은 세션을 1440 → 768(900 → 620 높이) → 360px로 연속 전환하며 스크롤하면
   출력 일부가 어긋나는 현상이 간헐적으로 관찰됐다. 원인 및 이번 변경과의 인과는 미확정이다.
   고정 viewport 테스트로 대체해 이 문제까지 해결됐다고 판단하지 않는다. 실제 모바일 기기 인수와
-  연속 크기 전환 검증을 남기고 Task를 진행 중으로 유지한다. 운영 배포·restart는 하지 않았다.
+  연속 크기 전환 검증을 남기고 당시 Task를 진행 중으로 유지했다. 운영 배포·restart는 하지 않았다.
 - 완료 조건: 실제 CLI의 격리 synthetic model에서 PC·터치 스크롤을 확인하고, 일반 shell scrollback,
   observer 입력 거부·controller handoff·reconnect, 키보드·focus와 1440/768/360px·동적 viewport를
   관련 unit/E2E로 검증한다. 운영 설정·배포·restart는 하지 않는다.
@@ -643,9 +645,13 @@ ownership과 integration gate를 지킨다.
   `t63-native-scroll-20260927-r1` release가 설치되어 현재 Host·Gateway가 이를 실행 중이다. 설치본
   source map의 server·Host·Gateway·CLI source는 이 Task의 커밋 `b3dc7a8` 이후 main과 파일 단위로
   일치한다. 해당 release의 원래 source commit은 정리된 임시 저장소에만 있었다. 실제 기기 인수와
-  연속 크기 전환 검증은 여전히 미완료이므로 상태는 `[-]`로 유지한다.
+  연속 크기 전환 검증은 당시 미완료이므로 상태는 `[-]`로 유지했다.
 - 번호 재부여(2026-10-07): `model/claude` 통합 시 Claude 계열 T63과 겹쳐 T69로 바꿨다. 커밋 메시지의
   T63·D013·D014·D015 표기는 각각 T69·D019·D020·D021이다(D022).
+- 사용자 실사용 인수·완료(2026-10-10): 사용자가 이후 며칠간 실제 사용한 뒤 스크롤에 불편함이
+  없다고 확인하고 T69 완료 처리를 요청했다. 기존 구현·검증과 이 실사용 인수를 근거로 완료 처리한다.
+  과거 CLI 0.157.1의 연속 화면 크기 전환 시 출력 어긋남은 원인 미확정 관찰로 보존한다. 현재 버전에서
+  동일 조건의 재검증으로 해결을 확인한 것은 아니며, 재발하면 별도 재현·수정 작업으로 다룬다.
 
 ### 기타 backlog
 
