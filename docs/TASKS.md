@@ -77,6 +77,10 @@ ownership과 integration gate를 지킨다.
   확인했다. format·lint·typecheck·build, Vitest 856건(6 skip), production smoke 통과. 전체 E2E 29건 중
   27건 통과, 실패 2건은 merge 전부터 있던 전체 실행 flaky(`mobile-output-copy:13`,
   `terminal-stability:56`)다. 운영 배포와 실제 Claude CLI 재개 인수는 남아 있다.
+- 운영 배포(2026-10-10, 사용자 승인): digest `a95d1750…`로 receipt 30, Host·Gateway·Naru 모두
+  `t71-claude-resume-9949477`, maintenance `completed`, status `healthy`, Doctor 29/29다. Host 번들이
+  공용 Pane 스키마를 포함해 세 runtime이 재시작됐다. v17 backup(무결성 `ok`) 뒤 v18 migration을
+  확인했고, 운영 Claude Pane의 대화 ID 저장이 시작됐다. 실제 CLI의 버튼 재개 인수는 남아 있다.
 
 ### T70. 운영 primary의 Claude 통합과 claude-lab 철거
 
