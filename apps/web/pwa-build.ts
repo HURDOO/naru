@@ -283,6 +283,10 @@ async function handlePush(event) {
   } catch {
     return;
   }
+  if (isPushClearPayload(payload)) {
+    await clearProjectNotifications(payload.projectId);
+    return;
+  }
   if (!isPushPayload(payload)) return;
 
   const tag = "naru:project:" + payload.projectId;
@@ -315,6 +319,23 @@ async function handlePush(event) {
     renotify: false,
     data: payload,
   });
+}
+
+async function clearProjectNotifications(projectId) {
+  const existing = await self.registration.getNotifications({
+    tag: "naru:project:" + projectId,
+  });
+  if (existing.length === 0) return;
+  const summary = await loadPushProjectSummary(projectId);
+  // An alert raised after the server sent this clear keeps its notification.
+  if (
+    summary !== null &&
+    !summary.suppressNotification &&
+    ["completed", "interaction-required", "failed"].includes(summary.state)
+  ) {
+    return;
+  }
+  for (const notification of existing) notification.close();
 }
 
 async function loadPushProjectSummary(projectId) {
@@ -424,6 +445,18 @@ async function openNotificationTarget(payload) {
   url.searchParams.set("naruPane", payload.paneId);
   url.searchParams.set("naruEvent", payload.eventId);
   await self.clients.openWindow(url.href);
+}
+
+function isPushClearPayload(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.keys(value).length === 4 &&
+    value.version === 1 &&
+    value.type === "clear" &&
+    isUuid(value.eventId) &&
+    isUuid(value.projectId)
+  );
 }
 
 function isPushPayload(value) {

@@ -223,6 +223,17 @@ export const PushNotificationPayloadSchema = z
   .strict();
 export type PushNotificationPayload = z.infer<typeof PushNotificationPayloadSchema>;
 
+/** Tells devices that alerted for a project that its attention states were resolved. */
+export const PushClearPayloadSchema = z
+  .object({
+    version: z.literal(1),
+    type: z.literal("clear"),
+    eventId: z.string().uuid(),
+    projectId: z.string().uuid(),
+  })
+  .strict();
+export type PushClearPayload = z.infer<typeof PushClearPayloadSchema>;
+
 export const TERMINAL_RESTORE_PROTOCOL = "staged-v1" as const;
 export const TerminalRestoreProtocolSchema = z.literal(TERMINAL_RESTORE_PROTOCOL);
 export type TerminalRestoreProtocol = z.infer<typeof TerminalRestoreProtocolSchema>;

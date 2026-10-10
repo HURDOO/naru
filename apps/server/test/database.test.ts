@@ -968,6 +968,7 @@ describe("database migrations", () => {
         { version: 16 },
         { version: 17 },
         { version: 18 },
+        { version: 19 },
       ]);
       expect(database.prepare("SELECT * FROM project_groups").get()).toMatchObject({
         id: "11111111-1111-4111-8111-111111111111",
@@ -1008,6 +1009,7 @@ describe("database migrations", () => {
       expect(panesDefinition.sql).toContain("'canceled'");
       expect(panesDefinition.sql).toContain("'server-stopped'");
       expect(tableExists(database, "pane_session_links")).toBe(true);
+      expect(tableExists(database, "push_project_clears")).toBe(true);
       expect(
         database
           .prepare("SELECT name FROM pragma_table_info('pane_session_links') ORDER BY cid")

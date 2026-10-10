@@ -653,6 +653,107 @@ ownership과 integration gate를 지킨다.
   과거 CLI 0.157.1의 연속 화면 크기 전환 시 출력 어긋남은 원인 미확정 관찰로 보존한다. 현재 버전에서
   동일 조건의 재검증으로 해결을 확인한 것은 아니며, 재발하면 별도 재현·수정 작업으로 다룬다.
 
+### T47. 상태 해소 후 모든 기기 Web Push 알림 정리
+
+- [-] 진행(2026-10-10): Private Ingress 전환이 끝나 재검토 조건이 충족됐다. 현재 서비스 워커는 같은 프로젝트의 새 push를 받을 때만 이미 해소된 알림을 닫고, 서버는 완료·입력 필요·실패에만 push를 보낸다. 다른 기기에서 확인·해소해도 정리 신호가 없어 알림이 남는다. 이번 범위는 해소 시 정리 push와 서비스 워커 처리다(D024).
+- **범위**: 사용자가 Naru에 접속해 모든 프로젝트의 입력 필요·실패·완료 상태를 확인하고 해소하면, 해당 상태를 나타내던 Web Push 알림을 모든 등록 기기에서 정리한다. 서버 DB의 subscription 삭제와 OS에 이미 표시된 notification 정리를 혼동하지 않으며, 사용자 확인 뒤에만 알림을 닫는다.
+- **선행 조건**: T30 작업 상태 이벤트, T32 Web Push subscription·notification tag·다중 기기 억제, T33 인증 세션과 project activity acknowledgment
+- **산출물**: 상태 해소·알림 정리 event 계약, subscription별 worker close/clear protocol, 프로젝트별 tag·event ledger 정리 정책, offline·재접속·실패 fallback과 회귀 테스트
+- **완료 조건**:
+  - 같은 프로젝트의 미해결 상태가 모두 없어지고 사용자 확인 acknowledgment가 서버에 반영된 경우에만 해당 프로젝트의 알림 정리 event를 생성한다. 다른 프로젝트와 새로 발생한 event의 알림은 닫지 않는다.
+  - 모든 등록 subscription에 정리 event를 전달하고, 각 기기의 service worker가 같은 project tag의 표시 알림을 닫거나 정리 가능한 범위와 불가능한 브라우저 동작을 명시적으로 처리한다.
+  - 기기가 offline이거나 push delivery가 실패해도 서버의 상태·ledger를 잘못 완료 처리하지 않으며, 재접속·다음 push·same-origin 요약 조회에서 오래된 알림을 다시 만들지 않는다.
+  - 알림 정리 payload에는 불투명 project ID·정리 event ID·version 등 필요한 최소 정보만 넣고 프로젝트명·Pane 제목·terminal 원문·명령·transcript·비밀을 넣지 않는다.
+  - 여러 기기에서 상태 확인·lease 인계·동시 acknowledgment가 발생해도 새 완료/실패/입력 필요 event를 닫지 않으며, service worker·server·push delivery unit/integration과 실제 Android·Samsung Internet 인수를 검증한다.
+- 로컬 검증(2026-10-10, Node 24): 알림을 받은 기기에만 정리 push, 미해결·다른 프로젝트 해소 시 미전송,
+  같은 해소의 중복 방지, 실패 기기만 재시도, 같은 ms 정리·전달 경계를 server unit으로 검증했다. 서비스
+  워커는 새 미해결 알림 유지, 해소·요약 실패 시 닫기, 다른 프로젝트·잘못된 payload 무시를 검증했다.
+  migration v19, format·lint·typecheck·build, Vitest 860건(6 skip), production smoke 통과. 운영 배포와
+  Android·Samsung Internet 실기기 인수는 남아 있다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
+### T38. 다중 접속과 동시 세션
+
+- [ ] **범위**: 현재 단일 접속권을 확장해 여러 브라우저·기기 또는 사용자가 동시에 Naru에 접속하고, 읽기·쓰기 권한을 예측 가능하게 분리한다.
+- **선행 조건**: T09 단일 접속권, T30 상태 event generation, T34 프로젝트 구조화
+- **산출물**: client/session/lease 모델, read-only·write 권한 정책, 입력 충돌·상태 broadcast, 사용자별 인증·감사 경계
+- **완료 조건**:
+  - 기존 단일 lease와 호환되는 read-only 관찰자 또는 명시적 다중 writer 정책을 선택하고, 입력 충돌·resize·Pane 상태 경쟁을 정의한다.
+  - client/session/runtime generation과 event ID로 오래된 입력·acknowledgment·상태를 거부한다.
+  - 로그·비밀·terminal 원문을 새 사용자에게 과도하게 노출하지 않고 프로젝트·Pane 권한을 검증한다.
+  - 동시 로그인·인계·연결 끊김·재접속·권한 거부·동시 입력을 integration·브라우저·실기기에서 검증한다.
+- 현재 상태(2026-10-10): 단일 controller와 읽기 전용 observer, 제어권 요청·승인·가져오기, generation fence로 오래된 입력을 거부하는 모델이 구현되어 있다. observer 기기는 화면에서 활성 Pane이고 문서가 보이는 동안만 terminal stream을 구독하므로(`TerminalPane`의 `terminalSubscriptionAllowed`), 다른 기기에서 열면 focus한 Pane 하나만 읽기 전용으로 갱신되고 나머지 Pane은 갱신되지 않는다. 이 동작은 공개 baseline부터 있었다.
+- 열린 결정: observer가 focus한 Pane만 구독하는 현재 의도를 유지할지, visible Pane 전체 구독 또는 사용자 선택으로 바꿀지 정한다. 여러 사용자 계정과 다중 writer는 필요해질 때 별도로 정의한다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
+### T46. 모바일 입력 도움바와 소프트 키보드 초점 분리
+
+- [ ] **범위**: 모바일·태블릿 하단 입력 도움바의 `Ctrl`, `Esc`, `Tab`, 방향키, `Enter`, 한글 입력 토글 등 control을 눌러도 소프트 키보드가 불필요하게 열리지 않게 한다. 실제 한글 입력을 위해 보조 textarea를 열고 사용자가 입력할 때만 키보드를 표시하며, xterm·PTY focus와 기존 입력 동작은 유지한다.
+- **선행 조건**: T18 terminal input·selection, T22 모바일 터치 스크롤, T29 모바일 Codex 입력·이미지 첨부
+- **산출물**: helper control과 keyboard focus 계약, 한글 보조 textarea의 명시적 open/focus 정책, Android·Samsung Internet fallback, 키보드·접근성 회귀
+- **완료 조건**:
+  - 하단 helper의 control을 누를 때 브라우저가 xterm textarea나 보조 textarea에 임의 focus하지 않고 소프트 키보드를 열지 않는다.
+  - `한글 입력`을 사용자가 명시적으로 열었을 때만 보조 textarea에 focus하고 키보드를 표시하며, 닫기·전송·취소 뒤 focus와 keyboard state를 예측 가능하게 정리한다.
+  - `Ctrl` latch, `Enter`, 방향키, `Esc`, `Tab`, Codex 이미지 paste와 helper control의 기존 PTY 전달 의미를 바꾸거나 중복 입력하지 않는다.
+  - 키보드가 열린 동안 Fold·viewport resize·helper 전환으로 Terminal Pane·PTY runtime·lease를 재마운트하거나 잃지 않는다.
+  - Chrome Android·Samsung Internet 실제 기기와 좁은 폴더블 화면에서 control별 keyboard visibility, IME 조합·취소·권한/지원 실패, 키보드 접근성 회귀를 검증한다.
+- 순서: T62와 `TerminalPane`·`App` 변경 범위가 겹치므로 T62 뒤에 직렬로 수행한다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
+### T48. 한글 보조 입력창의 전환 보존과 전송 후 닫기
+
+- [ ] **범위**: 모바일·태블릿의 한글 보조 입력 textarea가 layout 변경·Pane 전환·집중 보기 전환·다른 Pane 이동 뒤에도 열려 있던 상태와 작성 중인 내용을 보존하고, 사용자가 `입력`을 성공적으로 눌러 PTY에 전송한 뒤에는 textarea를 자동으로 닫고 내용을 비운다. 내용은 서버·DB·로그에 영구 저장하지 않는다.
+- **선행 조건**: T18 terminal input·selection, T22 모바일 터치 스크롤, T29 모바일 Codex 입력·이미지 첨부, T46 입력 도움바와 소프트 키보드 초점 분리
+- **산출물**: Pane별 보조 입력 draft/open 상태 수명 정책, layout·focus 전환 복원 protocol, 전송 성공·실패·취소 동작, 모바일·IME 회귀 테스트
+- **완료 조건**:
+  - 한글 입력창이 열린 상태에서 layout resize·split/collapse·Pane 전환·focus 이동이 발생해도 해당 Pane의 open 상태와 작성 중인 draft가 유지되고, 돌아왔을 때 같은 입력창과 내용이 표시된다.
+  - Pane remount나 WebSocket 재접속이 발생해도 draft를 임의로 다른 Pane·Codex runtime에 보내지 않으며, Pane ID·runtime generation·lease가 바뀌면 안전하게 보존 또는 폐기 사유를 표시한다.
+  - `입력` 전송이 서버 acknowledgment와 현재 lease 검증을 통과한 경우에만 textarea를 자동으로 닫고 draft를 비운다. 전송 실패·lease 인계·빈 입력·사용자 취소에서는 내용을 잃지 않고 재시도·폐기 동작을 제공한다.
+  - textarea에 다시 focus하는 경우에만 소프트 키보드를 열고, layout·Pane 복원 자체가 키보드를 예기치 않게 열거나 xterm focus·PTY runtime을 재시작하지 않는다.
+  - draft는 현재 브라우저 메모리 또는 명시된 제한된 로컬 수명 안에서만 유지하며 서버·DB·구조화 로그·Web Push payload에 기록하지 않는다. Chrome Android·Samsung Internet·좁은 폴더블에서 IME 조합·회전·reload·lease 인계·전송 성공/실패를 검증한다.
+- 순서: T46 뒤에 수행한다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
+### T40. Docs·Tasks 읽기 위치와 펼침 상태 보존
+
+- [ ] **범위**: Docs와 Tasks에서 사용자가 펼친 목차·section·task, 문서 내부 스크롤 위치와 관련 읽기 view를 Pane별로 저장하고 새로고침·재접속·다른 기기 인계 뒤 복원한다. 현재는 선택 문서와 navigator 열림 상태만 저장하며 이 작업은 낮은 우선순위 후속 범위다.
+- **선행 조건**: T15 Docs·Tasks Pane, T09 기기 인계·반응형 projection, T28 Pane 접기·펼치기
+- **산출물**: 문서별 view-state schema, disclosure·scroll 저장 debounce와 복원 protocol, viewport 차이 정책, migration·회귀 테스트
+- **완료 조건**:
+  - 같은 Docs/Tasks Pane에서 선택된 section·task disclosure, 문서 outline 위치, 본문 scroll offset 또는 재현 가능한 anchor를 독립적으로 저장·복원한다.
+  - 새로고침·WebSocket 재접속·다른 기기 lease 인계 뒤에도 저장된 읽기 위치를 복원하되, 문서 revision·heading/task 삭제·내용 축소로 위치가 무효가 되면 안전한 가까운 anchor 또는 문서 시작으로 fallback한다.
+  - desktop·태블릿·좁은 모바일의 viewport·문서 폭·집중 보기 차이로 인해 잘못된 절대 pixel 위치를 강제하지 않으며, 필요하면 heading/task anchor와 상대 위치를 조합한다.
+  - 저장 빈도와 payload를 제한하고 문서 원문·파싱 결과·터미널 출력·비밀을 view state나 로그에 저장하지 않는다.
+  - 여러 Docs/Tasks Pane이 같은 파일을 열 때 상태가 섞이지 않으며, layout·Pane 선택·navigator 상태와 migration이 서로 회귀하지 않는다.
+  - 새로고침·기기 인계·문서 변경·section/task 동시 펼침·스크롤 저장 실패와 키보드 접근성을 unit/integration·브라우저 실기기 회귀로 검증한다.
+- 현재 상태(2026-10-10): 선택 문서와 navigator 열림 상태만 저장한다. 낮은 우선순위 후속 범위다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
+### T39. 터미널·Codex 로그 보존 정책
+
+- [ ] **범위**: 현재 메모리 bounded scrollback과 로그 비저장 경계를 재검토해, 필요한 작업 기록만 안전하게 보존·검색·삭제할 수 있는 정책을 결정하고 승인된 범위만 구현한다.
+- **선행 조건**: T05 terminal protocol, T10 보안·관측성, T16 Codex session 경계, T30 상태 이벤트
+- **산출물**: 보존 대상·기간·삭제 정책, 저장 schema와 암호화/접근 경계, 검색·export UI 또는 명시적 미구현 결정
+- **완료 조건**:
+  - terminal 원문·Codex transcript·prompt·tool input/output 중 무엇을 저장하지 않을지와 저장할 경우의 민감정보·용량·보존기간을 사용자 승인으로 고정한다.
+  - session metadata·상태 event와 원문 로그를 혼동하지 않고, 사용자가 삭제·보존 기간·프로젝트 범위를 제어할 수 있게 한다.
+  - DB backup·migration·redaction·권한·삭제 복구 불가 정책과 성능 상한을 검증한다.
+  - 로그 저장을 하지 않기로 결정하면 그 결정을 문서와 UI에 명확히 남기고, 저장 기능을 완료로 주장하지 않는다.
+- 현재 상태(2026-10-10): Naru는 terminal 원문을 DB·로그에 저장하지 않고 Host가 bounded snapshot만 유지한다. Codex와 Claude Code 대화 기록은 각 CLI가 사용자 홈에서 소유하며 Naru Pane은 session ID로 재개만 한다. 보존 정책 결정은 아직 하지 않았다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
+### T37. Browser Pane
+
+- [ ] **범위**: 작업공간 안에서 개발 서버·문서·외부 허용 페이지를 안전하게 확인하는 Browser Pane을 추가한다.
+- **선행 조건**: T07 split Pane, T10 보안·접근성, T14 HTTPS Origin, T36 Explorer·Editor와의 surface 경계
+- **산출물**: Browser Pane navigation·reload·주소 정책, 외부 콘텐츠 격리, 프로젝트별 상태 저장, 모바일 projection
+- **완료 조건**:
+  - 허용된 local/dev URL과 외부 URL의 경계를 명시하고, Naru 인증 cookie·WebSocket·host shell 권한이 임의 페이지로 새지 않는다.
+  - iframe/webview 선택, CSP·sandbox·download·popup·clipboard·permission 정책을 문서화하고 사용자 승인 경계를 유지한다.
+  - Pane 전환·reload·재접속·좁은 화면·오류/차단/빈 상태를 검증하며 terminal runtime과 독립적으로 동작한다.
+- 현재 상태(2026-10-10): 미착수. 인증 cookie·WebSocket·shell 권한 격리 설계가 선행되어야 한다.
+- 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.
+
 ### 기타 backlog
 
 - [x] T29 모바일 prompt·image input 완성
@@ -697,7 +798,6 @@ ownership과 integration gate를 지킨다.
     패널을 활성화하려면 rich editable 입력 경로가 필요할 수 있으며, 기존 한글 IME와 focus
     동작에 영향을 주는 별도 설계·실기기 검증이 필요하다.
   - 선행 조건: PI-01, 다른 Mobile UI lane 작업과 직렬
-- [ ] T40 Docs/Tasks view state 보존
 - [x] T44 모바일 output 선택·복사
   - 모바일의 Codex·shell Pane에서 출력 텍스트를 길게 눌러 선택하고 범위를 조정해 명시적인
     복사 동작으로 일반 텍스트를 clipboard에 쓴다. 긴 누르기를 가로채는 브라우저를 위해
@@ -760,5 +860,3 @@ ownership과 integration gate를 지킨다.
     확인했다. 효과 없는 네이티브 해제 우회를 제거한 `e642078`까지 main에 fast-forward 통합했고
     테스트 서버를 종료했다. 이후 앱 소유 도구 모음, 붙여넣기와 선택 중 edge 자동 스크롤까지
     실기기에서 확인해 위 플랫폼 제한을 수용하고 T44를 완료 상태로 유지한다.
-- [ ] T46/T48 모바일 helper focus·draft lifecycle
-- [ ] T47/T37/T38/T39는 Private Ingress cutover 뒤 재검토

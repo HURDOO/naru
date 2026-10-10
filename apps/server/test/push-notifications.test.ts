@@ -166,6 +166,105 @@ describe("WebPushNotificationService", () => {
     }
   });
 
+  it("clears a resolved project only on devices that showed its alert", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let now = Date.parse("2026-10-10T00:00:00.000Z");
+    const tick = () => vi.setSystemTime((now += 1_000));
+    tick();
+    const repository = new NaruRepository(":memory:");
+    const sender = vi.fn().mockResolvedValue({ statusCode: 201 });
+    const service = new WebPushNotificationService(repository, pushConfig, sender);
+    try {
+      const phone = service.subscribe(subscriptionInput("phone"));
+      const tablet = service.subscribe(subscriptionInput("tablet"));
+      const projectId = randomUUID();
+      service.handleActivity(activityChange("completed", "completed", projectId));
+      await service.close();
+      tick();
+      const laptop = service.subscribe(subscriptionInput("laptop"));
+      sender.mockClear();
+
+      // Resolving another project or staying unresolved never clears this project's alert.
+      service.handleActivity(activityChange("idle", "idle", randomUUID()));
+      service.handleActivity(activityChange("running", "completed", projectId));
+      await service.close();
+      expect(sender).not.toHaveBeenCalled();
+
+      service.handleActivity(activityChange("idle", "idle", projectId));
+      await service.close();
+      tick();
+      const cleared = sender.mock.calls.map(([subscription, serializedPayload, options]) => ({
+        endpoint: (subscription as { endpoint: string }).endpoint,
+        payload: JSON.parse(serializedPayload as string) as Record<string, unknown>,
+        options: options as Record<string, unknown>,
+      }));
+      expect(cleared.map(({ endpoint }) => endpoint).sort()).toEqual([
+        endpointFor("phone"),
+        endpointFor("tablet"),
+      ]);
+      const clearPayload = cleared[0]?.payload ?? {};
+      expect(Object.keys(clearPayload).sort()).toEqual(["eventId", "projectId", "type", "version"]);
+      expect(clearPayload).toMatchObject({ version: 1, type: "clear", projectId });
+      expect(clearPayload.eventId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(cleared[0]?.options).toMatchObject({ urgency: "normal", TTL: 14_400 });
+      expect(laptop.id).not.toBe(phone.id);
+      expect(tablet.id).not.toBe(phone.id);
+
+      sender.mockClear();
+      service.handleActivity(activityChange("running", "running", projectId));
+      await service.close();
+      expect(sender).not.toHaveBeenCalled();
+
+      tick();
+      service.handleActivity(activityChange("failed", "failed", projectId));
+      await service.close();
+      tick();
+      sender.mockClear();
+      sender.mockRejectedValueOnce(Object.assign(new Error("unavailable"), { statusCode: 503 }));
+      service.handleActivity(activityChange("idle", "idle", projectId));
+      await service.close();
+      expect(sender).toHaveBeenCalledTimes(3);
+      tick();
+
+      // The device whose clear failed is retried on the next resolution; the others are not.
+      const failedEndpoint = (sender.mock.calls[0]?.[0] as { endpoint: string }).endpoint;
+      sender.mockClear();
+      service.handleActivity(activityChange("idle", "idle", projectId));
+      await service.close();
+      expect(
+        sender.mock.calls.map(([subscription]) => (subscription as { endpoint: string }).endpoint),
+      ).toEqual([failedEndpoint]);
+    } finally {
+      await service.close();
+      repository.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("still clears an alert delivered in the same millisecond as the previous clear", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-10-10T00:00:00.000Z"));
+    const repository = new NaruRepository(":memory:");
+    const sender = vi.fn().mockResolvedValue({ statusCode: 201 });
+    const service = new WebPushNotificationService(repository, pushConfig, sender);
+    try {
+      service.subscribe(subscriptionInput());
+      const projectId = randomUUID();
+      for (let round = 0; round < 2; round += 1) {
+        service.handleActivity(activityChange("completed", "completed", projectId));
+        await service.close();
+        sender.mockClear();
+        service.handleActivity(activityChange("idle", "idle", projectId));
+        await service.close();
+        expect(sender).toHaveBeenCalledTimes(1);
+      }
+    } finally {
+      await service.close();
+      repository.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("updates the inactivity delay even when Web Push keys are not configured", () => {
     const repository = new NaruRepository(":memory:");
     const service = new WebPushNotificationService(repository);
@@ -235,10 +334,14 @@ describe("WebPushNotificationService", () => {
   });
 });
 
-function subscriptionInput() {
+function endpointFor(device: string): string {
+  return `https://push.example.test/${device}`;
+}
+
+function subscriptionInput(device = "device") {
   return {
     name: "Test PWA",
-    endpoint: "https://push.example.test/device",
+    endpoint: endpointFor(device),
     expirationTime: null,
     keys: {
       p256dh: Buffer.alloc(65, 3).toString("base64url"),

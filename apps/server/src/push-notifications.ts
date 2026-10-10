@@ -1,17 +1,18 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   CreatePushSubscriptionRequest,
   NaruPushSubscription,
+  PushClearPayload,
   PushConfiguration,
   PushNotificationPayload,
 } from "@naru/contracts";
-import { PushNotificationPayloadSchema } from "@naru/contracts";
+import { PushClearPayloadSchema, PushNotificationPayloadSchema } from "@naru/contracts";
 import webPush, {
   type PushSubscription as WebPushSubscription,
   type RequestOptions,
 } from "web-push";
 import type { PushConfig } from "./config.js";
-import type { NaruRepository } from "./database.js";
+import type { NaruRepository, PushSubscriptionDeliveryRecord } from "./database.js";
 import { AppError } from "./errors.js";
 import type { RuntimePaneActivityChange } from "./pty.js";
 
@@ -87,6 +88,9 @@ export class WebPushNotificationService implements PushNotificationService {
   }
 
   handleActivity(change: RuntimePaneActivityChange): void {
+    if (this.config !== undefined && !ATTENTION_STATES.has(change.projectActivity.state)) {
+      this.#track(this.#clearProject(change.projectId));
+    }
     if (
       this.config === undefined ||
       change.runtimeId === null ||
@@ -122,7 +126,14 @@ export class WebPushNotificationService implements PushNotificationService {
       runtimeId: change.runtimeId,
       eventKind,
     });
-    const delivery = this.#deliver(payload);
+    this.#track(this.#deliver(payload));
+  }
+
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.#pending]);
+  }
+
+  #track(delivery: Promise<void>): void {
     this.#pending.add(delivery);
     void delivery.then(
       () => this.#pending.delete(delivery),
@@ -130,32 +141,85 @@ export class WebPushNotificationService implements PushNotificationService {
     );
   }
 
-  async close(): Promise<void> {
-    await Promise.allSettled([...this.#pending]);
+  // Only devices shown an alert since their last clear receive one; the shared project topic
+  // lets a newer alert replace a clear the push service has not delivered yet.
+  async #clearProject(projectId: string): Promise<void> {
+    const reservations = this.repository.reservePushProjectClears(projectId);
+    if (reservations.length === 0) return;
+    const payload: PushClearPayload = PushClearPayloadSchema.parse({
+      version: 1,
+      type: "clear",
+      eventId: randomUUID(),
+      projectId,
+    });
+    await Promise.all(
+      reservations.map(async ({ subscription, previousClearedAt }) => {
+        try {
+          await this.#send(subscription, payload, projectId, "normal");
+          this.eventSink?.("info", "push.cleared", {
+            eventId: payload.eventId,
+            subscriptionId: subscription.id,
+          });
+        } catch (error) {
+          const statusCode = this.#handleSendFailure(subscription.id, error);
+          if (statusCode !== 404 && statusCode !== 410) {
+            this.repository.restorePushProjectClear(subscription.id, projectId, previousClearedAt);
+          }
+          this.eventSink?.("warn", "push.clear.failed", {
+            eventId: payload.eventId,
+            subscriptionId: subscription.id,
+            statusCode,
+          });
+        }
+      }),
+    );
+  }
+
+  async #send(
+    subscription: PushSubscriptionDeliveryRecord,
+    payload: PushNotificationPayload | PushClearPayload,
+    projectId: string,
+    urgency: "normal" | "high",
+  ): Promise<void> {
+    const config = this.config;
+    if (config === undefined) return;
+    await this.sender(
+      {
+        endpoint: subscription.endpoint,
+        expirationTime: subscription.expirationTime,
+        keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+      },
+      JSON.stringify(payload),
+      {
+        TTL: 4 * 60 * 60,
+        urgency,
+        topic: pushTopic(projectId),
+        timeout: 10_000,
+        vapidDetails: config,
+      },
+    );
+  }
+
+  #handleSendFailure(subscriptionId: string, error: unknown): number {
+    const statusCode = pushStatusCode(error);
+    if (statusCode === 404 || statusCode === 410) {
+      this.repository.deletePushSubscription(subscriptionId);
+    }
+    return statusCode;
   }
 
   async #deliver(payload: PushNotificationPayload): Promise<void> {
-    const config = this.config;
-    if (config === undefined) return;
+    if (this.config === undefined) return;
     const subscriptions = this.repository.listActivePushSubscriptionRecords();
     await Promise.all(
       subscriptions.map(async (subscription) => {
         if (!this.repository.reservePushDelivery(subscription.id, payload)) return;
         try {
-          await this.sender(
-            {
-              endpoint: subscription.endpoint,
-              expirationTime: subscription.expirationTime,
-              keys: { p256dh: subscription.p256dh, auth: subscription.auth },
-            },
-            JSON.stringify(payload),
-            {
-              TTL: 4 * 60 * 60,
-              urgency: payload.eventKind === "completed" ? "normal" : "high",
-              topic: pushTopic(payload.projectId),
-              timeout: 10_000,
-              vapidDetails: config,
-            },
+          await this.#send(
+            subscription,
+            payload,
+            payload.projectId,
+            payload.eventKind === "completed" ? "normal" : "high",
           );
           this.repository.markPushDeliverySent(subscription.id, payload.eventId);
           this.eventSink?.("info", "push.delivered", {
@@ -164,10 +228,7 @@ export class WebPushNotificationService implements PushNotificationService {
             eventKind: payload.eventKind,
           });
         } catch (error) {
-          const statusCode = pushStatusCode(error);
-          if (statusCode === 404 || statusCode === 410) {
-            this.repository.deletePushSubscription(subscription.id);
-          }
+          const statusCode = this.#handleSendFailure(subscription.id, error);
           this.eventSink?.("warn", "push.delivery.failed", {
             eventId: payload.eventId,
             subscriptionId: subscription.id,
@@ -180,6 +241,12 @@ export class WebPushNotificationService implements PushNotificationService {
     );
   }
 }
+
+const ATTENTION_STATES: ReadonlySet<string> = new Set([
+  "completed",
+  "interaction-required",
+  "failed",
+]);
 
 function pushTopic(projectId: string): string {
   return createHash("sha256").update(projectId).digest("base64url").slice(0, 32);

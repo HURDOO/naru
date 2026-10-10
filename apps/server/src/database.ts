@@ -168,6 +168,11 @@ export interface PushSubscriptionDeliveryRecord extends NaruPushSubscription {
   auth: string;
 }
 
+export interface PushProjectClearReservation {
+  readonly subscription: PushSubscriptionDeliveryRecord;
+  readonly previousClearedAt: string | null;
+}
+
 export interface PasskeyCredentialRecord extends Passkey {
   credentialId: string;
   publicKey: Uint8Array<ArrayBuffer>;
@@ -713,6 +718,19 @@ export const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
       `);
     },
   },
+  {
+    version: 19,
+    migrate(database) {
+      database.exec(`
+        CREATE TABLE push_project_clears (
+          subscription_id TEXT NOT NULL REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+          project_id TEXT NOT NULL,
+          cleared_at TEXT NOT NULL,
+          PRIMARY KEY (subscription_id, project_id)
+        );
+      `);
+    },
+  },
 ];
 
 export function runDatabaseMigrations(
@@ -947,6 +965,62 @@ export class NaruRepository {
         .prepare("SELECT * FROM push_subscriptions ORDER BY created_at, id")
         .all() as PushSubscriptionRow[]
     ).map(mapPushSubscriptionDeliveryRecord);
+  }
+
+  /**
+   * Reserve a clear for each device that was shown an alert for this project after its last
+   * clear. The caller restores a reservation whose delivery failed so a later resolution retries.
+   * Millisecond timestamps can tie; a tie counts as outstanding because an extra clear is harmless
+   * while a skipped one leaves a stale alert.
+   */
+  reservePushProjectClears(projectId: string): PushProjectClearReservation[] {
+    return this.#database.transaction(() => {
+      const rows = this.#database
+        .prepare(
+          `SELECT s.*, c.cleared_at AS previous_cleared_at
+           FROM push_subscriptions s
+           LEFT JOIN push_project_clears c ON c.subscription_id = s.id AND c.project_id = ?
+           WHERE EXISTS (
+             SELECT 1 FROM push_deliveries d
+             WHERE d.subscription_id = s.id AND d.project_id = ? AND d.delivered_at IS NOT NULL
+               AND (c.cleared_at IS NULL OR d.delivered_at >= c.cleared_at)
+           )
+           ORDER BY s.created_at, s.id`,
+        )
+        .all(projectId, projectId) as Array<
+        PushSubscriptionRow & { previous_cleared_at: string | null }
+      >;
+      const clearedAt = new Date().toISOString();
+      const upsert = this.#database.prepare(
+        `INSERT INTO push_project_clears (subscription_id, project_id, cleared_at) VALUES (?, ?, ?)
+         ON CONFLICT (subscription_id, project_id) DO UPDATE SET cleared_at = excluded.cleared_at`,
+      );
+      return rows.map((row) => {
+        upsert.run(row.id, projectId, clearedAt);
+        return {
+          subscription: mapPushSubscriptionDeliveryRecord(row),
+          previousClearedAt: row.previous_cleared_at,
+        };
+      });
+    })();
+  }
+
+  restorePushProjectClear(
+    subscriptionId: string,
+    projectId: string,
+    previousClearedAt: string | null,
+  ): void {
+    if (previousClearedAt === null) {
+      this.#database
+        .prepare("DELETE FROM push_project_clears WHERE subscription_id = ? AND project_id = ?")
+        .run(subscriptionId, projectId);
+      return;
+    }
+    this.#database
+      .prepare(
+        "UPDATE push_project_clears SET cleared_at = ? WHERE subscription_id = ? AND project_id = ?",
+      )
+      .run(previousClearedAt, subscriptionId, projectId);
   }
 
   upsertPushSubscription(input: CreatePushSubscriptionRequest): NaruPushSubscription {

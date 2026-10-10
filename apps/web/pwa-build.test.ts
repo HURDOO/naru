@@ -284,6 +284,40 @@ describe("PWA build artifacts", () => {
     );
   });
 
+  it("closes a project's alerts on a clear unless a newer alert is still unresolved", async () => {
+    const projectId = "50000000-0000-4000-8000-000000000002";
+    const clear = {
+      version: 1,
+      type: "clear",
+      eventId: "50000000-0000-4000-8000-000000000001",
+      projectId,
+    };
+    const harness = workerHarness();
+    await harness.dispatch("push", { data: { json: () => clear } });
+    expect(harness.fetcher).not.toHaveBeenCalled();
+
+    const alert = { data: {}, tag: `naru:project:${projectId}`, close: vi.fn() };
+    const otherProject = { data: {}, tag: "naru:project:other", close: vi.fn() };
+    harness.notifications.push(alert, otherProject);
+
+    harness.fetcher.mockResolvedValueOnce(summaryResponse({ projectId }, "completed", 1));
+    await harness.dispatch("push", { data: { json: () => clear } });
+    expect(alert.close).not.toHaveBeenCalled();
+
+    harness.fetcher.mockResolvedValueOnce(summaryResponse({ projectId }, "idle", 0));
+    await harness.dispatch("push", { data: { json: () => clear } });
+    expect(alert.close).toHaveBeenCalledTimes(1);
+    expect(otherProject.close).not.toHaveBeenCalled();
+
+    harness.fetcher.mockRejectedValueOnce(new Error("offline"));
+    await harness.dispatch("push", { data: { json: () => clear } });
+    expect(alert.close).toHaveBeenCalledTimes(2);
+
+    await harness.dispatch("push", { data: { json: () => ({ ...clear, extra: true }) } });
+    expect(alert.close).toHaveBeenCalledTimes(2);
+    expect(harness.showNotification).not.toHaveBeenCalled();
+  });
+
   it("uses enlarged transparent any icons and a dark safe-area maskable icon", () => {
     const manifest = JSON.parse(
       readFileSync(new URL("./public/manifest.webmanifest", import.meta.url), "utf8"),
