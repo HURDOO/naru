@@ -88,7 +88,8 @@ if [ -L "$claude_link" ] && case "$(readlink "$claude_link")" in *Caskroom*) tru
 fi
 
 echo "Updating $CODEX_PACKAGE and $CLAUDE_PACKAGE..."
-"$npm_bin" install -g "$CODEX_PACKAGE@latest" "$CLAUDE_PACKAGE@latest"
+# Claude Code's postinstall places the native binary at bin/claude.exe; allow only that script.
+"$npm_bin" install -g --allow-scripts="$CLAUDE_PACKAGE" "$CODEX_PACKAGE@latest" "$CLAUDE_PACKAGE@latest"
 
 codex_path="$(codex_executable)"
 claude_path="$(claude_executable)"

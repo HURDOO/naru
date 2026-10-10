@@ -94,6 +94,11 @@ ownership과 integration gate를 지킨다.
   통일하고 `claudeExecutable`은 npm package의 `bin/claude.exe`로 둔다. Claude 자동 업데이트는 끄고
   `ops/workstation/agent-clis/update-agent-clis.sh`로 두 CLI를 함께 갱신한다. ChatGPT 앱 SSH 원격용
   Codex daemon package는 앱 소유로 유지한다. 응답 없는 `naru-t62` route는 reconfigure에서 함께 제거한다.
+- 실행(2026-10-10, 사용자 승인): 9/13·9/24 테스트 잔여 프로세스 21개를 종료했다. 셸 PATH에서 Codex
+  standalone 링크와 installer PATH 블록을 백업 후 제거하고, Claude Homebrew cask를 npm 전역 설치로
+  바꿔 Codex 0.162.1·Claude Code 2.1.296으로 갱신했다. 셸과 Naru 실행 경로가 모두 npm package 내부
+  실제 파일을 가리킨다. claude-lab의 launchd 서비스 4개를 중지하고 LaunchAgent와 instance 디렉터리를
+  삭제 없이 보관했다. primary upgrade plan digest는 준비 시점과 동일함을 재확인했다.
 
 ### T68. Claude fullscreen 터치 스크롤
 
