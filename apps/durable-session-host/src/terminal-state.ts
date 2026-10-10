@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { TerminalMouseEncoding } from "@naru/domain";
+import { TerminalMouseEncoding } from "@naru/domain/terminal-mouse-encoding";
 import type { SerializeAddon as SerializeAddonInstance } from "@xterm/addon-serialize";
 import type {
   ITerminalInitOnlyOptions,

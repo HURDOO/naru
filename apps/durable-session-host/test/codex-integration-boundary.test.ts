@@ -27,6 +27,17 @@ describe("Codex integration dependency boundary", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("imports only Host-scoped contract and domain entry points", () => {
+    // The package roots carry Naru application schemas; bundling them into the Host turns a
+    // UI/API contract change into a Host payload change and a PTY-ending restart.
+    const rootImport = /from\s+"@naru\/(contracts|domain)"/;
+    const offenders = sourceFiles("apps/durable-session-host/src").filter((path) =>
+      rootImport.test(readFileSync(join(REPOSITORY_ROOT, path), "utf8")),
+    );
+
+    expect(offenders).toEqual([]);
+  });
 });
 
 function sourceFiles(relativeDirectory: string): string[] {
