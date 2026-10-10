@@ -146,18 +146,21 @@ export class WebPushNotificationService implements PushNotificationService {
   async #clearProject(projectId: string): Promise<void> {
     const reservations = this.repository.reservePushProjectClears(projectId);
     if (reservations.length === 0) return;
-    const payload: PushClearPayload = PushClearPayloadSchema.parse({
-      version: 1,
-      type: "clear",
-      eventId: randomUUID(),
-      projectId,
-    });
+    const eventId = randomUUID();
     await Promise.all(
-      reservations.map(async ({ subscription, previousClearedAt }) => {
+      reservations.map(async ({ subscription, previousClearedAt, alertEventIds }) => {
+        // Each device closes only alerts it was sent, so a newer alert that replaced one keeps.
+        const payload: PushClearPayload = PushClearPayloadSchema.parse({
+          version: 1,
+          type: "clear",
+          eventId,
+          projectId,
+          alertEventIds,
+        });
         try {
           await this.#send(subscription, payload, projectId, "normal");
           this.eventSink?.("info", "push.cleared", {
-            eventId: payload.eventId,
+            eventId,
             subscriptionId: subscription.id,
           });
         } catch (error) {
@@ -166,7 +169,7 @@ export class WebPushNotificationService implements PushNotificationService {
             this.repository.restorePushProjectClear(subscription.id, projectId, previousClearedAt);
           }
           this.eventSink?.("warn", "push.clear.failed", {
-            eventId: payload.eventId,
+            eventId,
             subscriptionId: subscription.id,
             statusCode,
           });

@@ -223,13 +223,16 @@ export const PushNotificationPayloadSchema = z
   .strict();
 export type PushNotificationPayload = z.infer<typeof PushNotificationPayloadSchema>;
 
-/** Tells devices that alerted for a project that its attention states were resolved. */
+export const PUSH_CLEAR_MAX_ALERT_EVENT_IDS = 32;
+
+/** Tells a device to close the listed alerts of a project whose attention states were resolved. */
 export const PushClearPayloadSchema = z
   .object({
     version: z.literal(1),
     type: z.literal("clear"),
     eventId: z.string().uuid(),
     projectId: z.string().uuid(),
+    alertEventIds: z.array(z.string().uuid()).min(1).max(PUSH_CLEAR_MAX_ALERT_EVENT_IDS),
   })
   .strict();
 export type PushClearPayload = z.infer<typeof PushClearPayloadSchema>;

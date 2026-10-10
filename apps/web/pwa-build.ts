@@ -284,7 +284,7 @@ async function handlePush(event) {
     return;
   }
   if (isPushClearPayload(payload)) {
-    await clearProjectNotifications(payload.projectId);
+    await clearProjectNotifications(payload);
     return;
   }
   if (!isPushPayload(payload)) return;
@@ -321,21 +321,14 @@ async function handlePush(event) {
   });
 }
 
-async function clearProjectNotifications(projectId) {
+async function clearProjectNotifications(clear) {
   const existing = await self.registration.getNotifications({
-    tag: "naru:project:" + projectId,
+    tag: "naru:project:" + clear.projectId,
   });
-  if (existing.length === 0) return;
-  const summary = await loadPushProjectSummary(projectId);
-  // An alert raised after the server sent this clear keeps its notification.
-  if (
-    summary !== null &&
-    !summary.suppressNotification &&
-    ["completed", "interaction-required", "failed"].includes(summary.state)
-  ) {
-    return;
+  // A newer alert that replaced a listed one has an unlisted event ID and stays open.
+  for (const notification of existing) {
+    if (clear.alertEventIds.includes(notification.data?.eventId)) notification.close();
   }
-  for (const notification of existing) notification.close();
 }
 
 async function loadPushProjectSummary(projectId) {
@@ -451,11 +444,15 @@ function isPushClearPayload(value) {
   return (
     value !== null &&
     typeof value === "object" &&
-    Object.keys(value).length === 4 &&
+    Object.keys(value).length === 5 &&
     value.version === 1 &&
     value.type === "clear" &&
     isUuid(value.eventId) &&
-    isUuid(value.projectId)
+    isUuid(value.projectId) &&
+    Array.isArray(value.alertEventIds) &&
+    value.alertEventIds.length >= 1 &&
+    value.alertEventIds.length <= 32 &&
+    value.alertEventIds.every(isUuid)
   );
 }
 

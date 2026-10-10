@@ -24,6 +24,7 @@ import type {
 import {
   ClaudeSessionIdSchema,
   CodexSessionIdSchema,
+  PUSH_CLEAR_MAX_ALERT_EVENT_IDS,
   LAYOUT_SCHEMA_VERSION,
   PaneViewStateSchema,
   PUSH_INACTIVITY_DELAY_MINUTES,
@@ -171,6 +172,8 @@ export interface PushSubscriptionDeliveryRecord extends NaruPushSubscription {
 export interface PushProjectClearReservation {
   readonly subscription: PushSubscriptionDeliveryRecord;
   readonly previousClearedAt: string | null;
+  /** Newest first: alerts sent to this device for the project since its previous clear. */
+  readonly alertEventIds: readonly string[];
 }
 
 export interface PasskeyCredentialRecord extends Passkey {
@@ -968,10 +971,10 @@ export class NaruRepository {
   }
 
   /**
-   * Reserve a clear for each device that was shown an alert for this project after its last
-   * clear. The caller restores a reservation whose delivery failed so a later resolution retries.
-   * Millisecond timestamps can tie; a tie counts as outstanding because an extra clear is harmless
-   * while a skipped one leaves a stale alert.
+   * Reserve a clear for each device sent an alert for this project after its last clear. Alerts
+   * still in flight count, and a millisecond tie counts as outstanding: listing an alert the device
+   * never shows is harmless, while omitting one leaves it open. The caller restores a reservation
+   * whose delivery failed so a later resolution retries.
    */
   reservePushProjectClears(projectId: string): PushProjectClearReservation[] {
     return this.#database.transaction(() => {
@@ -982,8 +985,8 @@ export class NaruRepository {
            LEFT JOIN push_project_clears c ON c.subscription_id = s.id AND c.project_id = ?
            WHERE EXISTS (
              SELECT 1 FROM push_deliveries d
-             WHERE d.subscription_id = s.id AND d.project_id = ? AND d.delivered_at IS NOT NULL
-               AND (c.cleared_at IS NULL OR d.delivered_at >= c.cleared_at)
+             WHERE d.subscription_id = s.id AND d.project_id = ?
+               AND (c.cleared_at IS NULL OR d.attempted_at >= c.cleared_at)
            )
            ORDER BY s.created_at, s.id`,
         )
@@ -995,11 +998,26 @@ export class NaruRepository {
         `INSERT INTO push_project_clears (subscription_id, project_id, cleared_at) VALUES (?, ?, ?)
          ON CONFLICT (subscription_id, project_id) DO UPDATE SET cleared_at = excluded.cleared_at`,
       );
+      const alerts = this.#database.prepare(
+        `SELECT event_id FROM push_deliveries
+         WHERE subscription_id = ? AND project_id = ? AND (? IS NULL OR attempted_at >= ?)
+         ORDER BY attempted_at DESC, rowid DESC LIMIT ?`,
+      );
       return rows.map((row) => {
+        const alertEventIds = (
+          alerts.all(
+            row.id,
+            projectId,
+            row.previous_cleared_at,
+            row.previous_cleared_at,
+            PUSH_CLEAR_MAX_ALERT_EVENT_IDS,
+          ) as Array<{ event_id: string }>
+        ).map(({ event_id }) => event_id);
         upsert.run(row.id, projectId, clearedAt);
         return {
           subscription: mapPushSubscriptionDeliveryRecord(row),
           previousClearedAt: row.previous_cleared_at,
+          alertEventIds,
         };
       });
     })();

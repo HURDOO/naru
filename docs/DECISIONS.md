@@ -305,19 +305,21 @@
   WebSocket frame과 Host public protocol은 바꾸지 않는다. web은 Claude Pane 종료 시 workspace를 다시
   읽어 재개 가능 여부를 반영한다.
 
-## D024. 해소된 프로젝트의 Web Push 알림은 정리 push로 닫는다
+## D024. 해소된 프로젝트의 Web Push 알림은 기기별 알림 ID 목록으로 닫는다
 
 - 상태: T47 구현 중
-- 프로젝트의 집계 상태가 완료·입력 필요·실패에서 벗어나면, 마지막 정리 뒤 그 프로젝트 알림이 실제로
-  전달된 기기에만 정리 push를 보낸다. 기기별 마지막 정리 시각은 DB v19의 `push_project_clears`에 둔다.
-  전송이 실패한 기기는 이전 정리 시각으로 되돌려 다음 해소에서 다시 시도한다. 404·410 endpoint는
-  기존처럼 subscription을 삭제한다.
-- 정리 payload는 `{ version: 1, type: "clear", eventId, projectId }`만 담는다. 기존 알림 payload와
-  모양이 달라 구 서비스 워커는 무시한다. 같은 프로젝트 topic을 써서 push service가 아직 전달하지 않은
-  정리 신호를 이후 알림이 대체한다.
-- 서비스 워커는 같은 프로젝트 tag의 알림이 있을 때만 요약을 조회한다. 요약이 다시 미해결 상태이고
-  억제 대상이 아니면 알림을 유지하고, 해소됐거나 요약을 읽을 수 없으면 닫는다. 정리 push는 알림을
-  새로 표시하지 않으므로 Chromium 계열은 사이트 engagement 예산이 부족할 때 기본 알림을 띄울 수 있다.
-  실제 Android·Samsung Internet에서 확인한다.
-- push 전달 기록의 7일 보존을 넘긴 오래된 알림은 정리 대상에서 빠진다. 기존 subscription·ledger와 알림
-  payload는 그대로이며 v19는 테이블만 추가한다.
+- 프로젝트의 집계 상태가 완료·입력 필요·실패에서 벗어나면, 마지막 정리 뒤 그 프로젝트 알림 전송을
+  시도한 기기에만 정리 push를 보낸다. 기기별 마지막 정리 시각은 DB v19의 `push_project_clears`에
+  둔다. 전송이 실패한 기기는 이전 정리 시각으로 되돌려 다음 해소에서 다시 시도한다. 404·410
+  endpoint는 기존처럼 subscription을 삭제한다.
+- 정리 payload는 `{ version: 1, type: "clear", eventId, projectId, alertEventIds }`이다.
+  `alertEventIds`는 그 기기에 지난 정리 이후 보낸 알림 event ID를 최신순 최대 32개 담는다. 서비스
+  워커는 같은 프로젝트 tag의 알림 중 ID가 목록에 있는 것만 닫고 서버를 조회하지 않는다. 그 사이 새
+  알림이 자리를 대신했다면 ID가 목록에 없어 유지되므로 순서 역전과 오프라인에서도 결과가 같다.
+- 정리 시점에 전송 중이던 알림도 목록에 넣는다. 기기에 표시되지 않은 ID는 닫을 대상이 없을 뿐이다.
+  같은 ms의 경계는 미정리로 본다. 같은 프로젝트 topic을 써서 push service가 아직 전달하지 않은 신호는
+  이후 메시지가 대체한다.
+- 정리 payload는 기존 알림과 모양이 달라 구 서비스 워커는 무시한다. 정리 push는 알림을 새로 표시하지
+  않으므로 Chromium 계열은 사이트 engagement 예산이 부족할 때 기본 알림을 띄울 수 있어 실제
+  Android·Samsung Internet에서 확인한다. 7일 보존을 넘긴 전달 기록은 정리 대상에서 빠진다. 기존 알림
+  payload와 subscription은 그대로이며 v19는 테이블만 추가한다.

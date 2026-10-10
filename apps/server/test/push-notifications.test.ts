@@ -166,7 +166,7 @@ describe("WebPushNotificationService", () => {
     }
   });
 
-  it("clears a resolved project only on devices that showed its alert", async () => {
+  it("clears a resolved project only on devices sent its alerts, listing those alerts", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     let now = Date.parse("2026-10-10T00:00:00.000Z");
     const tick = () => vi.setSystemTime((now += 1_000));
@@ -178,7 +178,12 @@ describe("WebPushNotificationService", () => {
       const phone = service.subscribe(subscriptionInput("phone"));
       const tablet = service.subscribe(subscriptionInput("tablet"));
       const projectId = randomUUID();
-      service.handleActivity(activityChange("completed", "completed", projectId));
+      const firstAlert = activityChange("completed", "completed", projectId);
+      service.handleActivity(firstAlert);
+      await service.close();
+      tick();
+      const secondAlert = activityChange("interaction-required", "interaction-required", projectId);
+      service.handleActivity(secondAlert);
       await service.close();
       tick();
       const laptop = service.subscribe(subscriptionInput("laptop"));
@@ -203,8 +208,17 @@ describe("WebPushNotificationService", () => {
         endpointFor("tablet"),
       ]);
       const clearPayload = cleared[0]?.payload ?? {};
-      expect(Object.keys(clearPayload).sort()).toEqual(["eventId", "projectId", "type", "version"]);
+      expect(Object.keys(clearPayload).sort()).toEqual([
+        "alertEventIds",
+        "eventId",
+        "projectId",
+        "type",
+        "version",
+      ]);
       expect(clearPayload).toMatchObject({ version: 1, type: "clear", projectId });
+      for (const { payload } of cleared) {
+        expect(payload.alertEventIds).toEqual([secondAlert.eventId, firstAlert.eventId]);
+      }
       expect(clearPayload.eventId).toMatch(/^[0-9a-f-]{36}$/);
       expect(cleared[0]?.options).toMatchObject({ urgency: "normal", TTL: 14_400 });
       expect(laptop.id).not.toBe(phone.id);

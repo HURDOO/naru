@@ -665,9 +665,12 @@ ownership과 integration gate를 지킨다.
   - 기기가 offline이거나 push delivery가 실패해도 서버의 상태·ledger를 잘못 완료 처리하지 않으며, 재접속·다음 push·same-origin 요약 조회에서 오래된 알림을 다시 만들지 않는다.
   - 알림 정리 payload에는 불투명 project ID·정리 event ID·version 등 필요한 최소 정보만 넣고 프로젝트명·Pane 제목·terminal 원문·명령·transcript·비밀을 넣지 않는다.
   - 여러 기기에서 상태 확인·lease 인계·동시 acknowledgment가 발생해도 새 완료/실패/입력 필요 event를 닫지 않으며, service worker·server·push delivery unit/integration과 실제 Android·Samsung Internet 인수를 검증한다.
-- 로컬 검증(2026-10-10, Node 24): 알림을 받은 기기에만 정리 push, 미해결·다른 프로젝트 해소 시 미전송,
-  같은 해소의 중복 방지, 실패 기기만 재시도, 같은 ms 정리·전달 경계를 server unit으로 검증했다. 서비스
-  워커는 새 미해결 알림 유지, 해소·요약 실패 시 닫기, 다른 프로젝트·잘못된 payload 무시를 검증했다.
+- 설계 변경(2026-10-10, 사용자 결정): 서비스 워커가 정리 시 서버 요약을 조회하던 방식을 정리 payload의
+  기기별 알림 ID 목록 비교로 바꿨다. 오프라인·순서 역전에서도 새 알림을 잘못 닫지 않는다(D024).
+- 로컬 검증(2026-10-10, Node 24): 알림을 보낸 기기에만 정리 push와 기기별 알림 ID 목록, 미해결·다른
+  프로젝트 해소 시 미전송, 같은 해소의 중복 방지, 실패 기기만 재시도, 같은 ms 경계를 server unit으로
+  검증했다. 서비스 워커는 목록의 알림만 닫고 새 알림·다른 프로젝트는 유지하며 서버를 조회하지 않고,
+  잘못된 payload를 무시함을 검증했다.
   migration v19, format·lint·typecheck·build, Vitest 860건(6 skip), production smoke 통과. 운영 배포와
   Android·Samsung Internet 실기기 인수는 남아 있다.
 - 출처: Naru 공개 저장소 전환 전 legacy `editor` 저장소 TASKS의 정의를 옮겼다(2026-10-10). 선행 조건의 T 번호는 당시 기준이다.

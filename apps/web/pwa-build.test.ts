@@ -284,37 +284,45 @@ describe("PWA build artifacts", () => {
     );
   });
 
-  it("closes a project's alerts on a clear unless a newer alert is still unresolved", async () => {
+  it("closes only the listed alerts of a cleared project without querying the server", async () => {
     const projectId = "50000000-0000-4000-8000-000000000002";
+    const listed = "50000000-0000-4000-8000-000000000010";
+    const newer = "50000000-0000-4000-8000-000000000011";
     const clear = {
       version: 1,
       type: "clear",
       eventId: "50000000-0000-4000-8000-000000000001",
       projectId,
+      alertEventIds: [listed],
     };
     const harness = workerHarness();
+    const resolved = {
+      data: { eventId: listed },
+      tag: `naru:project:${projectId}`,
+      close: vi.fn(),
+    };
+    const replacement = {
+      data: { eventId: newer },
+      tag: `naru:project:${projectId}`,
+      close: vi.fn(),
+    };
+    const otherProject = { data: { eventId: listed }, tag: "naru:project:other", close: vi.fn() };
+    harness.notifications.push(resolved, replacement, otherProject);
+
     await harness.dispatch("push", { data: { json: () => clear } });
+    expect(resolved.close).toHaveBeenCalledTimes(1);
+    expect(replacement.close).not.toHaveBeenCalled();
+    expect(otherProject.close).not.toHaveBeenCalled();
     expect(harness.fetcher).not.toHaveBeenCalled();
 
-    const alert = { data: {}, tag: `naru:project:${projectId}`, close: vi.fn() };
-    const otherProject = { data: {}, tag: "naru:project:other", close: vi.fn() };
-    harness.notifications.push(alert, otherProject);
-
-    harness.fetcher.mockResolvedValueOnce(summaryResponse({ projectId }, "completed", 1));
-    await harness.dispatch("push", { data: { json: () => clear } });
-    expect(alert.close).not.toHaveBeenCalled();
-
-    harness.fetcher.mockResolvedValueOnce(summaryResponse({ projectId }, "idle", 0));
-    await harness.dispatch("push", { data: { json: () => clear } });
-    expect(alert.close).toHaveBeenCalledTimes(1);
-    expect(otherProject.close).not.toHaveBeenCalled();
-
-    harness.fetcher.mockRejectedValueOnce(new Error("offline"));
-    await harness.dispatch("push", { data: { json: () => clear } });
-    expect(alert.close).toHaveBeenCalledTimes(2);
-
-    await harness.dispatch("push", { data: { json: () => ({ ...clear, extra: true }) } });
-    expect(alert.close).toHaveBeenCalledTimes(2);
+    for (const invalid of [
+      { ...clear, alertEventIds: [] },
+      { ...clear, alertEventIds: ["not-a-uuid"] },
+      { ...clear, extra: true },
+    ]) {
+      await harness.dispatch("push", { data: { json: () => invalid } });
+    }
+    expect(resolved.close).toHaveBeenCalledTimes(1);
     expect(harness.showNotification).not.toHaveBeenCalled();
   });
 
