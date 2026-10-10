@@ -81,6 +81,7 @@ ownership과 integration gate를 지킨다.
   `t71-claude-resume-9949477`, maintenance `completed`, status `healthy`, Doctor 29/29다. Host 번들이
   공용 Pane 스키마를 포함해 세 runtime이 재시작됐다. v17 backup(무결성 `ok`) 뒤 v18 migration을
   확인했고, 운영 Claude Pane의 대화 ID 저장이 시작됐다. 실제 CLI의 버튼 재개 인수는 남아 있다.
+- 사용자 인수 완료(2026-10-10): 운영 primary에서 실제 Claude CLI의 버튼 재개가 동작함을 확인했다.
 
 ### T70. 운영 primary의 Claude 통합과 claude-lab 철거
 
