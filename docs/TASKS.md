@@ -103,6 +103,11 @@ ownership과 integration gate를 지킨다.
   28에서 Host·Gateway·Naru 모두 `t70-claude-primary-ce01c94`, status `healthy`다. Naru가 무결성 검사를
   통과한 v16 DB backup을 만든 뒤 v17로 migration했다. reconfigure plan(digest `31633591…`)은
   `needs-input`(경고 `codex.hook-trust` 1건), Claude entrypoint 검사 통과, 세 runtime 재시작이다.
+- reconfigure 완료(2026-10-10): 승인한 digest `31633591…`로 receipt 29, maintenance `completed`, status
+  `healthy`, Doctor 29/29다. receipt intent의 `claudeExecutable`은 npm package 실행 파일이고 Gateway
+  추가 앱은 omptest만 남았다(claude-lab·naru-t62 route 제거). claude-lab launchd 항목은 0개다.
+- 남은 인수: primary에서 Claude Pane 생성·입력·reconnect·hook 작업 상태, Codex Pane 재개와 hook trust
+  확인, TUI 선택 강조와 모바일 터치 스크롤을 실기기에서 확인한다. 확인 전까지 `[-]`를 유지한다.
 
 ### T68. Claude fullscreen 터치 스크롤
 
