@@ -65,6 +65,16 @@ report_path() {
   esac
 }
 
+report_skill_link() {
+  local claude_skill="$HOME/.claude/skills/update-agent-clis/SKILL.md"
+  local codex_skill="$HOME/.codex/skills/update-agent-clis/SKILL.md"
+  [ -f "$claude_skill" ] && [ -f "$codex_skill" ] || return 0
+  # Codex ignores a symlinked SKILL.md, so both agents share one hardlinked file.
+  if [ "$(stat -f '%i' "$claude_skill")" != "$(stat -f '%i' "$codex_skill")" ]; then
+    warn "update-agent-clis skill copies diverged; relink with: ln -f '$claude_skill' '$codex_skill'"
+  fi
+}
+
 report() {
   echo "npm root: $npm_root"
   echo "  $CODEX_PACKAGE: installed $(installed_version "$codex_dir"), latest $("$npm_bin" view "$CODEX_PACKAGE" version)"
@@ -79,6 +89,7 @@ report() {
 }
 
 report
+report_skill_link
 [ "$check_only" -eq 0 ] || exit 0
 
 # A Homebrew cask owns the shared `claude` link; npm cannot replace it.

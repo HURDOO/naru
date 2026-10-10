@@ -26,3 +26,6 @@ ops/workstation/agent-clis/update-agent-clis.sh           # 두 CLI를 최신으
 Codex 세션이 끊긴다. 지정하지 않으면 버전만 보고한다.
 
 스크립트는 root 실행을 거부하고, Homebrew cask가 `claude` 링크를 소유하면 npm 설치 전에 중단한다.
+
+Claude Code와 Codex의 `update-agent-clis` 스킬은 같은 `SKILL.md`를 hardlink로 공유한다. Codex는 symlink인
+`SKILL.md`를 읽지 않는다. 파일을 교체 저장하는 편집기는 hardlink를 끊으므로 `--check`가 이를 경고한다.
