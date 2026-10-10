@@ -99,6 +99,10 @@ ownership과 integration gate를 지킨다.
   바꿔 Codex 0.162.1·Claude Code 2.1.296으로 갱신했다. 셸과 Naru 실행 경로가 모두 npm package 내부
   실제 파일을 가리킨다. claude-lab의 launchd 서비스 4개를 중지하고 LaunchAgent와 instance 디렉터리를
   삭제 없이 보관했다. primary upgrade plan digest는 준비 시점과 동일함을 재확인했다.
+- upgrade 완료(2026-10-10): 승인한 digest `2fdeadb7…`로 handoff했고 maintenance `completed`, receipt
+  28에서 Host·Gateway·Naru 모두 `t70-claude-primary-ce01c94`, status `healthy`다. Naru가 무결성 검사를
+  통과한 v16 DB backup을 만든 뒤 v17로 migration했다. reconfigure plan(digest `31633591…`)은
+  `needs-input`(경고 `codex.hook-trust` 1건), Claude entrypoint 검사 통과, 세 runtime 재시작이다.
 
 ### T68. Claude fullscreen 터치 스크롤
 
