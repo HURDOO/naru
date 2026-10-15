@@ -1,0 +1,38 @@
+protocol: naru-coordination/v0
+type: handoff.ready
+taskId: ap-claude-messaging-spikes
+messageId: ap-claude-messaging-spikes/1
+sender: claude-messaging-worker
+recipient: integration
+baseSha: 4eb5433
+payload:
+  headSha: HEAD of spike/claude-messaging
+  completed:
+    - "V06-1 activation and scope (local): PASS"
+    - "V06-2 delivery format and sender identity: PASS (identity = self-chosen session name + OS-verified peer PID)"
+    - "V06-3 hook audit and block (sender PreToolUse deny, receiver UserPromptSubmit block): PASS"
+    - "V06-4 cross-session-only block keeping subagent messaging: PASS (teams NOT TESTED)"
+    - "V06-5 observation without hooks: PARTIAL (stream-json sessions yes, TUI no)"
+    - "V06-6 Naru bypass via peer message: confirmed under default settings; blocked by policy"
+    - "V08 Claude-side managed MCP stub with token-bound sender: PASS"
+  tests:
+    - "real claude 2.1.296: v06-cross-session a/b/c, v06-tui-receiver, v08-managed-stub (raw logs outside repo)"
+    - "pnpm exec prettier --check (changed files), pnpm lint, pnpm typecheck, pnpm public:scan"
+  deferred:
+    - "V08 Codex<->Claude round trip (integration; shared stub interface in tests/spikes/claude-messaging/README.md)"
+    - "Agent Teams teammate targets under the SendMessage hook policy (needs V07)"
+    - "Remote Control / cloud peers (not tested)"
+    - "TUI wakeup path choice: inbox socket (undocumented line format), Channels (research preview), DS controller input"
+  risks:
+    - "result.origin, peer_message_hold and SendMessage recipient_kind observed on 2.1.296 but documentation status unverified"
+    - "UserPromptSubmit has no structured prompt-source field; the cross-session wrapper is spoofable text"
+    - "MCP clients forward arguments outside the tool schema; identity binding must be server-side"
+  decisionsNeeded:
+    - "Apply cross-session refuse/deny to ordinary user Claude Panes too, or only to managed agent sessions (recommended: managed only + observe)"
+  changedPaths:
+    - docs/agent-platform-v0/validation/claude-messaging.md
+    - docs/agent-platform-v0/assignments/claude-messaging/HANDOFF.yaml
+    - tests/spikes/claude-messaging/
+  requestedIntegrationOrder:
+    after: []
+    before: []
