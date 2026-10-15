@@ -1,0 +1,13 @@
+protocol: naru-coordination/v0
+type: task.accepted
+taskId: ap-codex-runtime-spikes
+messageId: ap-codex-runtime-spikes/1
+sender: codex-runtime-worker
+recipient: integration
+baseSha: 4eb5433
+payload:
+  scope: V01, V02, V04, V11, V08 Codex, X1, X2
+  state: in-progress
+  constraints:
+    - Product code and shared contracts remain integration-owned.
+    - Only isolated processes created by these spikes are controlled.

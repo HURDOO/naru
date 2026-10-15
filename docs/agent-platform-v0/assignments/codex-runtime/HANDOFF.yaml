@@ -1,0 +1,100 @@
+protocol: naru-coordination/v0
+type: handoff.ready
+taskId: ap-codex-runtime-spikes
+messageId: ap-codex-runtime-spikes/3
+sender: codex-runtime-worker
+recipient: integration
+baseSha: 4eb543365cedac6993c3ede69d914e03b6f3efe3
+payload:
+  headSha: 522626987d0d3aff7b8ccdde80d25e783a96d592
+  branch: spike/codex-runtime
+  headShaMeaning: Validation code and report commit; this handoff is a following documentation-only commit.
+  recommendation: >-
+    Prefer A, shared App Server with an explicit single writer gate. Retain B, release and resume,
+    as recovery. Native subagents qualify for L2 observation; use managed workers for direct
+    interactive control. Do not claim hard native suppression from the tested configuration flags.
+  completed:
+    - V01 PASS. Actual remote TUI rendered GUI-origin deltas live on the same thread.
+    - V01 PASS. Proxy rejected observer writes, mutating resume, settings, unknown methods and duplicate/observer approval responses.
+    - V01 PASS. Completion-wait and explicit interrupt handoffs preserved the thread and history.
+    - V02 PASS. Separate App Server GUI to remote TUI to GUI resume, invalid ID, TUI kill and native process crash were reproduced.
+    - K1 PASS for tested text and MCP tool history through App Server API and pagination, without rollout parsing.
+    - V04 PARTIAL. Real native L1 and L2 succeeded; direct child turn/start and turn/steer were rejected.
+    - V04 PARTIAL. A newly created remote TUI observed the child, but did not submit typed input; no independent child PTY controller was established.
+    - V08 managed PASS. Real Codex threads exchanged original messages and instruction IDs through the reusable stdio MCP stub.
+    - K2/K3 PASS. Per-thread MCP environment values and process instances were isolated within one App Server, including identical-config process separation.
+    - V08 native independent-root UUID addressing FAIL. Native send_message returned agent-not-found; no delivery was observed.
+    - V11 PASS. Isolated actual Host PTY console preserved UDS protocol through control handoff, reconnect, resize, input and graceful Host restart.
+    - X1 PASS. Actual TUI turn/start fields and text/text_elements input structure recorded without publishing transcript.
+    - X2 PASS for catalog. Seven model IDs recorded; only gpt-6-sol inference was exercised.
+    - Generated JSON Schema 170 methods and TS 173 methods classified; three TS-only legacy methods explicitly identified.
+  tests:
+    - command: node --import tsx tests/spikes/codex-runtime/shared.ts
+      result: PASS
+      evidence: shared-2026-10-15T06-24-56.036Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/approval.ts
+      result: PASS
+      evidence: approval-2026-10-15T06-24-58.846Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/resume.ts
+      result: PASS
+      evidence: resume-2026-10-15T05-59-00.259Z/summary.json
+    - command: NARU_SPIKE_REAL_MODEL=1 node --import tsx tests/spikes/codex-runtime/subagents.ts
+      result: L1/L2 PASS, L3 rejected, native suppression not established
+      evidence: subagents-2026-10-15T06-05-47.016Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/child-tui.ts
+      result: Read-only child observation PASS, controller capability false
+      evidence: child-tui-2026-10-15T06-23-01.582Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/inventory.ts
+      result: Tool inventory and actual spawn probes completed; tested disable flags did not suppress spawning
+      evidence: inventory-2026-10-15T06-12-52.648Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/messaging.ts
+      result: PASS
+      evidence: messaging-fake-2026-10-15T06-08-56.068Z/summary.json
+    - command: NARU_SPIKE_REAL_MODEL=1 node --import tsx tests/spikes/codex-runtime/messaging.ts --real
+      result: PASS
+      evidence: messaging-real-2026-10-15T06-03-24.910Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/durable.ts
+      result: PASS
+      evidence: durable-2026-10-15T06-06-45.276Z/summary.json
+    - command: node --import tsx tests/spikes/codex-runtime/collect.ts
+      result: PASS, version and experimental protocol generated from installed CLI
+    - command: node --import tsx tests/spikes/codex-runtime/classify.ts
+      result: PASS, JSON and TS generator discrepancy explicitly recorded
+    - command: pnpm exec prettier --check <worker-owned changed paths>
+      result: PASS
+    - command: pnpm lint
+      result: PASS, whole repository
+    - command: pnpm typecheck
+      result: PASS, root and all workspace projects
+    - command: pnpm public:scan
+      result: PASS, 583 indexed files and 1330 reachable/index objects, zero findings before validation commit
+    - command: git diff --cached --check
+      result: PASS
+  deferred:
+    - Production integration, lease persistence/fencing and adapter implementation belong to integration.
+    - Strict native suppression requires a verified restriction or explicit product policy; see DECISION_REQUEST.yaml.
+    - Command/file/permissions approval variants were inventoried but not individually exercised; MCP approval and elicitation were exercised.
+    - Independent child PTY control, dynamic MCP credential refresh and all-model entitlement/inference coverage are not established.
+    - Codex to Claude round trip belongs to integration; the stub interface is documented for reuse.
+    - Host hard crash, OS reboot and production instance acceptance were not performed.
+  risks:
+    - Native concurrent turn/start merges input into the active turn; it is not a single-writer mutex.
+    - Crash recovery preserved submitted input but dropped the incomplete assistant delta in the tested case.
+    - Prototype channel identity and writer state are local experiment mechanisms, not production authentication or durable leases.
+    - Empty mcp_servers configuration did not prove inherited MCP removal; do not use it as a disable control.
+    - App Server and remote TUI are experimental and the findings are scoped to installed 0.162.1.
+  safety:
+    - Product code, contracts, shared fixtures, docs/TASKS.md and runtime credentials were not edited.
+    - Only owned spike processes and isolated Host fixtures were controlled; remaining spike endpoint processes were checked absent.
+    - Raw evidence remains outside the repository in the assignment's owner-only logs directory; temporary artifacts were retained.
+    - No push, deployment or production service changes were performed.
+    - Original untracked SOURCE_SPEC.md and ASSIGNMENT.md were preserved outside these commits.
+  changedPaths:
+    - tests/spikes/codex-runtime/
+    - docs/agent-platform-v0/validation/codex-runtime.md
+    - docs/agent-platform-v0/assignments/codex-runtime/PROGRESS.yaml
+    - docs/agent-platform-v0/assignments/codex-runtime/DECISION_REQUEST.yaml
+    - docs/agent-platform-v0/assignments/codex-runtime/HANDOFF.yaml
+  requestedIntegrationOrder:
+    after: []
+    before: []
