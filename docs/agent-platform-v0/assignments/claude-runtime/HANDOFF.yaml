@@ -1,0 +1,42 @@
+protocol: naru-coordination/v0
+type: handoff.ready
+taskId: ap-claude-runtime-spikes
+messageId: ap-claude-runtime-spikes/1
+sender: claude-runtime-worker
+recipient: integration
+baseSha: 4eb5433
+payload:
+  headSha: HEAD of spike/claude-runtime
+  completed:
+    - "V03 resume round trip print/SDK -> TUI -> print/SDK: PASS"
+    - "V03 concurrent writers: FAIL (no native lock; turns lost)"
+    - "V03 live attach: PARTIAL (--bg only; attach clients share input)"
+    - "V03 read-only observation via getSessionMessages while writing: PASS"
+    - "V05 L1 PASS, L2 PASS, L3 FAIL, L4 FAIL, suppression PASS"
+    - "V07 Agent Teams: PARTIAL (interactive in-process only; split pane NOT TESTED)"
+    - "(a) UserPromptSubmit carries verbatim prompt: PASS"
+    - "(b) per-session MCP server env/token: PASS"
+    - "(c) official SDK history APIs: PASS"
+    - "(d) model aliases resolve and run: PASS"
+  tests:
+    - "Repository spike scripts: tests/spikes/claude-runtime/*.ts (real model, gated by env)"
+    - "SDK spike: tests/spikes/claude-runtime/sdk/ (run outside the repo after npm install)"
+    - "Raw evidence outside the repository: experiments/naru-agent-spikes/claude-runtime/logs/"
+  deferred:
+    - "SDK stopTask on a running subagent (inconclusive)"
+    - "Model-mediated SendMessage to background subagents (with V06)"
+    - "Claude SDK protocol process bridged to DurableSession (Claude V11)"
+    - "Agent Teams split pane (tmux absent)"
+  risks:
+    - "Spike sessions left transcripts in the user Claude state directory and a folder-trust entry for the scratch workspace."
+    - "User global Claude hooks fire for any session that loads user settings; managed sessions need a settings-source decision."
+  decisionCandidates:
+    - "Settings sources for Naru-managed Claude sessions (load user settings/hooks or not)."
+    - "D016 change: record UserPromptSubmit.prompt verbatim for managed sessions only (K1-2)."
+  changedPaths:
+    - docs/agent-platform-v0/validation/claude-runtime.md
+    - docs/agent-platform-v0/assignments/claude-runtime/HANDOFF.yaml
+    - tests/spikes/claude-runtime/
+  requestedIntegrationOrder:
+    after: []
+    before: []
