@@ -5,6 +5,7 @@
 - DurableSession / Workstation v0: 완료·동결
 - 활성 program: `private-ingress-v0`; current task는 해당 `TASKS.md`를 따른다.
 - Private Ingress 상태는 `docs/private-ingress-v0/TASKS.md`에서만 관리한다.
+- Agent Platform 상태는 `docs/agent-platform-v0/TASKS.md`에서만 관리한다.
 
 ## 표기
 

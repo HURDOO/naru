@@ -9,6 +9,8 @@
 - Gateway·distribution 변경: `docs/workstation-v0/SPEC.md`,
   `docs/workstation-v0/ARCHITECTURE.md`, `docs/workstation-v0/DECISIONS.md`
 - Private Ingress 변경: `docs/private-ingress-v0/`의 SPEC, ARCHITECTURE, DECISIONS, TASKS
+- Agent Platform(오케스트레이션·agent runtime·Naru MCP) 변경: `docs/agent-platform-v0/`의 SOURCE_SPEC,
+  DECISIONS, TASKS와 작성된 ARCHITECTURE
 
 변경 영역의 관련 절을 읽고, 등록된 Task를 수행할 때는 해당 Task의 선행 조건과 완료 조건을 확인한다.
 오탈자·단순 문서 수정에는 관련 없는 계약 문서 전체를 읽지 않는다. 계약이 충돌하면 충돌 범위와
@@ -55,7 +57,8 @@ format과 내용·참조 일관성을 확인한다. Task나 integration gate에�
 ## Task와 완료
 
 - application 상태는 `docs/TASKS.md`, Private Ingress 상태는
-  `docs/private-ingress-v0/TASKS.md` 한 곳에서 관리한다.
+  `docs/private-ingress-v0/TASKS.md`, Agent Platform 상태는 `docs/agent-platform-v0/TASKS.md` 한 곳에서
+  관리한다.
 - 등록된 Task를 수행할 때 시작 시 대상 Task만 `[-]`, 해당 완료 조건과 검증·integration gate를
   충족한 뒤 `[x]`로 바꾼다. 별도 Task가 없는 작은 유지보수는 요청 범위로 수행하며, 이를 위해
   무관한 Task를 시작하거나 큰 Task 전체를 완료 처리하지 않는다.
