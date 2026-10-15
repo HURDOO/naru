@@ -52,8 +52,9 @@
 
 ### AP-T06. Claude 메시징 검증 (V06, V08 Claude 측)
 
-- [-] `spike/claude-messaging`. 완료 조건: `validation/claude-messaging.md`와 `HANDOFF.yaml`을 commit하고
-  integration이 인수한다.
+- [x] `spike/claude-messaging`. 완료 조건: `validation/claude-messaging.md`와 `HANDOFF.yaml`을 commit하고
+      integration이 인수한다. 2026-10-15에 인수해 `979ad21`로 병합했다. Codex↔Claude 왕복은 Codex 결과가
+      나온 뒤 integration에서 진행한다.
 
 ### AP-T07. OpenCode/OmO 검증 (V12)
 

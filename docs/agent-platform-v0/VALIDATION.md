@@ -14,22 +14,39 @@
 
 ## 요약
 
-| ID  | 항목                                                      | 위치                                   | 상태                                      |
-| --- | --------------------------------------------------------- | -------------------------------------- | ----------------------------------------- |
-| V01 | Codex 공유 App Server와 writer 중재                       | `spike/codex-runtime` (AP-T04)         | NOT TESTED (사용자가 실행 예정)           |
-| V02 | Codex Stop/Release → TUI Resume → GUI 복귀                | `spike/codex-runtime`                  | NOT TESTED                                |
-| V03 | Claude SDK/CLI ↔ TUI 전환                                 | `spike/claude-runtime` (AP-T05)        | 진행 중                                   |
-| V04 | Codex native subagent L1~L4                               | `spike/codex-runtime`                  | NOT TESTED                                |
-| V05 | Claude native subagent L1~L4                              | `spike/claude-runtime`                 | 진행 중                                   |
-| V06 | Claude cross-session messaging 감사와 차단                | `spike/claude-messaging` (AP-T06)      | 진행 중                                   |
-| V07 | Claude Agent Teams                                        | `spike/claude-runtime`                 | 진행 중                                   |
-| V08 | Codex↔Codex, Codex↔Claude 통신                            | 두 messaging spike, 왕복은 integration | 진행 중                                   |
-| V09 | DurableSession API, stream, control, lease와 agent caller | 이 branch                              | **PASS** (Host 계층), PARTIAL (Naru 계층) |
-| V10 | 비밀 입력 보호                                            | 이 branch                              | **PASS** (echo-off 경로), 제한 있음       |
-| V11 | App Server process와 DurableSession 연결                  | `spike/codex-runtime`                  | NOT TESTED                                |
-| V12 | OpenCode/OmO attach, SDK, child trace                     | `spike/opencode` (AP-T07)              | 진행 중                                   |
-| V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                              | PARTIAL (분석)                            |
-| V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                              | PARTIAL (분석)                            |
+| ID  | 항목                                                      | 위치                                                            | 상태                                                                                      |
+| --- | --------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| V01 | Codex 공유 App Server와 writer 중재                       | `spike/codex-runtime` (AP-T04)                                  | NOT TESTED (사용자가 실행 예정)                                                           |
+| V02 | Codex Stop/Release → TUI Resume → GUI 복귀                | `spike/codex-runtime`                                           | NOT TESTED                                                                                |
+| V03 | Claude SDK/CLI ↔ TUI 전환                                 | `spike/claude-runtime` (AP-T05)                                 | 진행 중                                                                                   |
+| V04 | Codex native subagent L1~L4                               | `spike/codex-runtime`                                           | NOT TESTED                                                                                |
+| V05 | Claude native subagent L1~L4                              | `spike/claude-runtime`                                          | 진행 중                                                                                   |
+| V06 | Claude cross-session messaging 감사와 차단                | [claude-messaging](validation/claude-messaging.md)              | **PASS**(로컬: 활성화, 형식, hook 감사·차단, 범위 한정 차단), PARTIAL(hook 없는 TUI 관찰) |
+| V07 | Claude Agent Teams                                        | `spike/claude-runtime`                                          | 진행 중                                                                                   |
+| V08 | Codex↔Codex, Codex↔Claude 통신                            | [claude-messaging](validation/claude-messaging.md), Codex spike | PARTIAL: Claude↔Claude 관리형 MCP는 **PASS**. Codex 측과 왕복은 NOT TESTED                |
+| V09 | DurableSession API, stream, control, lease와 agent caller | 이 branch                                                       | **PASS** (Host 계층), PARTIAL (Naru 계층)                                                 |
+| V10 | 비밀 입력 보호                                            | 이 branch                                                       | **PASS** (echo-off 경로), 제한 있음                                                       |
+| V11 | App Server process와 DurableSession 연결                  | `spike/codex-runtime`                                           | NOT TESTED                                                                                |
+| V12 | OpenCode/OmO attach, SDK, child trace                     | `spike/opencode` (AP-T07)                                       | 진행 중                                                                                   |
+| V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                       | PARTIAL (분석)                                                                            |
+| V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                       | PARTIAL (분석)                                                                            |
+
+## V06, V08 요약 (상세: [validation/claude-messaging.md](validation/claude-messaging.md))
+
+- native cross-session 메시징은 기본으로 켜져 있다. 같은 OS 사용자의 모든 로컬 Claude 세션이 서로를
+  보고 메시지를 보낼 수 있다.
+- 발신자 신원은 스스로 정한 세션 이름과 OS PID뿐이다. 원본 지시 ID를 담을 구조화 필드도 없다. 기본
+  설정에서는 다른 세션의 메시지 하나로 수신 세션이 작업(파일 생성)을 수행했다. 그래서 Naru가 관리하는
+  세션 사이의 통신은 **Naru MCP 경로를 기본**으로 한다.
+- native는 managed 세션에서만 다음 조합으로 차단한다.
+  - inbound는 `crossSessionInbound: "refuse"`로 막는다.
+  - 발신은 PreToolUse hook으로 막되, SubagentStart로 수집한 agent ID만 허용한다.
+  - `SendMessage`를 permission으로 통째로 deny하면 subagent 메시징까지 끊긴다.
+- 관리형 MCP stub은 세션마다 별도 process로 실행돼 세션별 env token으로 발신자를 바인딩할 수 있었다.
+  모델이 끼워 넣은 `from` 인자를 client가 그대로 전달하므로 신원은 반드시 server에서 결정한다
+  (AP-D004, V13과 일치).
+- 아직 열린 항목: TUI 세션에 새 메시지를 알려 turn을 시작시키는 wakeup 경로, Teams teammate 대상의
+  허용 방식(V07), 일반 Claude Pane에도 차단을 적용할지(사용자 결정).
 
 ## V09. DurableSession 제어권과 agent caller
 
