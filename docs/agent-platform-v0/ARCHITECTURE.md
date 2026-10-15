@@ -150,6 +150,19 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - runtime 상태(`GET /runtime`)는 writer, generation, 형태, 대기 중인 승인, 실행 중인 보조 에이전트를
   보여 준다. 보조 에이전트는 관찰만 한다(AP-D014).
 
+### 6.4.1 관리형 Codex 에이전트 (AP-T13)
+
+- Codex Pane(`codex-agent`)의 launcher와 relay가 그대로 실행된다. relay는 runtime channel로 Naru에
+  붙는 runner 역할도 한다.
+  - Naru의 plan으로 thread를 만들거나 resume한다. 이때 Naru MCP를 `config["mcp_servers.naru"]`로,
+    역할 지침을 `developerInstructions`로 넣는다.
+  - 그다음 실제 TUI를 그 thread에 `resume`으로 붙인다.
+- Chat(GUI)과 TUI가 같은 thread를 live로 공유한다(writer gate `live`).
+  - relay는 Naru가 알려 준 writer로 TUI의 대화 쓰기와 승인 응답을 거른다.
+  - TUI가 다른 thread로 resume하려는 요청은 막는다.
+- TUI 직접 입력은 prompt ID와 함께 보고된다. Naru는 그 ID를 idempotency key로 써서 한 번만 기록한다.
+- 역할별 model(검증값 `gpt-6-astra`)은 thread에 명시한다. reasoning은 codex-main profile의 xhigh다.
+
 ### 6.5 공유 프로세스와 사람 hold (AP-T12)
 
 - `start_process`(MCP)는 Core에 project, task, run, agent, 목적, 명령 원문, port, 유지 정책을 먼저

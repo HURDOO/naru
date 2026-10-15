@@ -155,9 +155,18 @@
 
 ### AP-T13. Codex 어댑터
 
-- [-] app-server 기반 Chat channel, GUI↔TUI 전환(V01, V02 결과 방식), native child 추적.
-- 2026-10-15: 사용자가 실행하는 Sol/Astra worker에게 배정했다. branch `feature/ap-t13-codex-adapter`, 과제
-  `assignments/codex-adapter/ASSIGNMENT.md`.
+- [x] app-server 기반 Chat channel, GUI↔TUI 전환(V01, V02 결과 방식), native child 추적.
+- 2026-10-15: 처음에는 사용자가 실행하는 Sol/Astra worker에게 배정했다(branch
+  `feature/ap-t13-codex-adapter`, 과제 `assignments/codex-adapter/ASSIGNMENT.md`). 사용자 요청으로
+  integration이 같은 worktree에서 직접 구현했다.
+  - 관리형 Codex 에이전트
+    - Codex Pane relay가 runner 역할을 맡는다: thread 소유, thread별 MCP 주입, TUI writer gate, 이벤트
+      변환, 이력, 재접속.
+    - supervisor는 live 전략을 쓴다.
+  - 검증: [validation/codex-adapter.md](validation/codex-adapter.md)
+    - 가짜 codex 기반 자동 테스트(기본 suite)가 PASS다.
+    - 실제 CLI와 `gpt-6-astra` xhigh 인수가 PASS다.
+  - probe는 AP-T10에서 한다.
 
 ### AP-T14. Claude 어댑터
 

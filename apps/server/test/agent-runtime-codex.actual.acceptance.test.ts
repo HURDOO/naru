@@ -221,7 +221,7 @@ describe.skipIf(codex === undefined)("actual Codex managed agent (AP-T13)", () =
       const { writer, generation } = current.writer(worker);
       current.sendTurn(worker, text, writer, generation);
       await until(() => current.runtimeState(worker).turnActive, "turn started", 60_000);
-      await until(async () => {
+      await until(() => {
         // Approve whatever the agent asks for (Naru MCP tool calls) as the current writer.
         for (const approval of current.pendingApprovals(worker)) {
           const state = current.writer(worker);
@@ -277,7 +277,7 @@ describe.skipIf(codex === undefined)("actual Codex managed agent (AP-T13)", () =
     expect(
       core
         .getApplicableInstructions(HUMAN, { projectId: project.id, agentSessionId: worker })
-        .some((instruction) => instruction.verbatim.includes("NARUCODEXTWO")),
+        .some((instruction) => instruction.verbatim?.includes("NARUCODEXTWO") === true),
     ).toBe(true);
 
     // Back to the orchestrator; Naru restarts and the conversation continues.
