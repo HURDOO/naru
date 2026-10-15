@@ -141,6 +141,7 @@ readline.createInterface({input:process.stdin}).on("line", line => {
   writeFileSync(
     join(home, "config.toml"),
     [
+      'model = "gpt-6-sol"',
       'model_provider = "fixture"',
       'cli_auth_credentials_store = "file"',
       "[model_providers.fixture]",

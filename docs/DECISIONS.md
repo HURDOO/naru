@@ -323,3 +323,15 @@
   않으므로 Chromium 계열은 사이트 engagement 예산이 부족할 때 기본 알림을 띄울 수 있어 실제
   Android·Samsung Internet에서 확인한다. 7일 보존을 넘긴 전달 기록은 정리 대상에서 빠진다. 기존 알림
   payload와 subscription은 그대로이며 v19는 테이블만 추가한다.
+
+## D025. 기본 Codex Pane은 모델을 강제로 지정하지 않는다
+
+- 상태: 요청 범위 유지보수 구현·격리 검증 및 승인된 운영 적용 완료(2026-10-10)
+- `codex-main`의 시작·재개 인수에서 `--model gpt-5.6-sol`을 제거한다. 이 인수는 개인 Codex 설정보다
+  우선해 모델을 바꿨으므로 모델 선택은 Codex의 설정과 재개 처리에 맡긴다. 같은 인수를 사용하는
+  standalone PTY와 Host integration의 app-server·remote TUI 모두에 적용한다.
+- `codex-quick`의 Luna 지정, 각 프로필의 reasoning effort·service tier와 `workspace-write`·
+  `on-request`는 유지한다. browser는 기본 Pane의 모델명을 단정하지 않고 "기본 모델"로 표시한다.
+- 기존 profile ID·wire schema·DB는 바꾸지 않으므로 consumer migration은 없다. 새 application artifact
+  적용 뒤 새로 시작·재개하는 runtime부터 적용하며 이미 실행 중인 runtime에는 영향을 주지 않는다.
+  운영 적용은 별도 승인된 distribution plan을 따른다.

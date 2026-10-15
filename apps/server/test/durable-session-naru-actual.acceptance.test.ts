@@ -152,7 +152,7 @@ actualDescribe("Naru DurableSession actual PTY continuity acceptance", () => {
       await first.start(codex.id, 120, 40);
       const codexFrames: ServerWsFrame[] = [];
       await first.attach(codex.id, 120, 40, (frame) => codexFrames.push(frame));
-      await waitForTerminalText(codexFrames, "gpt-5.6-sol xhigh");
+      await waitForTerminalText(codexFrames, "Ask Codex");
       await first.write(codex.id, `Reply with exactly ${ACTUAL_TURN_MARKER}. Do not use tools.`);
       await delay(250);
       await first.write(codex.id, "\r");

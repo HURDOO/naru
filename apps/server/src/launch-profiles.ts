@@ -17,7 +17,7 @@ const NARU_PTY_HOSTED_ENVIRONMENT_KEY = "NARU_PTY_HOSTED";
 
 interface CodexProfileDefinition {
   readonly id: CodexLaunchProfile;
-  readonly model: "gpt-5.6-sol" | "gpt-5.6-luna";
+  readonly model?: "gpt-5.6-luna";
   readonly reasoningEffort: "xhigh" | "medium";
   readonly serviceTier: "default";
 }
@@ -25,7 +25,6 @@ interface CodexProfileDefinition {
 const CODEX_PROFILES: Readonly<Record<CodexLaunchProfile, CodexProfileDefinition>> = {
   "codex-main": {
     id: "codex-main",
-    model: "gpt-5.6-sol",
     reasoningEffort: "xhigh",
     serviceTier: "default",
   },
@@ -227,8 +226,6 @@ function codexArguments(
   sessionHookCommand: string | undefined,
 ): string[] {
   const args: string[] = [
-    "--model",
-    profile.model,
     "--config",
     `model_reasoning_effort="${profile.reasoningEffort}"`,
     "--config",
@@ -238,6 +235,7 @@ function codexArguments(
     "--ask-for-approval",
     "on-request",
   ];
+  if (profile.model !== undefined) args.unshift("--model", profile.model);
   if (sessionHookCommand !== undefined) {
     for (const override of codexHookOverrides(sessionHookCommand)) {
       args.push("--config", override);

@@ -106,7 +106,7 @@ describe("LaunchProfileRegistry", () => {
     expect(registry.resolve(fresh).args).not.toContain("--resume");
     expect(registry.resolve(fresh).args).not.toContain("--dangerously-skip-permissions");
   });
-  it("resolves the two approved Codex profiles as structured spawn arguments", () => {
+  it("inherits the main Codex model while resolving approved profiles as structured arguments", () => {
     const runner = vi.fn<CommandRunner>(() => doctorResult());
     let now = 1_000;
     const registry = new LaunchProfileRegistry({
@@ -121,8 +121,6 @@ describe("LaunchProfileRegistry", () => {
     expect(main).toMatchObject({
       file: "/bin/sh",
       args: [
-        "--model",
-        "gpt-5.6-sol",
         "--config",
         'model_reasoning_effort="xhigh"',
         "--config",
@@ -168,6 +166,7 @@ describe("LaunchProfileRegistry", () => {
       context("codex", "codex-main", "33333333-3333-4333-8333-333333333333"),
     );
     expect(resumed.args.slice(-2)).toEqual(["resume", "33333333-3333-4333-8333-333333333333"]);
+    expect(resumed.args).not.toContain("--model");
 
     const identifiedOnly = registry.resolve(
       context("codex", "codex-main", "44444444-4444-4444-8444-444444444444", false),

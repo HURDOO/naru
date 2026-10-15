@@ -17,6 +17,25 @@
 PI-00 public baseline은 완료됐다. 각 작업은 public repository의 별도 worktree에서 lane
 ownership과 integration gate를 지킨다.
 
+## 요청 범위 유지보수: 기본 Codex 모델 강제 지정 제거 (2026-10-10)
+
+- 사용자가 Codex를 시작할 때마다 5.6 Sol로 바뀌는 동작을 제거하도록 요청했다. `codex-main`의
+  `--model gpt-5.6-sol`이 CLI 설정을 덮어쓰는 경로를 확인해 새 시작·재개에서 모델 인수를 제거했다(D025).
+- Quick Codex의 Luna 프로필, reasoning·service tier·권한·hook 설정은 유지한다. profile ID와
+  public schema·DB 변경은 없다. 구현·격리 검증과 사용자 승인 후 운영 적용을 완료했다.
+- 검증: Node 24.19.0에서 launch/relay/integration 26건, 실제 Codex 0.162.1의 계정 인증 없는
+  synthetic model 시작·응답·재접속·재개 1건, core-flow E2E 8건, operations 64건, distribution 86건,
+  production build·격리 smoke 1건, typecheck·변경 파일 lint/format을 통과했다.
+  배포 전 baseline은 receipt 31, healthy, Doctor 29/29였다.
+- 다른 진행 중인 변경을 제외한 committed worktree에서 standalone artifact를 빌드했다. 실제 upgrade
+  plan은 Naru만 재시작하고 Host/Gateway는 기존 release를 유지한다. 차단 check는 없으며 기존 Codex
+  hook trust 경고만 남았다. 사용자가 exact plan과 새 source admission 기록 추가를 승인했다.
+- 운영에 `codex-main-default-20261010-r3`를 적용해 receipt 32와 승인 digest 일치, maintenance
+  completed·recovery not-needed, healthy·Doctor 29/29 및 HTTPS·Host/Gateway/Naru readiness를
+  확인했다. Host/Gateway PID는 유지되고 Naru PID만 바뀌었다. 설치된 Main profile의 model 인수와
+  5.6 Sol pin은 없고 Quick Luna pin은 유지된다. 기존 source admission과 release, 실행 중인 PTY를
+  보존했다. 실제 기기에서 새 Pane의 모델 선택 표시는 사용자 확인 대상으로 남긴다.
+
 ## 요청 범위 유지보수: TUI 출력 선택·복사 (2026-09-29)
 
 - 마우스 추적 TUI에서 desktop 왼쪽 드래그를 로컬 선택으로 처리하고 Ctrl/Cmd+C·V와 연결했다.

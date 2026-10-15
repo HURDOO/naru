@@ -2183,7 +2183,7 @@ function runtimeLabel(pane: Pane, runtimeId: string | null): string {
 }
 
 function profileLabel(profile: string): string {
-  if (profile === "codex-main") return "sol · xhigh";
+  if (profile === "codex-main") return "기본 모델 · xhigh";
   if (profile === "codex-quick") return "luna · medium";
   if (profile === "claude-code") return "Claude Code";
   if (profile === "shell") return "shell";

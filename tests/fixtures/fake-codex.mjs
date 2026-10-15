@@ -24,7 +24,7 @@ const argumentAfter = (flag) => {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
 };
-const model = argumentAfter("--model") ?? "missing-model";
+const model = argumentAfter("--model") ?? "fixture-default-model";
 const reasoning = argumentAfter("--config") ?? "missing-reasoning";
 const resumeIndex = args.indexOf("resume");
 const resumedSessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : undefined;

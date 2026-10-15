@@ -21,6 +21,8 @@ program은 Private Ingress v0다.
 - desktop은 split tree를, 좁은 화면은 같은 tree의 한 Pane projection을 사용한다. viewport 변경으로
   Pane이나 PTY를 재시작하지 않는다.
 - Claude Code는 별도 `claude` Pane에서 실행한다. 기존 Codex Pane과 세션 기록은 유지한다.
+- 기본 Codex Pane(`codex-main`)은 모델을 시작 인수로 지정하지 않고 Codex의 설정과 재개 처리를 따른다.
+  Quick Codex(`codex-quick`)의 Luna 프로필과 각 프로필의 reasoning·service tier·권한 정책은 유지한다.
 - Standalone Naru에서 Claude Pane의 opt-in lifecycle hook은 기존 Pane activity 상태에
   작업 중·입력 필요·완료·실패를 투영한다. 상태는 원문이 아닌 redacted 신호로만 계산하며,
   permission 응답 직후의 정확한 해소 시점이나 동시 요청 수는 보장하지 않는다.

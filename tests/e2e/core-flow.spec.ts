@@ -188,7 +188,7 @@ test("login, manage projects, run a terminal, and restore the selected context",
   const mainCodexSurface = page.getByLabel("Main Codex Codex");
   const quickCodexSurface = page.getByLabel("Quick Codex Codex");
   await expect(mainCodexSurface.locator(liveTerminalRowsSelector)).toContainText(
-    "FAKE_CODEX_READY model=gpt-5.6-sol",
+    "FAKE_CODEX_READY model=fixture-default-model",
   );
   await expect(quickCodexSurface.locator(liveTerminalRowsSelector)).toContainText(
     "FAKE_CODEX_READY model=gpt-5.6-luna",
@@ -438,7 +438,7 @@ test("login, manage projects, run a terminal, and restore the selected context",
   const quickCodexRuntimeLabel = await quickCodexSurface
     .locator(".pane-identity div span")
     .textContent();
-  expect(mainCodexRuntimeLabel).toMatch(/^sol · xhigh · runtime [a-f0-9]{8}$/);
+  expect(mainCodexRuntimeLabel).toMatch(/^기본 모델 · xhigh · runtime [a-f0-9]{8}$/);
   expect(quickCodexRuntimeLabel).toMatch(/^luna · medium · runtime [a-f0-9]{8}$/);
 
   const defaultWorkspace = await readWorkspace(page, "Naru E2E");
