@@ -1,0 +1,42 @@
+protocol: naru-coordination/v0
+type: handoff.ready
+taskId: ap-opencode-spikes
+messageId: ap-opencode-spikes/1
+sender: opencode-worker
+recipient: integration
+baseSha: 4eb5433
+payload:
+  headSha: see-commit
+  completed:
+    - "V12 server API/SSE, permission ask/reply, abort: PASS"
+    - "V12 opencode attach live TUI (replay, API turn rendered live, TUI turn seen by API): PASS"
+    - "V12 native writer arbitration: FAIL (overlapping prompts accepted and folded; Naru gate needed)"
+    - "V12 OmO child trace L1/L2/L3: PASS; L4 PTY: none; child history deleted by OmO after 10 min"
+    - "V12 plugin hooks (event, chat.message incl. TUI input, tool.execute.before deny, shell.env, plugin tool sessionID): PASS"
+    - "V12 per-session MCP identity: FAIL (instance-level process, _meta has only progressToken)"
+    - "V12 history via official API: PARTIAL (top-level survives restart; children deleted; crash leaves stale running part)"
+  tests:
+    - "tests/spikes/opencode/*.ts run manually against isolated spike servers (real model openai/gpt-5.6-luna-fast)"
+    - "prettier check, pnpm lint, pnpm typecheck, pnpm public:scan"
+  deferred:
+    - "OmO team_* messaging trace (NOT TESTED)"
+    - "OpenCode server/TUI under an isolated DurableSession Host (NOT TESTED)"
+    - "Naru write-gate proxy for GUI/TUI single writer (design only)"
+    - "per-prompt tools map to scope MCP tools per session (NOT TESTED)"
+  risks:
+    - "OmO deletes completed subagent sessions (sync fixed 10 min; background taskCleanupDelayMs >= 60s) - conflicts with K1-7 runtime-owned history"
+    - "OmO-injected background notifications are role=user messages without a synthetic flag"
+    - "plugin hook order: OmO runs before config-injected plugins and can short-circuit them"
+    - "all OpenCode servers share one data dir; Naru-created sessions appear in the /omo/ UI project list"
+    - "kill -9 of the server orphans running bash tool processes"
+    - "fresh offline pnpm install left node-pty spawn-helper without exec bit (posix_spawnp failed); fixed only in this worktree's node_modules"
+  decisionRequests:
+    - "OmO child history deletion vs K1-7 (live-only / extend background delay / export at completion / Naru-managed child)"
+    - "allow shared OpenCode data dir visibility of Naru sessions in /omo/ UI"
+  changedPaths:
+    - docs/agent-platform-v0/validation/opencode.md
+    - docs/agent-platform-v0/assignments/opencode/HANDOFF.yaml
+    - tests/spikes/opencode/
+  requestedIntegrationOrder:
+    after: []
+    before: []
