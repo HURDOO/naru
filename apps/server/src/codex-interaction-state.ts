@@ -164,6 +164,9 @@ export class CodexInteractionState {
       const thread = isRecord(result.thread) ? result.thread : null;
       const sessionId = validSessionId(thread?.id);
       if (thread?.ephemeral === true) return;
+      // `/subagents` in the TUI resumes a native subagent thread to show it. That is a view of a
+      // child, not a new user thread: keep the Pane bound to the user's thread instead of failing.
+      if (typeof thread?.parentThreadId === "string" && thread.parentThreadId !== "") return;
       if (sessionId === null || thread?.cwd !== this.cwd || thread?.parentThreadId !== null) {
         throw new Error("Codex thread identity could not be verified.");
       }
