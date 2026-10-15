@@ -1,0 +1,27 @@
+protocol: naru-coordination/v0
+type: decision.request
+taskId: ap-codex-runtime-spikes
+messageId: ap-codex-runtime-spikes/2
+sender: codex-runtime-worker
+recipient: integration
+baseSha: 4eb5433
+payload:
+  blockingScope: strict-native-subagent-suppression-and-interactive-child-policy
+  canContinue: true
+  recommendation: >-
+    Keep native subagents for explicitly labelled L2 observation. Use managed workers for direct
+    child input or independent PTY requirements. Do not claim hard native suppression from the
+    tested feature flags; resolve that policy before enabling a mode that requires enforcement.
+  alternatives:
+    - Investigate a documented, reproducible runtime restriction before requiring strict suppression.
+    - Keep L2 native observation with managed delegation guidance, explicitly recording that guidance is not enforcement.
+  reason: >-
+    Real child threads exposed canAcceptDirectInput=false and rejected turn/start and turn/steer.
+    Synthetic actual spawn calls still succeeded with multi_agent=false, multi_agent_v2=false,
+    or code_mode_host=false. A one-child attempt also succeeded with max_threads=1/max_depth=1;
+    this does not establish whether higher concurrency or depth limits are enforced.
+  evidence:
+    - docs/agent-platform-v0/validation/codex-runtime.md
+    - tests/spikes/codex-runtime/subagents.ts
+    - tests/spikes/codex-runtime/inventory.ts
+  independentWork: V01, V02, V08, V11 and handoff preparation completed independently.
