@@ -135,7 +135,18 @@
 
 ### AP-T14. Claude 어댑터
 
-- [ ] SDK 또는 CLI 기반 Chat channel(V03 결과 방식), GUI↔TUI 전환, native child와 메시징 정책.
+- [-] SDK 또는 CLI 기반 Chat channel(V03 결과 방식), GUI↔TUI 전환, native child와 메시징 정책.
+- 진행(2026-10-15):
+  - 완료:
+    - `ClaudeSdkPort`: 사용자 설치 SDK를 동적으로 불러오는 loader와 신뢰 검사(AP-D012)
+    - `ClaudeRunner`: 이벤트 매핑, 승인 callback, interrupt, 공식 이력 pagination, 원문 미보관. fake port 단위
+      테스트 4개.
+    - 실제 SDK 0.3.296과 CLI 2.1.296 인수(`tests/spikes/agent-platform/claude-runner-sdk.ts`)가 모두
+      통과했다: Naru MCP 호출, tool·파일 승인, 생성 중 interrupt, 이력, 같은 대화 resume.
+  - 남음:
+    - runner 프로세스와 Naru 채널, `AgentRuntimeAdapter` 연결(writer gate, wakeups)
+    - Host PTY 실행 통합
+    - TUI 전환(stop 후 resume)
 
 ### AP-T15. OpenCode 어댑터
 
