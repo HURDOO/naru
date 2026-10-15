@@ -30,6 +30,11 @@ export function query({ prompt, options }) {
       if (text.includes("APPROVE")) {
         await options.canUseTool("Write", {}, { signal: new AbortController().signal });
       }
+      if (text.includes("CHILD")) {
+        yield { type: "system", subtype: "task_started", task_id: "child-1" };
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        yield { type: "system", subtype: "task_notification", task_id: "child-1", status: "completed" };
+      }
       const slow = /SLOW(\\d+)/.exec(text);
       if (slow) await new Promise((resolve) => setTimeout(resolve, Number(slow[1])));
       yield interrupted
@@ -137,8 +142,13 @@ describe("managed agent supervisor with a real runner process", () => {
     expect(() => first.supervisor.sendTurn(fixture.worker, "hi", "gui", 1)).toThrow(
       SupervisorError,
     );
-    first.supervisor.sendTurn(fixture.worker, "first turn", "orchestrator", 1);
+    first.supervisor.sendTurn(fixture.worker, "first turn with a CHILD", "orchestrator", 1);
+    await until(
+      () => first.supervisor.runtimeState(fixture.worker).children.length === 1,
+      "subagent observed",
+    );
     await until(() => fixture.status(first.core) === "idle", "first turn ends");
+    expect(first.supervisor.runtimeState(fixture.worker).children).toEqual([]);
 
     // A person takes over the conversation in Chat; the orchestrator's generation is fenced.
     first.core.setHumanHold(fixture.ctx(HUMAN), {

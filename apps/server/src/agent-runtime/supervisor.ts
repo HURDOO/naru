@@ -73,6 +73,8 @@ interface ManagedRuntime {
   lastSeq: number;
   gate: WriterGateState;
   readonly approvals: Map<string, string>;
+  /** Native subagents by runtime ref → start time (observation only). */
+  readonly children: Map<string, string>;
   readonly history: Map<string, (page: HistoryPage | null) => void>;
   disconnectTimer: NodeJS.Timeout | null;
   resumeTimer: NodeJS.Timeout | null;
@@ -143,6 +145,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       turnActive: runtime.gate.turnActive,
       launchMode: agent.launchMode,
       pendingApprovals: this.pendingApprovals(agentSessionId),
+      children: [...runtime.children].map(([childRef, startedAt]) => ({ childRef, startedAt })),
     };
   }
 
@@ -272,6 +275,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       // A fresh runner process numbers its events from 1 and has nothing in flight.
       runtime.lastSeq = 0;
       runtime.approvals.clear();
+      runtime.children.clear();
       runtime.gate = { ...runtime.gate, turnActive: false };
       let plan: RunnerPlan;
       try {
@@ -393,6 +397,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       case "exited":
         runtime.connection = null;
         runtime.approvals.clear();
+        runtime.children.clear();
         this.#core.endRuntimeLaunch(SYSTEM, agentSessionId);
         // Stopped for a writer switch: the conversation continues in the other form.
         if (runtime.gate.phase !== "active") return;
@@ -403,7 +408,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         });
         return;
       case "child-started":
+        if (runtime.children.size < 64) runtime.children.set(event.childRef, new Date().toISOString());
+        return;
       case "child-ended":
+        runtime.children.delete(event.childRef);
+        return;
       case "user-prompt":
         return;
     }
@@ -522,6 +531,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         // restarts (AP-D005). Claude's runner and TUI are separate processes (AP-D011).
         gate: initialWriterGate("stop-resume", this.#initialWriter(agentSessionId), runtimeSessionRef),
         approvals: new Map(),
+        children: new Map(),
         history: new Map(),
         disconnectTimer: null,
         resumeTimer: null,

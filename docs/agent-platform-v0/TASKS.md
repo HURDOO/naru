@@ -135,7 +135,7 @@
 
 ### AP-T14. Claude 어댑터
 
-- [-] SDK 또는 CLI 기반 Chat channel(V03 결과 방식), GUI↔TUI 전환, native child와 메시징 정책.
+- [x] SDK 또는 CLI 기반 Chat channel(V03 결과 방식), GUI↔TUI 전환, native child와 메시징 정책.
 - 진행(2026-10-15):
   - 완료:
     - `ClaudeSdkPort`: 사용자 설치 SDK를 동적으로 불러오는 loader와 신뢰 검사(AP-D012)
@@ -161,9 +161,14 @@
       Chat turn, interrupt, 승인, 개입과 해제.
     - 검증: [validation/agent-runtime-host.md](validation/agent-runtime-host.md)
       - 격리 Host 통합 테스트와 실제 서버 진입점 boot spike가 모두 PASS다.
-      - 이 과정에서 세 결함을 고쳤다: 새 runner 순번, 대기 runner 종료, Node realpath와 socket stat.
-  - 남음:
-    - 실제 SDK runner와 실제 Claude TUI로 Host PTY 전환 인수
+      - 이 과정에서 네 결함을 고쳤다: 새 runner 순번, 대기 runner 종료, resume 확인, Node realpath와
+        socket stat.
+    - 실제 인수 PASS: 실제 SDK runner와 실제 Claude TUI 사이의 Host PTY 전환, 왕복 뒤 대화 기억 유지
+    - native child: runner 형태에서 실행 중인 보조 에이전트를 runtime 상태에 관찰 전용(L1/L2, AP-D014)으로
+      노출한다. TUI 형태에서는 사람이 TUI에서 직접 다루므로 Naru 관찰은 Pane 화면에 맡긴다.
+    - 메시징 정책: bridge hook(AP-D015)을 runner와 TUI 두 형태 모두에 넣는다.
+  - 남음(다른 Task에서 처리): main orchestrator 실행 위치(AP-T16), 재시작 probe(AP-T10), 처음 trust하는
+    디렉터리의 TUI 전환 확인(사람 테스트)
 
 ### AP-T15. OpenCode 어댑터
 

@@ -30,9 +30,13 @@ function fakeSdk(options: { crashAfterTurns?: number } = {}) {
       const canUseTool = queryOptions.canUseTool as ClaudeCanUseTool;
       const sessionId = (queryOptions.resume as string | undefined) ?? "session-fixture-1";
       async function* run(): AsyncGenerator<ClaudeSdkMessage> {
-        yield { type: "system", subtype: "init", session_id: sessionId };
+        // Like the real SDK: a resumed conversation is named before any prompt, `init` after.
+        if (queryOptions.resume !== undefined) {
+          yield { type: "system", subtype: "commands_changed", session_id: sessionId };
+        }
         let turns = 0;
         for await (const message of prompt) {
+          if (turns === 0) yield { type: "system", subtype: "init", session_id: sessionId };
           const text = message.message.content;
           if (text.includes("CHILD")) {
             yield { type: "system", subtype: "task_started", task_id: "suggest", ambient: true };
@@ -127,6 +131,21 @@ describe("Claude SDK runner", () => {
     expect(events.at(-1)).toEqual({ type: "exited", reason: "stopped" });
   });
 
+  it("confirms a resumed conversation before any turn (switching back from the TUI)", async () => {
+    const { port } = fakeSdk();
+    const runner = new ClaudeRunner(port, { ...PLAN, resumeRef: "session-resumed" });
+    const events: AgentRuntimeEvent[] = [];
+    runner.onEvent((event) => events.push(event));
+    runner.start();
+    await until(events, (event) => event.type === "conversation-ready");
+    expect(events).toEqual([{ type: "conversation-ready", runtimeSessionRef: "session-resumed" }]);
+    runner.sendTurn("first after resume");
+    await until(events, (event) => event.type === "turn-ended");
+    // `init` with the same conversation is not reported twice.
+    expect(events.filter((event) => event.type === "conversation-ready")).toHaveLength(1);
+    await runner.stop();
+  });
+
   it("holds a tool call for a Naru approval and reports failures and interrupts honestly", async () => {
     const { port } = fakeSdk();
     const runner = new ClaudeRunner(port, { ...PLAN, resumeRef: "session-resumed" });
@@ -177,6 +196,8 @@ describe("Claude SDK runner", () => {
     const events: AgentRuntimeEvent[] = [];
     runner.onEvent((event) => events.push(event));
     runner.start();
+    // A new conversation is named with the first prompt.
+    runner.sendTurn("history");
     await until(events, (event) => event.type === "conversation-ready");
     const first = await runner.readHistory(null);
     expect(first.items).toHaveLength(50);

@@ -45,6 +45,8 @@ export class ClaudeRunner {
   #wakeInput: (() => void) | null = null;
   #query: ClaudeSdkQuery | null = null;
   #sessionId: string | null;
+  /** Set once the SDK itself named the conversation (a resume ref alone is not a confirmation). */
+  #conversationConfirmed = false;
   #inputClosed = false;
   #turnsInFlight = 0;
   #interruptRequested = false;
@@ -185,14 +187,19 @@ export class ClaudeRunner {
   }
 
   #observe(message: ClaudeSdkMessage): void {
-    if (message.type === "system" && message.subtype === "init") {
-      const sessionId = typeof message.session_id === "string" ? message.session_id : null;
-      if (sessionId !== null) {
-        this.#sessionId = sessionId;
-        this.#emit({ type: "conversation-ready", runtimeSessionRef: sessionId });
-      }
-      return;
+    // Any system message names the conversation. A resumed one does so before the first prompt
+    // (`session_title_changed`, `commands_changed`); `init` only comes with the first prompt. A
+    // runner switched back from the TUI must confirm its resume without sending a turn.
+    if (
+      message.type === "system" &&
+      typeof message.session_id === "string" &&
+      (!this.#conversationConfirmed || message.session_id !== this.#sessionId)
+    ) {
+      this.#conversationConfirmed = true;
+      this.#sessionId = message.session_id;
+      this.#emit({ type: "conversation-ready", runtimeSessionRef: message.session_id });
     }
+    if (message.type === "system" && message.subtype === "init") return;
     if (message.type === "result") {
       if (this.#turnsInFlight === 0) return;
       this.#turnsInFlight -= 1;

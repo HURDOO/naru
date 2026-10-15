@@ -309,6 +309,7 @@ class FakeRuntime implements AgentRuntimeControl {
       turnActive: false,
       launchMode: this.writer === "tui" ? "tui" : "runner",
       pendingApprovals: [],
+      children: [],
     };
   }
   assertWriter(_id: string, writer: WriterKind, generation: number): void {

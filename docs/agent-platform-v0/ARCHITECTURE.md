@@ -143,3 +143,5 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
     현재 것일 때만 받는다. Chat turn은 그 에이전트에 대한 사람의 원문 지시로 기록한다(AP-D002).
 - orchestrator 역할의 에이전트는 대화가 준비되면 wakeup 대상에 등록된다(AP-T16에서 지시 형식을
   완성한다).
+- runtime 상태(`GET /runtime`)는 writer, generation, 형태, 대기 중인 승인, 실행 중인 보조 에이전트를
+  보여 준다. 보조 에이전트는 관찰만 한다(AP-D014).

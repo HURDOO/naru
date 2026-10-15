@@ -11,7 +11,15 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -51,14 +59,32 @@ const record = (step: string, outcome: "PASS" | "FAIL", detail = ""): void => {
   results[step] = detail === "" ? outcome : `${outcome} (${detail})`;
 };
 
+/**
+ * SPIKE_REAL=1 uses the user-installed SDK (SPIKE_SDK) and Claude CLI (SPIKE_CLAUDE) with the
+ * user's own Claude login, in a project Claude already trusts (SPIKE_PROJECT_ROOT/SPIKE_PROJECT), so
+ * no trust prompt appears and no keys are sent. Nothing from the conversation is printed or kept.
+ */
+const real = process.env.SPIKE_REAL === "1";
+const required = (name: string): string => {
+  const value = process.env[name];
+  if (value === undefined || value === "") throw new Error(`${name} is required for SPIKE_REAL`);
+  return value;
+};
+
 if (process.versions.node.split(".")[0] !== "24") throw new Error("Node 24 required");
 const fixture = createHostFixture();
 const node = process.execPath;
-const projectRoot = fixture.config.roots[0]!.path;
-const sdkEntry = join(fixture.root, "fake-sdk.mjs");
-writeFileSync(
-  sdkEntry,
-  `export function query({ prompt, options }) {
+const projectRoot = real
+  ? realpathSync(required("SPIKE_PROJECT_ROOT"))
+  : fixture.config.roots[0]!.path;
+const projectName = real ? required("SPIKE_PROJECT") : "sample";
+const home = real ? required("HOME") : fixture.root;
+const turnTimeoutMs = real ? 180_000 : 60_000;
+const sdkEntry = real ? required("SPIKE_SDK") : join(fixture.root, "fake-sdk.mjs");
+if (!real)
+  writeFileSync(
+    sdkEntry,
+    `export function query({ prompt, options }) {
   async function* run() {
     yield { type: "system", subtype: "init", session_id: options.resume ?? "${SESSION}" };
     for await (const message of prompt) yield { type: "result", subtype: "success", is_error: false };
@@ -71,12 +97,13 @@ export async function getSessionMessages(sessionId) {
   return [{ type: "user", session_id: sessionId }, { type: "assistant", session_id: sessionId }];
 }
 `,
-  { mode: 0o600 },
-);
-const claude = join(fixture.root, "claude");
-writeFileSync(
-  claude,
-  `#!${node}
+    { mode: 0o600 },
+  );
+const claude = real ? required("SPIKE_CLAUDE") : join(fixture.root, "claude");
+if (!real)
+  writeFileSync(
+    claude,
+    `#!${node}
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 if (args[0] === "auth") { process.stdout.write('{"loggedIn":true}'); process.exit(0); }
@@ -91,14 +118,16 @@ for (const matcher of settings.hooks.SessionStart ?? []) for (const hook of matc
 setInterval(() => {}, 1000);
 process.on("SIGTERM", () => process.exit(0));
 `,
-  { mode: 0o700 },
-);
-chmodSync(claude, 0o700);
+    { mode: 0o700 },
+  );
+if (!real) chmodSync(claude, 0o700);
+const executablePath = `${dirname(claude)}:${dirname(node)}:/usr/bin:/bin`;
 
 const integrationSocket = join(fixture.root, "ci.sock");
 const host = await startDurableSessionHost(
   DurableSessionHostConfigSchema.parse({
     ...fixture.config,
+    roots: [{ rootId: "projects", path: projectRoot }],
     profiles: [
       {
         profileId: "claude-code",
@@ -113,8 +142,11 @@ const host = await startDurableSessionHost(
         envPolicyId: "safe-env",
         inherit: [],
         values: {
-          PATH: `${dirname(node)}:/usr/bin:/bin`,
-          HOME: fixture.root,
+          PATH: executablePath,
+          HOME: home,
+          ...(real
+            ? { USER: required("USER"), LOGNAME: required("USER"), LANG: "en_US.UTF-8" }
+            : {}),
           NARU_CODEX_INTEGRATION_SOCKET: integrationSocket,
           NARU_CLAUDE_HOOK_RUNNER: fromSource
             ? join(repositoryRoot, "node_modules/.bin/tsx")
@@ -188,8 +220,10 @@ async function startNaru(): Promise<void> {
   server = spawn(node, bin("index"), {
     cwd: repositoryRoot,
     env: {
-      PATH: `${dirname(node)}:/usr/bin:/bin`,
-      HOME: fixture.root,
+      PATH: executablePath,
+      HOME: home,
+      // Claude's keychain login is looked up by user name.
+      ...(real ? { USER: required("USER"), LOGNAME: required("USER") } : {}),
       NARU_ENV_FILE: environmentFile,
     },
     stdio: ["ignore", logDescriptor, logDescriptor],
@@ -219,9 +253,9 @@ try {
   record("server boots with the agent runtime", "PASS");
   let api = await connect();
   const projects = await api<{ id: string; path: string }[]>("GET", "/api/projects");
-  let project = projects.find((candidate) => candidate.path === join(projectRoot, "sample"));
+  let project = projects.find((candidate) => candidate.path === join(projectRoot, projectName));
   project ??= (await api<{ id: string }>("POST", "/api/projects", {
-    path: join(projectRoot, "sample"),
+    path: join(projectRoot, projectName),
     name: "boot",
   })) as { id: string; path: string };
   const agent = await api<{ id: string }>("POST", "/api/agent/agents", {
@@ -239,10 +273,22 @@ try {
         `/api/agent/projects/${project.id}`,
       )
     ).agents.find((candidate) => candidate.id === agent.id)!;
+  // The real SDK reports its conversation only once the first prompt arrives.
   await until(
-    async () => (await runtime()).connected && (await session()).status === "active",
+    async () => (await runtime()).connected && (real || (await session()).status === "active"),
     "runner",
   );
+  /** Assistant messages in the runtime's own history that contain `token` (never printed). */
+  const assistantMentions = async (token: string): Promise<number> => {
+    const page = await api<{ items: { type?: string }[] }>(
+      "GET",
+      `/api/agent/agents/${agent.id}/history`,
+    );
+    return page.items.filter(
+      (item) => item.type === "assistant" && JSON.stringify(item).includes(token),
+    ).length;
+  };
+  const TOKEN = "NARUREALONE";
   const workspace = await api<{ layout: unknown; panes: { id: string; launchProfile: string }[] }>(
     "GET",
     `/api/projects/${project.id}/workspace`,
@@ -264,15 +310,23 @@ try {
   });
   const chat = await runtime();
   await api("POST", `/api/agent/agents/${agent.id}/turns`, {
-    text: "boot spike turn",
+    text: real
+      ? `Reply with exactly the word ${TOKEN} and nothing else. Do not use tools.`
+      : "turn",
     generation: chat.generation,
     idempotencyKey: randomUUID(),
   });
-  await until(async () => (await session()).status === "idle", "chat turn");
+  if (real) {
+    await until(async () => (await assistantMentions(TOKEN)) >= 1, "real chat turn", turnTimeoutMs);
+    await until(async () => (await session()).status === "idle", "real turn ends", turnTimeoutMs);
+  } else {
+    await until(async () => (await session()).status === "idle", "chat turn");
+  }
   const history = await api<{ items: unknown[] }>("GET", `/api/agent/agents/${agent.id}/history`);
   record(
     "Chat takeover, turn and history",
-    chat.writer === "gui" && history.items.length === 2 ? "PASS" : "FAIL",
+    chat.writer === "gui" && history.items.length >= 2 ? "PASS" : "FAIL",
+    `${history.items.length} history items`,
   );
 
   await api("POST", `/api/agent/agents/${agent.id}/hold`, {
@@ -298,6 +352,28 @@ try {
       : "FAIL",
     `generations ${chat.generation}→${tui.generation}→${back.generation}`,
   );
+
+  if (real) {
+    // The resumed runner still holds the conversation from before the TUI round trip.
+    await api("POST", `/api/agent/agents/${agent.id}/hold`, {
+      held: true,
+      surface: "chat",
+      idempotencyKey: randomUUID(),
+    });
+    const recall = await runtime();
+    await api("POST", `/api/agent/agents/${agent.id}/turns`, {
+      text: "Repeat the single word you replied with in your first answer. Reply with only that word.",
+      generation: recall.generation,
+      idempotencyKey: randomUUID(),
+    });
+    await until(async () => (await assistantMentions(TOKEN)) >= 2, "recall turn", turnTimeoutMs);
+    await until(async () => (await session()).status === "idle", "recall ends", turnTimeoutMs);
+    await api("POST", `/api/agent/agents/${agent.id}/hold`, {
+      held: false,
+      idempotencyKey: randomUUID(),
+    });
+    record("conversation remembered after runner → TUI → runner", "PASS");
+  }
 
   const runnersBefore = runnerProcesses();
   await stopNaru();

@@ -465,6 +465,10 @@ export const AgentRuntimeStateSchema = z.strictObject({
   pendingApprovals: z
     .array(z.strictObject({ requestId: z.string().min(1).max(200), kind: z.string().max(40) }))
     .max(64),
+  /** Native subagents running now: observed only (L1/L2, AP-D014), never controlled from Naru. */
+  children: z
+    .array(z.strictObject({ childRef: z.string().min(1).max(200), startedAt: Timestamp }))
+    .max(64),
 });
 export type AgentRuntimeState = z.infer<typeof AgentRuntimeStateSchema>;
 
