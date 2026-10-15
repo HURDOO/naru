@@ -58,8 +58,8 @@
 
 ### AP-T07. OpenCode/OmO 검증 (V12)
 
-- [-] `spike/opencode`. 완료 조건: `validation/opencode.md`와 `HANDOFF.yaml`을 commit하고 integration이
-  인수한다.
+- [x] `spike/opencode`. 완료 조건: `validation/opencode.md`와 `HANDOFF.yaml`을 commit하고 integration이
+      인수한다. 2026-10-15에 인수해 병합했다.
 
 ### AP-T08. Gate 1
 

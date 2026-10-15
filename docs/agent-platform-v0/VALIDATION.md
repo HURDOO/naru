@@ -14,22 +14,22 @@
 
 ## 요약
 
-| ID  | 항목                                                      | 위치                                                            | 상태                                                                                           |
-| --- | --------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| V01 | Codex 공유 App Server와 writer 중재                       | `spike/codex-runtime` (AP-T04)                                  | NOT TESTED (사용자가 실행 예정)                                                                |
-| V02 | Codex Stop/Release → TUI Resume → GUI 복귀                | `spike/codex-runtime`                                           | NOT TESTED                                                                                     |
-| V03 | Claude SDK/CLI ↔ TUI 전환                                 | [claude-runtime](validation/claude-runtime.md)                  | **PASS**(stop → resume 왕복), **FAIL**(동시 writer 보호 없음), PARTIAL(live attach는 `--bg`만) |
-| V04 | Codex native subagent L1~L4                               | `spike/codex-runtime`                                           | NOT TESTED                                                                                     |
-| V05 | Claude native subagent L1~L4                              | [claude-runtime](validation/claude-runtime.md)                  | **PASS** L1, L2와 억제. **FAIL** L3, L4                                                        |
-| V06 | Claude cross-session messaging 감사와 차단                | [claude-messaging](validation/claude-messaging.md)              | **PASS**(로컬: 활성화, 형식, hook 감사·차단, 범위 한정 차단), PARTIAL(hook 없는 TUI 관찰)      |
-| V07 | Claude Agent Teams                                        | [claude-runtime](validation/claude-runtime.md)                  | PARTIAL(interactive TUI에서만, 실험적)                                                         |
-| V08 | Codex↔Codex, Codex↔Claude 통신                            | [claude-messaging](validation/claude-messaging.md), Codex spike | PARTIAL: Claude↔Claude 관리형 MCP는 **PASS**. Codex 측과 왕복은 NOT TESTED                     |
-| V09 | DurableSession API, stream, control, lease와 agent caller | 이 branch                                                       | **PASS** (Host 계층), PARTIAL (Naru 계층)                                                      |
-| V10 | 비밀 입력 보호                                            | 이 branch                                                       | **PASS** (echo-off 경로), 제한 있음                                                            |
-| V11 | App Server process와 DurableSession 연결                  | `spike/codex-runtime`                                           | NOT TESTED                                                                                     |
-| V12 | OpenCode/OmO attach, SDK, child trace                     | `spike/opencode` (AP-T07)                                       | 진행 중                                                                                        |
-| V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                       | PARTIAL (분석)                                                                                 |
-| V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                       | PARTIAL (분석)                                                                                 |
+| ID  | 항목                                                      | 위치                                                            | 상태                                                                                                                                                      |
+| --- | --------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V01 | Codex 공유 App Server와 writer 중재                       | `spike/codex-runtime` (AP-T04)                                  | NOT TESTED (사용자가 실행 예정)                                                                                                                           |
+| V02 | Codex Stop/Release → TUI Resume → GUI 복귀                | `spike/codex-runtime`                                           | NOT TESTED                                                                                                                                                |
+| V03 | Claude SDK/CLI ↔ TUI 전환                                 | [claude-runtime](validation/claude-runtime.md)                  | **PASS**(stop → resume 왕복), **FAIL**(동시 writer 보호 없음), PARTIAL(live attach는 `--bg`만)                                                            |
+| V04 | Codex native subagent L1~L4                               | `spike/codex-runtime`                                           | NOT TESTED                                                                                                                                                |
+| V05 | Claude native subagent L1~L4                              | [claude-runtime](validation/claude-runtime.md)                  | **PASS** L1, L2와 억제. **FAIL** L3, L4                                                                                                                   |
+| V06 | Claude cross-session messaging 감사와 차단                | [claude-messaging](validation/claude-messaging.md)              | **PASS**(로컬: 활성화, 형식, hook 감사·차단, 범위 한정 차단), PARTIAL(hook 없는 TUI 관찰)                                                                 |
+| V07 | Claude Agent Teams                                        | [claude-runtime](validation/claude-runtime.md)                  | PARTIAL(interactive TUI에서만, 실험적)                                                                                                                    |
+| V08 | Codex↔Codex, Codex↔Claude 통신                            | [claude-messaging](validation/claude-messaging.md), Codex spike | PARTIAL: Claude↔Claude 관리형 MCP는 **PASS**. Codex 측과 왕복은 NOT TESTED                                                                                |
+| V09 | DurableSession API, stream, control, lease와 agent caller | 이 branch                                                       | **PASS** (Host 계층), PARTIAL (Naru 계층)                                                                                                                 |
+| V10 | 비밀 입력 보호                                            | 이 branch                                                       | **PASS** (echo-off 경로), 제한 있음                                                                                                                       |
+| V11 | App Server process와 DurableSession 연결                  | `spike/codex-runtime`                                           | NOT TESTED                                                                                                                                                |
+| V12 | OpenCode/OmO attach, SDK, child trace                     | [opencode](validation/opencode.md)                              | **PASS**(serve API·SSE, permission, abort, TUI live attach, child L1~L3, plugin hook), **FAIL**(동시 write 중재, child 이력 보존), PARTIAL(MCP 세션 신원) |
+| V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                       | PARTIAL (분석)                                                                                                                                            |
+| V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                       | PARTIAL (분석)                                                                                                                                            |
 
 ## V03, V05, V07 요약 (상세: [validation/claude-runtime.md](validation/claude-runtime.md))
 
@@ -63,6 +63,26 @@
 - **model**: 사용자 settings 없이 실행하면 기본 model이 `claude-haiku-5-5`가 됐다. 그래서 관리형
   세션은 역할별 model을 명시한다. 확인된 ID는 `claude-opus-5-5`, `claude-fable-5-1`,
   `claude-sonnet-5-5`, `claude-haiku-5-5`다.
+
+## V12 요약 (상세: [validation/opencode.md](validation/opencode.md))
+
+- **live attach**
+  - `opencode serve`의 공식 HTTP API와 SSE, 그리고 `opencode attach` TUI가 같은 세션을 실시간으로
+    공유한다. API turn은 TUI에 0.3~0.5초 안에 렌더된다.
+  - 세 런타임 중 GUI와 TUI의 **진짜 live attach**가 공식 경로로 되는 것은 OpenCode뿐이다.
+- **동시 write 중재 없음**: busy 중에 들어온 prompt가 진행 중인 loop에 합쳐진다. Naru proxy가 write
+  gate를 가져야 한다(AP-D005 세 번째 계층).
+- **OmO child**
+  - L1~L3(parentID, live 스트림, 개별 abort, 직접 prompt)이 공식 API로 된다. 독립 PTY는 없다.
+  - **완료된 subagent 세션을 OmO가 10분 뒤 삭제한다.** 그래서 AP-D002의 "런타임이 이력을 보관한다"는
+    전제가 OmO child에는 성립하지 않는다(사용자 결정 필요).
+- **신원**: MCP는 directory 단위 process라 세션별 신원을 줄 수 없다. 대신 plugin tool의
+  `ToolContext.sessionID`와 `shell.env`가 세션별로 동작한다. 그래서 Naru 연동은 plugin
+  (`OPENCODE_CONFIG_CONTENT` 주입)으로 하는 것을 권고한다.
+- **복구**: server를 강제 종료하면 bash tool process가 orphan으로 남고, 이력의 tool part는
+  `running`으로 영구히 남는다. Naru reconcile은 이 상태를 `unknown`이나 `interrupted`로 분류해야 한다.
+- **권고**: 운영 `/omo/`는 그대로 둔다. 관리형 agent에는 Naru가 별도 `opencode serve`를 띄운다. 모든
+  server가 같은 data dir을 쓰므로 관리형 세션이 `/omo/` 목록에도 보인다(사용자 결정 필요).
 
 ## V06, V08 요약 (상세: [validation/claude-messaging.md](validation/claude-messaging.md))
 
