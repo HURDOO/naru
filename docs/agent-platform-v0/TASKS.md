@@ -344,4 +344,11 @@
       DB)와 운영 Gateway reconfigure intent를 만들고 read-only plan을 돌렸다.
     - 운영 reconfigure plan은 Gateway와 Naru만 재시작한다. Host는 재시작하지 않는다.
     - 설치 plan은 Claude Agent SDK가 아직 설치되지 않아 blocked다(사용자 설치, AP-D012).
-    - 남은 것: 사용자의 SDK 설치, 새 instance 설치와 운영 reconfigure 승인
+    - 2026-10-16 사용자 지시로 배포했다.
+      - Claude Agent SDK 0.3.300을 사용자 전역 npm에 설치했다(optional binary 없이).
+      - 테스트 instance(build `5c0def2`)를 설치했다. doctor는 25/25 healthy이고, Agent Platform이 켜졌으며
+        v20 table이 생겼다.
+      - 운영 Gateway에 `/naru-next` route를 더했다(reconfigure). Gateway와 Naru만 재시작했고 Host는 그대로
+        였다. 운영 doctor는 29/29 healthy다. 인증 없는 요청은 다른 앱처럼 Gateway가 401로 막는다.
+    - 남은 것: 사용자가 며칠 쓰며 확인(MANUAL_TESTS), 고칠 것 반영(테스트 instance는 Naru만 upgrade), 그 뒤
+      main merge와 운영 반영 승인
