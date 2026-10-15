@@ -176,6 +176,9 @@ export const RunSchema = z.strictObject({
 });
 export type Run = z.infer<typeof RunSchema>;
 
+export const AgentLaunchModeSchema = z.enum(["runner", "tui"]);
+export type AgentLaunchMode = z.infer<typeof AgentLaunchModeSchema>;
+
 export const AgentSessionSchema = z.strictObject({
   id: Id,
   projectId: Id.nullable(),
@@ -189,6 +192,10 @@ export const AgentSessionSchema = z.strictObject({
   conversationWriter: ConversationWriterSchema,
   humanHoldSince: Timestamp.nullable(),
   status: AgentSessionStatusSchema,
+  /** Naru Pane whose Host PTY runs this agent (runner console or TUI); null until launched. */
+  paneId: Id.nullable(),
+  /** `runner`: Chat through the SDK runner. `tui`: the runtime's own TUI in the Pane (AP-D011). */
+  launchMode: AgentLaunchModeSchema,
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -319,6 +326,7 @@ export const AgentPlatformErrorCodeSchema = z.enum([
   "AGENT_INVALID_REFERENCE",
   "AGENT_INVALID_STATE",
   "AGENT_DEPENDENCY_CYCLE",
+  "AGENT_RUNTIME_UNAVAILABLE",
 ]);
 export type AgentPlatformErrorCode = z.infer<typeof AgentPlatformErrorCodeSchema>;
 

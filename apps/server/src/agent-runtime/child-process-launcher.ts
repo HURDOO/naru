@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { NARU_RUNTIME_SOCKET_ENV, NARU_RUNTIME_TOKEN_ENV } from "./channel-protocol.js";
-import type { RunnerLauncher } from "./supervisor.js";
+import type { RunnerEnvironment, RunnerLauncher } from "./supervisor.js";
 
 /**
  * Development/test launcher: runs the runner as a detached child process so it outlives a Naru
@@ -11,7 +10,7 @@ export class ChildProcessRunnerLauncher implements RunnerLauncher {
 
   constructor(
     private readonly options: {
-      readonly socketPath: () => string;
+      readonly runnerEnvironment: (agentSessionId: string) => RunnerEnvironment;
       readonly command: string;
       readonly args: readonly string[];
       readonly environment: NodeJS.ProcessEnv;
@@ -19,24 +18,29 @@ export class ChildProcessRunnerLauncher implements RunnerLauncher {
     },
   ) {}
 
-  launch(input: { readonly agentSessionId: string; readonly token: string }): Promise<void> {
+  launch(agentSessionId: string): Promise<void> {
     const child = spawn(this.options.command, [...this.options.args], {
-      env: {
-        ...this.options.environment,
-        [NARU_RUNTIME_SOCKET_ENV]: this.options.socketPath(),
-        [NARU_RUNTIME_TOKEN_ENV]: input.token,
-      },
+      env: { ...this.options.environment, ...this.options.runnerEnvironment(agentSessionId) },
       stdio: ["ignore", "pipe", "inherit"],
       detached: true,
     });
     child.stdout?.setEncoding("utf8").on("data", (data: string) => {
       for (const line of data.split("\n")) {
-        if (line.trim() !== "") this.options.onOutput?.(input.agentSessionId, line);
+        if (line.trim() !== "") this.options.onOutput?.(agentSessionId, line);
       }
     });
-    child.on("exit", () => this.#children.delete(input.agentSessionId));
-    this.#children.set(input.agentSessionId, child);
+    child.on("exit", () => this.#children.delete(agentSessionId));
+    this.#children.set(agentSessionId, child);
     return Promise.resolve();
+  }
+
+  stop(agentSessionId: string): Promise<void> {
+    const child = this.#children.get(agentSessionId);
+    if (child === undefined || child.exitCode !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      child.once("exit", () => resolve());
+      child.kill("SIGTERM");
+    });
   }
 
   kill(agentSessionId: string): void {

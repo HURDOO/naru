@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { NaruCodexIntegrationPort } from "./port.js";
 import type { NaruClaudeIntegrationPort } from "../claude/port.js";
-import { CodexIntegrationRequestSchema, type CodexIntegrationReply } from "./protocol.js";
+import {
+  CodexIntegrationRequestSchema,
+  LaunchEnvironmentSchema,
+  type CodexIntegrationReply,
+} from "./protocol.js";
 import {
   closeServer,
   isNodeError,
@@ -156,11 +160,19 @@ export class CodexIntegrationServer {
           return { version: 1, ok: false, code: "UNAVAILABLE" };
         }
         const plan = this.options.claudeIntegration.launch(parsed.data.bootstrap);
+        const environment =
+          plan.environment === undefined
+            ? undefined
+            : LaunchEnvironmentSchema.parse(plan.environment);
         return {
           version: 1,
           ok: true,
           type: "claude-launch",
-          plan: { executable: plan.executable, args: [...plan.args] },
+          plan: {
+            executable: plan.executable,
+            args: [...plan.args],
+            ...(environment === undefined ? {} : { environment }),
+          },
         };
       }
       if (parsed.data.type === "claude-hook") {

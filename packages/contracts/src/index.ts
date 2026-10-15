@@ -59,6 +59,7 @@ export const ErrorCodeSchema = z.enum([
   "AGENT_INVALID_REFERENCE",
   "AGENT_INVALID_STATE",
   "AGENT_DEPENDENCY_CYCLE",
+  "AGENT_RUNTIME_UNAVAILABLE",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 

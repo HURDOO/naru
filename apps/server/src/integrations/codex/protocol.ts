@@ -43,6 +43,14 @@ const LaunchPlanSchema = z.strictObject({
   executable: z.string().min(1).max(4_096),
   args: z.array(z.string().max(16_384)).max(256),
 });
+/** Only the managed agent runner channel may be added to a launched process (AP-T14). */
+export const LaunchEnvironmentSchema = z.strictObject({
+  NARU_RUNTIME_SOCKET: z.string().min(1).max(4_096),
+  NARU_RUNTIME_TOKEN: z.string().min(32).max(128),
+});
+const ClaudeLaunchPlanSchema = LaunchPlanSchema.extend({
+  environment: LaunchEnvironmentSchema.optional(),
+});
 
 export const CodexIntegrationReplySchema = z.union([
   z.strictObject({
@@ -65,7 +73,7 @@ export const CodexIntegrationReplySchema = z.union([
     version: z.literal(1),
     ok: z.literal(true),
     type: z.literal("claude-launch"),
-    plan: LaunchPlanSchema,
+    plan: ClaudeLaunchPlanSchema,
   }),
   z.strictObject({
     version: z.literal(1),

@@ -839,6 +839,8 @@ export class AgentPlatformCore {
           conversationWriter: input.conversationWriter,
           humanHoldSince: null,
           status: "starting",
+          paneId: null,
+          launchMode: "runner",
           createdAt: now,
           updatedAt: now,
         };
@@ -944,13 +946,18 @@ export class AgentPlatformCore {
     this.#store.deleteRuntimeLaunch(agentSessionId);
   }
 
-  /** Runtime-reported state (system actor): conversation identity and liveness, no content. */
+  /**
+   * Runtime-reported state (system actor): conversation identity, liveness, which form hosts it
+   * and who writes to it. No content.
+   */
   updateAgentRuntimeState(
     actor: Actor,
     input: {
       readonly agentSessionId: string;
       readonly runtimeSessionRef?: string;
       readonly status?: AgentSession["status"];
+      readonly launchMode?: AgentSession["launchMode"];
+      readonly conversationWriter?: AgentSession["conversationWriter"];
     },
   ): AgentSession {
     if (actor.kind !== "system") {
@@ -966,9 +973,16 @@ export class AgentPlatformCore {
         ...session,
         runtimeSessionRef: input.runtimeSessionRef ?? session.runtimeSessionRef,
         status: input.status ?? session.status,
+        launchMode: input.launchMode ?? session.launchMode,
+        conversationWriter: input.conversationWriter ?? session.conversationWriter,
         updatedAt: this.#timestamp(),
       };
-      if (next.runtimeSessionRef === session.runtimeSessionRef && next.status === session.status) {
+      if (
+        next.runtimeSessionRef === session.runtimeSessionRef &&
+        next.status === session.status &&
+        next.launchMode === session.launchMode &&
+        next.conversationWriter === session.conversationWriter
+      ) {
         return session;
       }
       this.#store.updateAgentSession(next);
@@ -980,7 +994,12 @@ export class AgentPlatformCore {
           actor,
           subjectId: session.id,
           correlationId: null,
-          data: { status: next.status, previousStatus: session.status },
+          data: {
+            status: next.status,
+            previousStatus: session.status,
+            launchMode: next.launchMode,
+            conversationWriter: next.conversationWriter,
+          },
           createdAt: next.updatedAt,
         }),
       );

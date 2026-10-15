@@ -8,8 +8,9 @@
  * Strategies:
  * - `live`: GUI and TUI share one backend (Codex app-server relay, OpenCode serve+attach). A switch
  *   waits for the turn to end (or interrupts it on request) and then moves the writer.
- * - `stop-resume`: separate processes (Claude SDK runner vs TUI). A switch also stops the current
- *   backend and resumes the same conversation in the target; failure rolls back.
+ * - `stop-resume`: separate processes (Claude SDK runner vs TUI). A switch between them also stops
+ *   the current backend and resumes the same conversation in the target; failure rolls back.
+ *   Orchestrator and GUI share the runner, so a switch between those two is handed over live.
  */
 export type WriterKind = "orchestrator" | "gui" | "tui" | "none";
 export type SwitchStrategy = "live" | "stop-resume";
@@ -154,8 +155,19 @@ export function reduceWriterGate(state: WriterGateState, command: WriterCommand)
 }
 
 function afterQuiesced(state: WriterGateState): WriterTransition {
-  if (state.strategy === "live") return handOver(state);
+  if (state.strategy === "live" || sameBackend(state.writer, state.target!)) {
+    return handOver(state);
+  }
   return accept({ ...state, phase: "stopping" }, [{ type: "stop-backend", writer: state.writer }]);
+}
+
+/** Which process serves a writer under `stop-resume`: the TUI, or the runner for everyone else. */
+export function writerBackend(writer: WriterKind): "tui" | "runner" {
+  return writer === "tui" ? "tui" : "runner";
+}
+
+function sameBackend(left: WriterKind, right: WriterKind): boolean {
+  return writerBackend(left) === writerBackend(right);
 }
 
 function handOver(state: WriterGateState): WriterTransition {

@@ -69,6 +69,27 @@ export function appendPane(root: LayoutNode | null, newPaneId: string): LayoutNo
   return splitPane(root, targetPaneId, newPaneId, "horizontal");
 }
 
+/**
+ * Adds a Pane the user did not open (e.g. a Naru-managed agent) without changing what they see:
+ * it splits the shallowest Pane so depth grows logarithmically, and starts collapsed unless the
+ * workspace is empty.
+ */
+export function insertCollapsedPane(root: LayoutNode | null, newPaneId: string): LayoutNode {
+  if (root === null) return paneNode(newPaneId);
+  const queue: LayoutNode[] = [root];
+  let target: PaneNode | undefined;
+  while (target === undefined) {
+    const node = queue.shift()!;
+    if (node.type === "pane") target = node;
+    else queue.push(node.first, node.second);
+  }
+  return setPaneCollapsed(
+    splitPane(root, target.paneId, newPaneId, "horizontal"),
+    newPaneId,
+    true,
+  );
+}
+
 export function removePane(root: LayoutNode | null, paneId: string): LayoutNode | null {
   if (root === null) {
     return null;

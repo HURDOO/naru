@@ -395,8 +395,9 @@ export class AgentPlatformStore {
       .prepare(
         `INSERT INTO agent_sessions (
            id, project_id, role, runtime, runtime_session_ref, parent_agent_session_id, native,
-           observation, conversation_writer, human_hold_since, status, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           observation, conversation_writer, human_hold_since, status, pane_id, launch_mode,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -410,6 +411,8 @@ export class AgentPlatformStore {
         session.conversationWriter,
         session.humanHoldSince,
         session.status,
+        session.paneId,
+        session.launchMode,
         session.createdAt,
         session.updatedAt,
       );
@@ -455,11 +458,25 @@ export class AgentPlatformStore {
     return rows.map(agentSessionFromRow);
   }
 
+  bindAgentPane(agentSessionId: string, paneId: string, updatedAt: string): void {
+    this.#database
+      .prepare("UPDATE agent_sessions SET pane_id = ?, updated_at = ? WHERE id = ?")
+      .run(paneId, updatedAt, agentSessionId);
+  }
+
+  findAgentSessionByPane(paneId: string): AgentSession | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_sessions WHERE pane_id = ?")
+      .get(paneId) as AgentSessionRow | undefined;
+    return row === undefined ? null : agentSessionFromRow(row);
+  }
+
   updateAgentSession(session: AgentSession): void {
     this.#database
       .prepare(
         `UPDATE agent_sessions SET runtime_session_ref = ?, observation = ?,
-           conversation_writer = ?, human_hold_since = ?, status = ?, updated_at = ?
+           conversation_writer = ?, human_hold_since = ?, status = ?, launch_mode = ?,
+           updated_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -468,6 +485,7 @@ export class AgentPlatformStore {
         session.conversationWriter,
         session.humanHoldSince,
         session.status,
+        session.launchMode,
         session.updatedAt,
         session.id,
       );
@@ -1032,6 +1050,8 @@ interface AgentSessionRow {
   conversation_writer: AgentSession["conversationWriter"];
   human_hold_since: string | null;
   status: AgentSession["status"];
+  pane_id: string | null;
+  launch_mode: AgentSession["launchMode"];
   created_at: string;
   updated_at: string;
 }
@@ -1049,6 +1069,8 @@ function agentSessionFromRow(row: AgentSessionRow): AgentSession {
     conversationWriter: row.conversation_writer,
     humanHoldSince: row.human_hold_since,
     status: row.status,
+    paneId: row.pane_id,
+    launchMode: row.launch_mode,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

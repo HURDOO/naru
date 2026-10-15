@@ -3,6 +3,7 @@ import { LAYOUT_SCHEMA_VERSION, type LayoutNode, type SplitNode } from "@naru/co
 import {
   appendPane,
   collapsedPaneIds,
+  insertCollapsedPane,
   isPaneCollapsed,
   migrateLayout,
   removePane,
@@ -151,5 +152,27 @@ describe("layout domain", () => {
     expect(visibleLayout(collapsed)).toEqual({ type: "pane", paneId: paneB, collapsed: false });
     expect(setPaneCollapsed(collapsed, paneA, false)).toEqual(original);
     expect(() => setPaneCollapsed(collapsed, paneB, true)).toThrow(/last visible/i);
+  });
+
+  it("adds unrequested panes collapsed, keeping the visible layout and a shallow tree", () => {
+    expect(insertCollapsedPane(null, paneA)).toEqual({
+      type: "pane",
+      paneId: paneA,
+      collapsed: false,
+    });
+    const visible = splitPane(appendPane(null, paneA), paneA, paneB, "vertical", splitA);
+    let layout = insertCollapsedPane(visible, paneC);
+    expect(visibleLayout(layout)).toEqual(visibleLayout(visible));
+    expect(collapsedPaneIds(layout)).toEqual([paneC]);
+
+    const ids = Array.from(
+      { length: 40 },
+      (_, index) => `${String(index).padStart(8, "0")}-0000-4000-8000-000000000000`,
+    );
+    for (const id of ids) layout = insertCollapsedPane(layout, id);
+    expect(() =>
+      validateLayout(layout, new Set([paneA, paneB, paneC, ...ids])),
+    ).not.toThrow();
+    expect(visiblePaneIds(layout)).toEqual([paneA, paneB]);
   });
 });

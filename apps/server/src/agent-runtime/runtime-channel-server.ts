@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   closeServer,
   listenOnSocket,
@@ -35,6 +35,14 @@ export interface RuntimeChannelHandlers {
   disconnected(connection: RunnerConnection): void;
 }
 
+/** Socket path for a data directory; short enough for the platform's UDS path limit. */
+export function runtimeChannelSocketPath(dataDirectory: string): string {
+  const preferred = join(dataDirectory, "runtime", SOCKET_FILENAME);
+  if (Buffer.byteLength(preferred) <= SOCKET_PATH_MAX_BYTES) return preferred;
+  const digest = createHash("sha256").update(dataDirectory).digest("hex").slice(0, 16);
+  return join("/private/tmp", `naru-runtime-${digest}`, SOCKET_FILENAME);
+}
+
 /** Owner-only UDS where Host-owned runners reach Naru. No network listener. */
 export class RuntimeChannelServer {
   readonly #handlers: RuntimeChannelHandlers;
@@ -46,15 +54,8 @@ export class RuntimeChannelServer {
 
   constructor(dataDirectory: string, handlers: RuntimeChannelHandlers) {
     this.#handlers = handlers;
-    const preferred = join(dataDirectory, "runtime", SOCKET_FILENAME);
-    this.#directory =
-      Buffer.byteLength(preferred) <= SOCKET_PATH_MAX_BYTES
-        ? join(dataDirectory, "runtime")
-        : join(
-            "/private/tmp",
-            `naru-runtime-${createHash("sha256").update(dataDirectory).digest("hex").slice(0, 16)}`,
-          );
-    this.#socketPath = join(this.#directory, SOCKET_FILENAME);
+    this.#socketPath = runtimeChannelSocketPath(dataDirectory);
+    this.#directory = dirname(this.#socketPath);
   }
 
   get socketPath(): string {

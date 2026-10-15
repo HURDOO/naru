@@ -30,11 +30,18 @@ import {
   PUSH_INACTIVITY_DELAY_MINUTES,
 } from "@naru/contracts";
 import type { DurableSessionErrorCode, SessionView } from "@naru/contracts/durable-session/v0";
-import { migrateLayout, removePane, splitPane, validateLayout } from "@naru/domain";
+import {
+  insertCollapsedPane,
+  migrateLayout,
+  removePane,
+  splitPane,
+  validateLayout,
+} from "@naru/domain";
 import { AppError } from "./errors.js";
 import { createPreMigrationBackupIfNeeded } from "./database-backup.js";
 import { AGENT_PLATFORM_MIGRATION } from "./agent-platform/migration.js";
 import { AgentPlatformStore } from "./agent-platform/store.js";
+import { CLAUDE_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
 
 interface ProjectRow {
   id: string;
@@ -1464,6 +1471,46 @@ export class NaruRepository {
            WHERE project_id = ? AND version = ?`,
           )
           .run(JSON.stringify(layout), pane.id, now, projectId, input.workspaceVersion);
+        assertWorkspaceUpdated(result.changes);
+        return pane;
+      })
+      .immediate();
+  }
+
+  /**
+   * The Pane whose Host PTY runs a Naru-managed agent. It joins the workspace collapsed, so the
+   * user sees it in Naru without the layout they arranged changing. Reuses a bound Pane.
+   */
+  createAgentPane(agentSessionId: string, title: string): Pane {
+    return this.#database
+      .transaction(() => {
+        const agent = this.agentPlatform.getAgentSession(agentSessionId);
+        if (agent === null || agent.projectId === null) {
+          throw new AppError("AGENT_NOT_FOUND", 404, "프로젝트에 속한 에이전트를 찾을 수 없습니다.");
+        }
+        if (agent.paneId !== null) {
+          const bound = this.getPaneContext(agent.paneId)?.pane;
+          if (bound !== undefined) return bound;
+        }
+        const workspace = this.getWorkspace(agent.projectId);
+        const now = new Date().toISOString();
+        const pane = createPaneRecord(agent.projectId, "claude", title, CLAUDE_AGENT_LAUNCH_PROFILE, now);
+        const layout = insertCollapsedPane(workspace.layout, pane.id);
+        const activePaneId = workspace.activePaneId ?? pane.id;
+        assertWorkspaceState(
+          layout,
+          activePaneId,
+          new Set([...workspace.panes.map((existing) => existing.id), pane.id]),
+        );
+        this.#insertPane(pane);
+        this.agentPlatform.bindAgentPane(agentSessionId, pane.id, now);
+        const result = this.#database
+          .prepare(
+            `UPDATE workspaces
+           SET version = version + 1, layout_json = ?, active_pane_id = ?, updated_at = ?
+           WHERE project_id = ? AND version = ?`,
+          )
+          .run(JSON.stringify(layout), activePaneId, now, agent.projectId, workspace.version);
         assertWorkspaceUpdated(result.changes);
         return pane;
       })

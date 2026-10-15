@@ -35,10 +35,17 @@ interface ClaudeRuntimeState extends VerifiedClaudeRuntime {
   pendingEvents: ClaudeActivityEvent[];
 }
 
+export interface ClaudeLaunchPlan {
+  readonly executable: string;
+  readonly args: readonly string[];
+  /** Additions for the launched process (managed agent runner channel only). */
+  readonly environment?: Readonly<Record<string, string>>;
+}
+
 export interface NaruClaudeIntegrationPort {
   descriptor(bindingId: string): IntegrationDescriptor;
   preflight(paneId: string): void;
-  launch(bootstrap: string): { readonly executable: string; readonly args: readonly string[] };
+  launch(bootstrap: string): ClaudeLaunchPlan;
   acceptHook(bootstrap: string, event: ClaudeActivityEvent): boolean;
   bindRuntime(paneId: string, session: SessionView): void;
   markStopping(paneId: string, runtimeId: string): void;
@@ -73,10 +80,12 @@ export class NaruClaudeIntegration implements NaruClaudeIntegrationPort {
   }
 
   preflight(paneId: string): void {
-    this.launchProfiles.resolve(this.#requireClaudePane(paneId));
+    const context = this.#requireClaudePane(paneId);
+    if (this.launchProfiles.preflight === undefined) this.launchProfiles.resolve(context);
+    else this.launchProfiles.preflight(context);
   }
 
-  launch(bootstrap: string): { readonly executable: string; readonly args: readonly string[] } {
+  launch(bootstrap: string): ClaudeLaunchPlan {
     const verified = this.#verify(bootstrap, "launch");
     const command = this.launchProfiles.resolve(this.#requireClaudePane(verified.paneId));
     if (
@@ -97,7 +106,13 @@ export class NaruClaudeIntegration implements NaruClaudeIntegrationPort {
         ? current
         : this.#state(verified, false);
     this.#runtimes.set(verified.paneId, state);
-    return { executable: command.file, args: [...command.args] };
+    return {
+      executable: command.file,
+      args: [...command.args],
+      ...(command.launcherEnvironment === undefined
+        ? {}
+        : { environment: { ...command.launcherEnvironment } }),
+    };
   }
 
   acceptHook(bootstrap: string, event: ClaudeActivityEvent): boolean {

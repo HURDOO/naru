@@ -27,6 +27,8 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
         status TEXT NOT NULL CHECK (
           status IN ('starting', 'active', 'idle', 'stopped', 'failed', 'unknown')
         ),
+        pane_id TEXT UNIQUE REFERENCES panes(id) ON DELETE SET NULL,
+        launch_mode TEXT NOT NULL DEFAULT 'runner' CHECK (launch_mode IN ('runner', 'tui')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         CHECK (role = 'main-orchestrator' OR project_id IS NOT NULL)

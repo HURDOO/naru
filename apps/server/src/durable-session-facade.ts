@@ -18,6 +18,7 @@ import type { NaruRepository, PaneSessionLink, PaneSessionOperation } from "./da
 import { AppError } from "./errors.js";
 import type { NaruCodexIntegrationPort } from "./integrations/codex/port.js";
 import type { NaruClaudeIntegrationPort } from "./integrations/claude/port.js";
+import { CLAUDE_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
 import type {
   NaruSessionFacade,
   SessionActivityListener,
@@ -449,7 +450,7 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
         idempotencyKey: operationKey,
         command: this.#command(
           context.projectPath,
-          context.pane.launchProfile,
+          hostProfileId(context.pane.launchProfile),
           columns,
           rows,
           pending.integrationBindingId,
@@ -1038,6 +1039,14 @@ function requireOperationKey(link: PaneSessionLink, operation: PaneSessionOperat
     throw new AppError("REQUEST_INVALID", 409, "Pane Session 전환 상태가 올바르지 않습니다.");
   }
   return link.operationKey;
+}
+
+/**
+ * A managed Claude agent Pane runs under the Host's `claude-code` profile and integration policy;
+ * Naru decides what the launcher starts (runner or TUI), so Host configuration is unchanged.
+ */
+function hostProfileId(launchProfile: string): string {
+  return launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE ? "claude-code" : launchProfile;
 }
 
 function requireSessionId(link: PaneSessionLink): string {

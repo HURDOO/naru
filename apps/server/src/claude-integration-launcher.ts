@@ -22,6 +22,8 @@ if (bootstrap === undefined || socketPath === undefined) {
       ...process.env,
       NARU_PTY_HOSTED: "1",
       NARU_CLAUDE_HOOK_BOOTSTRAP: bootstrap,
+      // A managed agent runner's private channel (AP-T14); the reply schema admits nothing else.
+      ...reply.plan.environment,
     };
     delete environment[DURABLE_SESSION_INTEGRATION_BOOTSTRAP_ENV];
     process.exitCode = await runClaude(reply.plan.executable, reply.plan.args, environment);

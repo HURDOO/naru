@@ -6,7 +6,10 @@ import type { Actor } from "@naru/contracts/naru-agent/v1";
 import { AgentPlatformCore } from "../src/agent-platform/core.js";
 import type { RunnerPlan } from "../src/agent-runtime/channel-protocol.js";
 import { ChildProcessRunnerLauncher } from "../src/agent-runtime/child-process-launcher.js";
-import { RuntimeChannelServer } from "../src/agent-runtime/runtime-channel-server.js";
+import {
+  RuntimeChannelServer,
+  runtimeChannelSocketPath,
+} from "../src/agent-runtime/runtime-channel-server.js";
 import { ManagedAgentSupervisor, SupervisorError } from "../src/agent-runtime/supervisor.js";
 import { NaruRepository } from "../src/database.js";
 
@@ -89,8 +92,9 @@ function setup() {
     environment: {},
   });
   const consoleLines: string[] = [];
+  let current: ManagedAgentSupervisor | null = null;
   const launcher = new ChildProcessRunnerLauncher({
-    socketPath: () => join(directory, "runtime", "agent-runtime.sock"),
+    runnerEnvironment: (agentSessionId) => current!.runnerEnvironment(agentSessionId),
     command: process.execPath,
     args: ["--import", "tsx", join(process.cwd(), "apps/server/src/claude-agent-runner.ts")],
     environment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: directory },
@@ -104,10 +108,13 @@ function setup() {
     const supervisor = new ManagedAgentSupervisor({
       core,
       launcher,
-      planFor: (_agentSessionId, resumeRef) => plan(resumeRef),
+      channelSocketPath: runtimeChannelSocketPath(directory),
+      planFor: (agent) => plan(agent.runtimeSessionRef),
     });
+    current = supervisor;
     const server = new RuntimeChannelServer(directory, supervisor);
     await server.start();
+    cleanups.push(() => supervisor.close());
     return { core, supervisor, server };
   }
   const status = (core: AgentPlatformCore) => core.getAgentSession(HUMAN, worker).status;
@@ -139,7 +146,7 @@ describe("managed agent supervisor with a real runner process", () => {
       held: true,
       reason: "takeover",
     });
-    first.supervisor.switchWriter(fixture.worker, "gui", false);
+    await first.supervisor.switchWriter(fixture.worker, "gui", false);
     expect(() => first.supervisor.sendTurn(fixture.worker, "late", "orchestrator", 1)).toThrow(
       /Another writer/,
     );
@@ -172,7 +179,7 @@ describe("managed agent supervisor with a real runner process", () => {
       held: false,
       reason: "release",
     });
-    const released = second.supervisor.switchWriter(fixture.worker, "orchestrator", false);
+    const released = await second.supervisor.switchWriter(fixture.worker, "orchestrator", false);
     second.supervisor.sendTurn(
       fixture.worker,
       "after release",

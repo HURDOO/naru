@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentEvent } from "@naru/contracts/naru-agent/v1";
+import type { AgentEvent, AgentSession } from "@naru/contracts/naru-agent/v1";
 import type { AgentPlatformCore } from "../agent-platform/core.js";
 import type {
   OrchestratorInvoker,
@@ -7,21 +7,50 @@ import type {
   WakeupBatch,
 } from "../agent-platform/wakeups.js";
 import type { HistoryPage } from "./adapter.js";
-import type { RunnerMessage, RunnerPlan } from "./channel-protocol.js";
+import {
+  NARU_RUNTIME_SOCKET_ENV,
+  NARU_RUNTIME_TOKEN_ENV,
+  type RunnerMessage,
+  type RunnerPlan,
+} from "./channel-protocol.js";
 import type { RunnerConnection, RuntimeChannelHandlers } from "./runtime-channel-server.js";
 import {
   authorizeWrite,
   initialWriterGate,
   reduceWriterGate,
+  writerBackend,
+  type WriterCommand,
+  type WriterEffect,
   type WriterGateState,
   type WriterKind,
 } from "./writer-gate.js";
 
 const SYSTEM = { kind: "system" } as const;
 const HISTORY_TIMEOUT_MS = 15_000;
+/** Longer than the runner's longest reconnect backoff (5 s). */
+const DISCONNECT_GRACE_MS = 15_000;
+/** How long a switched-to form may take to report the resumed conversation. */
+const RESUME_TIMEOUT_MS = 60_000;
 
+/**
+ * Hosts an agent's runtime process, e.g. in its Host PTY Pane. The agent's recorded launch mode
+ * decides which form (`runner` or `tui`) a launch starts.
+ */
 export interface RunnerLauncher {
-  launch(input: { readonly agentSessionId: string; readonly token: string }): Promise<void>;
+  launch(agentSessionId: string): Promise<void>;
+  /** Ends the hosting process and resolves once it has exited. */
+  stop(agentSessionId: string): Promise<void>;
+  /**
+   * TUI form: resolves with the conversation the freshly started TUI reported (SessionStart), or
+   * null when it exits or stays silent past the timeout.
+   */
+  awaitTuiSession?(agentSessionId: string, timeoutMs: number): Promise<string | null>;
+}
+
+/** The private channel values a runner process needs; the token is single-use per launch. */
+export interface RunnerEnvironment {
+  readonly [NARU_RUNTIME_SOCKET_ENV]: string;
+  readonly [NARU_RUNTIME_TOKEN_ENV]: string;
 }
 
 export class SupervisorError extends Error {
@@ -41,6 +70,10 @@ interface ManagedRuntime {
   gate: WriterGateState;
   readonly approvals: Map<string, string>;
   readonly history: Map<string, (page: HistoryPage | null) => void>;
+  disconnectTimer: NodeJS.Timeout | null;
+  resumeTimer: NodeJS.Timeout | null;
+  /** Resolved when a writer switch settles (active or recovery-required). */
+  readonly switchWaiters: (() => void)[];
 }
 
 /**
@@ -52,18 +85,22 @@ interface ManagedRuntime {
 export class ManagedAgentSupervisor implements RuntimeChannelHandlers, OrchestratorInvoker {
   readonly #core: AgentPlatformCore;
   readonly #launcher: RunnerLauncher;
-  readonly #planFor: (agentSessionId: string, resumeRef: string | null) => RunnerPlan;
+  readonly #channelSocketPath: string;
+  readonly #planFor: (agent: AgentSession) => RunnerPlan;
   readonly #runtimes = new Map<string, ManagedRuntime>();
-  readonly #plans = new Map<string, RunnerPlan>();
   #wakeups: OrchestratorWakeups | null = null;
 
   constructor(options: {
     readonly core: AgentPlatformCore;
     readonly launcher: RunnerLauncher;
-    readonly planFor: (agentSessionId: string, resumeRef: string | null) => RunnerPlan;
+    /** Where runners reach Naru (`RuntimeChannelServer.socketPath`). */
+    readonly channelSocketPath: string;
+    /** Built when a fresh runner asks for it, so it always resumes the recorded conversation. */
+    readonly planFor: (agent: AgentSession) => RunnerPlan;
   }) {
     this.#core = options.core;
     this.#launcher = options.launcher;
+    this.#channelSocketPath = options.channelSocketPath;
     this.#planFor = options.planFor;
   }
 
@@ -71,16 +108,22 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     this.#wakeups = wakeups;
   }
 
-  async launch(
-    agentSessionId: string,
-    options: { readonly resumeRef?: string } = {},
-  ): Promise<void> {
-    const plan = this.#planFor(agentSessionId, options.resumeRef ?? null);
-    const token = this.#core.issueRuntimeLaunchToken(SYSTEM, agentSessionId);
-    this.#plans.set(agentSessionId, plan);
-    this.#runtime(agentSessionId, options.resumeRef ?? null);
+  async launch(agentSessionId: string): Promise<void> {
+    const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
+    this.#runtime(agentSessionId, agent.runtimeSessionRef);
     this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "starting" });
-    await this.#launcher.launch({ agentSessionId, token });
+    await this.#launcher.launch(agentSessionId);
+  }
+
+  /**
+   * Issued when the hosting process actually starts. A new token replaces the previous launch's,
+   * so a stale runner (an older PTY generation) can no longer reconnect.
+   */
+  runnerEnvironment(agentSessionId: string): RunnerEnvironment {
+    return {
+      [NARU_RUNTIME_SOCKET_ENV]: this.#channelSocketPath,
+      [NARU_RUNTIME_TOKEN_ENV]: this.#core.issueRuntimeLaunchToken(SYSTEM, agentSessionId),
+    };
   }
 
   writer(agentSessionId: string): { readonly writer: WriterKind; readonly generation: number } {
@@ -88,15 +131,23 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     return { writer: gate.writer, generation: gate.generation };
   }
 
-  /** Moves the conversation writer (e.g. a person taking over from the orchestrator in Chat). */
-  switchWriter(agentSessionId: string, to: WriterKind, interrupt: boolean): WriterGateState {
+  /**
+   * Moves the conversation writer, e.g. a person taking over in Chat (live) or opening the TUI
+   * (the runner stops and the same conversation resumes in the TUI; failure rolls back). Resolves
+   * with the settled gate once the switch has finished, after a running turn if not interrupted.
+   */
+  async switchWriter(
+    agentSessionId: string,
+    to: WriterKind,
+    interrupt: boolean,
+  ): Promise<WriterGateState> {
     const runtime = this.#require(agentSessionId);
-    const transition = reduceWriterGate(runtime.gate, { type: "request-switch", to, interrupt });
-    if (!transition.ok) throw new SupervisorError("WRITER_REQUIRED", transition.code);
-    runtime.gate = transition.state;
-    for (const effect of transition.effects) {
-      if (effect.type === "interrupt-turn") runtime.connection?.send({ type: "interrupt" });
+    const settled = new Promise<void>((resolve) => runtime.switchWaiters.push(resolve));
+    if (!this.#transition(agentSessionId, runtime, { type: "request-switch", to, interrupt })) {
+      runtime.switchWaiters.pop();
+      throw new SupervisorError("WRITER_REQUIRED", "A writer switch is already in progress.");
     }
+    await settled;
     return runtime.gate;
   }
 
@@ -182,10 +233,17 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   connected(connection: RunnerConnection, hello: Extract<RunnerMessage, { type: "hello" }>): void {
     const runtime = this.#runtime(connection.agentSessionId, hello.runtimeSessionRef);
     runtime.connection = connection;
+    if (runtime.disconnectTimer !== null) clearTimeout(runtime.disconnectTimer);
+    runtime.disconnectTimer = null;
     if (!hello.started) {
-      const plan = this.#plans.get(connection.agentSessionId);
-      if (plan === undefined) {
-        // Naru restarted before the runner started; it cannot be given a plan safely.
+      // A fresh runner process numbers its events from 1 and has nothing in flight.
+      runtime.lastSeq = 0;
+      runtime.approvals.clear();
+      runtime.gate = { ...runtime.gate, turnActive: false };
+      let plan: RunnerPlan;
+      try {
+        plan = this.#planFor(this.#core.getAgentSession(SYSTEM, connection.agentSessionId));
+      } catch {
         connection.send({ type: "rejected", code: "RUNTIME_PLAN_UNAVAILABLE" });
         return;
       }
@@ -234,7 +292,32 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
 
   disconnected(connection: RunnerConnection): void {
     const runtime = this.#runtimes.get(connection.agentSessionId);
-    if (runtime?.connection === connection) runtime.connection = null;
+    if (runtime?.connection !== connection) return;
+    runtime.connection = null;
+    // A switch stops the runner on purpose; its outcome is decided by the switch itself.
+    if (runtime.gate.phase !== "active") return;
+    // A live runner reconnects within its backoff; one that does not has died without saying so.
+    runtime.disconnectTimer = setTimeout(() => {
+      runtime.disconnectTimer = null;
+      if (runtime.connection !== null) return;
+      runtime.approvals.clear();
+      runtime.gate = { ...runtime.gate, turnActive: false };
+      this.#core.updateAgentRuntimeState(SYSTEM, {
+        agentSessionId: connection.agentSessionId,
+        status: "unknown",
+      });
+    }, DISCONNECT_GRACE_MS);
+    runtime.disconnectTimer.unref();
+  }
+
+  /** Releases timers when this Naru process shuts down; runners keep running. */
+  close(): void {
+    for (const runtime of this.#runtimes.values()) {
+      if (runtime.disconnectTimer !== null) clearTimeout(runtime.disconnectTimer);
+      if (runtime.resumeTimer !== null) clearTimeout(runtime.resumeTimer);
+      runtime.disconnectTimer = null;
+      runtime.resumeTimer = null;
+    }
   }
 
   #apply(
@@ -244,6 +327,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   ): void {
     switch (event.type) {
       case "conversation-ready":
+        if (runtime.gate.phase === "resuming" || runtime.gate.phase === "rolling-back") {
+          // The switched-to (or restored) runner reports which conversation it resumed.
+          this.#confirmResume(agentSessionId, runtime, event.runtimeSessionRef);
+          return;
+        }
         runtime.gate = { ...runtime.gate, runtimeSessionRef: event.runtimeSessionRef };
         this.#core.updateAgentRuntimeState(SYSTEM, {
           agentSessionId,
@@ -252,13 +340,14 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         });
         return;
       case "turn-started":
-        runtime.gate = this.#reduce(runtime.gate, { type: "turn-started" });
+        this.#transition(agentSessionId, runtime, { type: "turn-started" });
         this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "active" });
         return;
       case "turn-ended":
-        runtime.gate = this.#reduce(runtime.gate, { type: "turn-ended" });
         this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "idle" });
-        this.#wakeups?.turnCompleted(agentSessionId);
+        // May finish a quiescing switch, which then stops this runner.
+        this.#transition(agentSessionId, runtime, { type: "turn-ended" });
+        if (runtime.gate.phase === "active") this.#wakeups?.turnCompleted(agentSessionId);
         return;
       case "approval-requested":
         runtime.approvals.set(event.requestId, event.kind);
@@ -269,12 +358,13 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       case "exited":
         runtime.connection = null;
         runtime.approvals.clear();
+        this.#core.endRuntimeLaunch(SYSTEM, agentSessionId);
+        // Stopped for a writer switch: the conversation continues in the other form.
+        if (runtime.gate.phase !== "active") return;
         this.#core.updateAgentRuntimeState(SYSTEM, {
           agentSessionId,
           status: event.reason === "stopped" ? "stopped" : "failed",
         });
-        this.#core.endRuntimeLaunch(SYSTEM, agentSessionId);
-        this.#plans.delete(agentSessionId);
         return;
       case "child-started":
       case "child-ended":
@@ -283,13 +373,107 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     }
   }
 
-  /** Turn observations only move the gate's turn state (and finish a quiescing switch). */
-  #reduce(
-    state: WriterGateState,
-    command: Parameters<typeof reduceWriterGate>[1],
-  ): WriterGateState {
-    const transition = reduceWriterGate(state, command);
-    return transition.ok ? transition.state : state;
+  /** Applies one gate command and runs its effects. Returns false when the gate rejected it. */
+  #transition(agentSessionId: string, runtime: ManagedRuntime, command: WriterCommand): boolean {
+    const transition = reduceWriterGate(runtime.gate, command);
+    if (!transition.ok) return false;
+    runtime.gate = transition.state;
+    for (const effect of transition.effects) this.#effect(agentSessionId, runtime, effect);
+    if (runtime.gate.phase === "active" || runtime.gate.phase === "recovery-required") {
+      for (const resolve of runtime.switchWaiters.splice(0)) resolve();
+    }
+    return true;
+  }
+
+  #effect(agentSessionId: string, runtime: ManagedRuntime, effect: WriterEffect): void {
+    switch (effect.type) {
+      case "interrupt-turn":
+        runtime.connection?.send({ type: "interrupt" });
+        return;
+      case "stop-backend":
+        void this.#stopBackend(agentSessionId, runtime);
+        return;
+      case "start-backend":
+        void this.#startBackend(agentSessionId, runtime, effect.writer);
+        return;
+      case "writer-changed":
+        this.#core.updateAgentRuntimeState(SYSTEM, {
+          agentSessionId,
+          conversationWriter: effect.writer,
+          launchMode: writerBackend(effect.writer),
+          status: "idle",
+        });
+        return;
+      case "recovery-required":
+        this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "failed" });
+        return;
+    }
+  }
+
+  async #stopBackend(agentSessionId: string, runtime: ManagedRuntime): Promise<void> {
+    this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "starting" });
+    try {
+      await this.#launcher.stop(agentSessionId);
+    } catch {
+      // Already gone, or the Host refused: the start that follows decides the outcome.
+    }
+    this.#transition(agentSessionId, runtime, { type: "backend-stopped" });
+  }
+
+  /** Starts the form serving `writer` (the switch target, or the previous one on rollback). */
+  async #startBackend(
+    agentSessionId: string,
+    runtime: ManagedRuntime,
+    writer: WriterKind,
+  ): Promise<void> {
+    const mode = writerBackend(writer);
+    try {
+      // A failed resume may have left the other form running in the same Pane.
+      await this.#launcher.stop(agentSessionId);
+      this.#core.updateAgentRuntimeState(SYSTEM, {
+        agentSessionId,
+        launchMode: mode,
+        status: "starting",
+      });
+      await this.#launcher.launch(agentSessionId);
+    } catch {
+      this.#confirmResume(agentSessionId, runtime, null);
+      return;
+    }
+    if (mode === "tui") {
+      const reported =
+        (await this.#launcher.awaitTuiSession?.(agentSessionId, RESUME_TIMEOUT_MS)) ?? null;
+      this.#confirmResume(agentSessionId, runtime, reported);
+      return;
+    }
+    // The runner confirms through `conversation-ready`; give up if it never does.
+    runtime.resumeTimer = setTimeout(
+      () => this.#confirmResume(agentSessionId, runtime, null),
+      RESUME_TIMEOUT_MS,
+    );
+    runtime.resumeTimer.unref();
+  }
+
+  #confirmResume(agentSessionId: string, runtime: ManagedRuntime, reported: string | null): void {
+    if (runtime.resumeTimer !== null) clearTimeout(runtime.resumeTimer);
+    runtime.resumeTimer = null;
+    const expected = runtime.gate.runtimeSessionRef;
+    if (runtime.gate.phase === "resuming") {
+      this.#transition(
+        agentSessionId,
+        runtime,
+        reported === null
+          ? { type: "resume-failed" }
+          : { type: "resume-confirmed", runtimeSessionRef: reported },
+      );
+    } else if (runtime.gate.phase === "rolling-back") {
+      const restored = reported !== null && (expected === null || reported === expected);
+      this.#transition(
+        agentSessionId,
+        runtime,
+        restored ? { type: "previous-restored" } : { type: "restore-failed" },
+      );
+    }
   }
 
   #runtime(agentSessionId: string, runtimeSessionRef: string | null): ManagedRuntime {
@@ -298,25 +482,27 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       runtime = {
         connection: null,
         lastSeq: 0,
-        // The gate lives in memory; a human hold persisted in Core survives Naru restarts (AP-D005).
-        gate: initialWriterGate(
-          "live",
-          this.#heldByHuman(agentSessionId) ? "gui" : "orchestrator",
-          runtimeSessionRef,
-        ),
+        // The gate lives in memory; the form and human hold persisted in Core survive Naru
+        // restarts (AP-D005). Claude's runner and TUI are separate processes (AP-D011).
+        gate: initialWriterGate("stop-resume", this.#initialWriter(agentSessionId), runtimeSessionRef),
         approvals: new Map(),
         history: new Map(),
+        disconnectTimer: null,
+        resumeTimer: null,
+        switchWaiters: [],
       };
       this.#runtimes.set(agentSessionId, runtime);
     }
     return runtime;
   }
 
-  #heldByHuman(agentSessionId: string): boolean {
+  #initialWriter(agentSessionId: string): WriterKind {
     try {
-      return this.#core.getAgentSession(SYSTEM, agentSessionId).humanHoldSince !== null;
+      const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
+      if (agent.launchMode === "tui") return "tui";
+      return agent.humanHoldSince === null ? "orchestrator" : "gui";
     } catch {
-      return false;
+      return "orchestrator";
     }
   }
 

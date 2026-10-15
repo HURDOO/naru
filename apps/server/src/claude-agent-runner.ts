@@ -20,8 +20,11 @@ if (socketPath === undefined || token === undefined) {
   process.stderr.write("NARU_RUNTIME_UNAVAILABLE\n");
   process.exit(1);
 }
-// The token authenticates this process only; nothing it starts inherits it.
+// The token authenticates this process only; nothing it starts inherits it. The same goes for the
+// Pane's integration bootstrap, which only the TUI form's activity hooks use.
 delete process.env[NARU_RUNTIME_TOKEN_ENV];
+delete process.env[NARU_RUNTIME_SOCKET_ENV];
+delete process.env.NARU_CLAUDE_HOOK_BOOTSTRAP;
 
 let runner: ClaudeRunner | null = null;
 let starting = false;
@@ -89,7 +92,11 @@ async function start(plan: RunnerPlan): Promise<void> {
   starting = true;
   try {
     const sdk = await loadClaudeSdk(plan.sdkEntry);
-    runner = new ClaudeRunner(sdk, plan);
+    // Claude inherits the Host's environment policy; the plan adds to it, never the reverse.
+    runner = new ClaudeRunner(sdk, {
+      ...plan,
+      environment: { ...inheritedEnvironment(), ...plan.environment },
+    });
     runner.onEvent((event) => {
       observe(event);
       channel.emit(event);
@@ -138,6 +145,14 @@ function observe(event: AgentRuntimeEvent): void {
     case "exited":
       console_(`runner ${event.reason}`);
   }
+}
+
+function inheritedEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) environment[key] = value;
+  }
+  return environment;
 }
 
 let exiting = false;

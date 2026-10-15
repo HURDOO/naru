@@ -36,14 +36,33 @@ const CODEX_PROFILES: Readonly<Record<CodexLaunchProfile, CodexProfileDefinition
   },
 };
 
+/** Pane profile of a Naru-managed Claude agent (AP-T14). Not creatable through the Pane API. */
+export const CLAUDE_AGENT_LAUNCH_PROFILE = "claude-agent";
+
 export interface PaneLaunchCommand {
   readonly file: string;
   readonly args: string[];
   readonly environment: Record<string, string>;
+  /**
+   * Values the Host-side integration launcher must add to the process it starts (the Host's own
+   * environment policy supplies the rest). Already included in `environment`.
+   */
+  readonly launcherEnvironment?: Readonly<Record<string, string>>;
 }
 
 export interface PaneLaunchResolver {
   resolve(context: PaneContext): PaneLaunchCommand;
+  /** Checks that a launch could succeed without issuing anything single-use. */
+  preflight?(context: PaneContext): void;
+}
+
+/** Resolves `claude-agent` Panes; owned by the managed agent runtime. */
+export interface AgentPaneLaunchResolver {
+  preflight(context: PaneContext): void;
+  resolve(
+    context: PaneContext,
+    base: { readonly claudeExecutable: string; readonly environment: Record<string, string> },
+  ): PaneLaunchCommand;
 }
 
 export interface CommandResult {
@@ -67,6 +86,7 @@ export interface LaunchProfileRegistryOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly commandRunner?: CommandRunner;
   readonly now?: () => number;
+  readonly agentPanes?: AgentPaneLaunchResolver;
 }
 
 export class LaunchProfileRegistry implements PaneLaunchResolver {
@@ -77,6 +97,7 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
   readonly #environment: NodeJS.ProcessEnv;
   readonly #commandRunner: CommandRunner;
   readonly #now: () => number;
+  readonly #agentPanes: AgentPaneLaunchResolver | undefined;
   #codexCheckedAt = 0;
 
   constructor(options: LaunchProfileRegistryOptions = {}) {
@@ -87,6 +108,16 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
     this.#environment = options.environment ?? process.env;
     this.#commandRunner = options.commandRunner ?? runCommand;
     this.#now = options.now ?? Date.now;
+    this.#agentPanes = options.agentPanes;
+  }
+
+  preflight(context: PaneContext): void {
+    if (context.pane.kind === "claude" && context.pane.launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE) {
+      this.#requireAgentPanes().preflight(context);
+      this.#authenticatedClaude(context, childEnvironment(this.#environment));
+      return;
+    }
+    this.resolve(context);
   }
 
   resolve(context: PaneContext): PaneLaunchCommand {
@@ -99,21 +130,15 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
     }
 
     if (context.pane.kind === "claude") {
+      if (context.pane.launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE) {
+        const agentPanes = this.#requireAgentPanes();
+        const claudeExecutable = this.#authenticatedClaude(context, environment);
+        return agentPanes.resolve(context, { claudeExecutable, environment });
+      }
       if (context.pane.launchProfile !== "claude-code") {
         throw new AppError("REQUEST_INVALID", 409, "허용되지 않은 Claude Code 실행 프로필입니다.");
       }
-      const executable = resolveClaudeExecutable(this.#claudeExecutable, this.#environment);
-      const status = this.#commandRunner(executable, ["auth", "status"], {
-        cwd: context.projectPath,
-        env: environment,
-      });
-      if (status.error || status.status !== 0 || !isClaudeAuthenticated(status.stdout)) {
-        throw new AppError(
-          "CLAUDE_AUTH_REQUIRED",
-          503,
-          "Claude Code 인증이 필요합니다. Mac mini에서 claude auth login을 완료해 주세요.",
-        );
-      }
+      const executable = this.#authenticatedClaude(context, environment);
       const args =
         this.#claudeActivityHookCommand === undefined
           ? []
@@ -139,6 +164,33 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
       ),
       environment,
     };
+  }
+
+  #authenticatedClaude(context: PaneContext, environment: Record<string, string>): string {
+    const executable = resolveClaudeExecutable(this.#claudeExecutable, this.#environment);
+    const status = this.#commandRunner(executable, ["auth", "status"], {
+      cwd: context.projectPath,
+      env: environment,
+    });
+    if (status.error || status.status !== 0 || !isClaudeAuthenticated(status.stdout)) {
+      throw new AppError(
+        "CLAUDE_AUTH_REQUIRED",
+        503,
+        "Claude Code 인증이 필요합니다. Mac mini에서 claude auth login을 완료해 주세요.",
+      );
+    }
+    return executable;
+  }
+
+  #requireAgentPanes(): AgentPaneLaunchResolver {
+    if (this.#agentPanes === undefined) {
+      throw new AppError(
+        "AGENT_RUNTIME_UNAVAILABLE",
+        503,
+        "관리형 Claude 에이전트 실행 환경이 설정되지 않았습니다.",
+      );
+    }
+    return this.#agentPanes;
   }
 
   #ensureCodexAvailable(

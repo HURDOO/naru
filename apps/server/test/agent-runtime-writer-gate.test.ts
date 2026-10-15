@@ -51,6 +51,16 @@ describe("conversation writer gate", () => {
     );
   });
 
+  it("hands over live between writers that share the stop-resume runner", () => {
+    const switched = run(initialWriterGate("stop-resume", "orchestrator", REF), {
+      type: "request-switch",
+      to: "gui",
+      interrupt: false,
+    });
+    expect(switched.state).toMatchObject({ phase: "active", writer: "gui", generation: 2 });
+    expect(switched.effects).toEqual([{ type: "writer-changed", writer: "gui", generation: 2 }]);
+  });
+
   it("stops and resumes the same conversation for stop-resume runtimes", () => {
     const switching = run(initialWriterGate("stop-resume", "gui", REF), {
       type: "request-switch",
