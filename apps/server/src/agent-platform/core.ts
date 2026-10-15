@@ -1,12 +1,14 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   AGENT_ROLE_COMMANDS,
+  AgentTaskStatusSchema,
   NARU_AGENT_LIMITS,
   WORKER_TASK_STATUSES,
   type Actor,
   type AgentCommandName,
   type AgentEvent,
   type AgentEventType,
+  type AgentOverview,
   type AgentPlatformErrorCode,
   type AgentRole,
   type AgentRuntime,
@@ -811,6 +813,36 @@ export class AgentPlatformCore {
       tasks: this.#store.listTasks(projectId),
       openHandoffs: this.#store.listOpenHandoffs(projectId),
     };
+  }
+
+  /** The user's cross-project view (Home); agents never call this. */
+  getOverview(actor: Actor): AgentOverview {
+    this.#requireHuman(actor);
+    const projects = this.#store.listAgentProjectIds().map((projectId) => {
+      // Every status is present (0 when empty) so the contract's exhaustive record holds.
+      const taskCounts = Object.fromEntries(
+        AgentTaskStatusSchema.options.map((status) => [status, 0]),
+      ) as Record<AgentTaskStatus, number>;
+      for (const task of this.#store.listTasks(projectId)) taskCounts[task.status] += 1;
+      const agents = this.#store.listAgentSessions(projectId);
+      return {
+        projectId,
+        taskCounts,
+        openHandoffs: this.#store.listOpenHandoffs(projectId).length,
+        agents: agents.length,
+        heldAgents: agents.filter((agent) => agent.humanHoldSince !== null).length,
+      };
+    });
+    return {
+      projects,
+      openHandoffs: this.#store.listOpenHandoffs(null),
+      globalAgents: this.#store.listAgentSessions(null),
+    };
+  }
+
+  listAgentSessions(actor: Actor, projectId: string | null): AgentSession[] {
+    this.#authorize(actor, "state.read", projectId);
+    return this.#store.listAgentSessions(projectId);
   }
 
   getHandoff(actor: Actor, handoffId: string): Handoff {

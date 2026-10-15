@@ -385,3 +385,55 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
 
 /** Statuses a worker may set on a task assigned to it; completion goes through review. */
 export const WORKER_TASK_STATUSES = ["running", "blocked", "review"] as const;
+
+// Browser API (human actor) -----------------------------------------------------------------------
+
+export const CreateHumanInstructionRequestSchema = z.strictObject({
+  scope: InstructionScopeSchema,
+  verbatim: z.string().trim().min(1).max(NARU_AGENT_LIMITS.instructionCharacters),
+  supersedesId: Id.optional(),
+  idempotencyKey: IdempotencyKeySchema,
+});
+export type CreateHumanInstructionRequest = z.infer<typeof CreateHumanInstructionRequestSchema>;
+
+export const IdempotentRequestSchema = z.strictObject({ idempotencyKey: IdempotencyKeySchema });
+
+export const ResolveHandoffRequestSchema = z.strictObject({
+  decision: z.string().trim().min(1).max(NARU_AGENT_LIMITS.instructionCharacters),
+  chosenOption: Title.optional(),
+  idempotencyKey: IdempotencyKeySchema,
+});
+export type ResolveHandoffRequest = z.infer<typeof ResolveHandoffRequestSchema>;
+
+export const ApproveIntentContractRequestSchema = z.strictObject({
+  handoffId: Id.optional(),
+  idempotencyKey: IdempotencyKeySchema,
+});
+
+export const SetAgentHoldRequestSchema = z.strictObject({
+  held: z.boolean(),
+  idempotencyKey: IdempotencyKeySchema,
+});
+export type SetAgentHoldRequest = z.infer<typeof SetAgentHoldRequestSchema>;
+
+export const AgentEventsQuerySchema = z.strictObject({
+  after: z.coerce.number().int().min(0).default(0),
+  projectId: Id.optional(),
+  limit: z.coerce.number().int().min(1).max(NARU_AGENT_LIMITS.eventReadLimit).optional(),
+});
+
+export const ProjectAgentSummarySchema = z.strictObject({
+  projectId: Id,
+  taskCounts: z.record(AgentTaskStatusSchema, z.number().int().min(0)),
+  openHandoffs: z.number().int().min(0),
+  agents: z.number().int().min(0),
+  heldAgents: z.number().int().min(0),
+});
+export type ProjectAgentSummary = z.infer<typeof ProjectAgentSummarySchema>;
+
+export const AgentOverviewSchema = z.strictObject({
+  projects: z.array(ProjectAgentSummarySchema),
+  openHandoffs: z.array(HandoffSchema),
+  globalAgents: z.array(AgentSessionSchema),
+});
+export type AgentOverview = z.infer<typeof AgentOverviewSchema>;

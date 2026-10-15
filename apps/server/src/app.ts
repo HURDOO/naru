@@ -53,6 +53,8 @@ import { FileDraftRegistry } from "./file-drafts.js";
 import { GatewayRequestAuthenticator, type GatewayRequestIdentity } from "./gateway-auth.js";
 import { GitMetadataAdapter } from "./git-metadata.js";
 import { LeaseManager, type LeaseOwner } from "./lease.js";
+import { AgentPlatformError, type AgentPlatformCore } from "./agent-platform/core.js";
+import { registerAgentPlatformRoutes } from "./agent-platform/http-routes.js";
 import { Observability, safeErrorFields } from "./observability.js";
 import type { ProjectPathPolicy } from "./path-policy.js";
 import { ProjectCatalogService } from "./project-catalog.js";
@@ -131,6 +133,8 @@ export interface AppDependencies {
   files?: ProjectFileService;
   fileDrafts?: FileDraftRegistry;
   projectCatalog?: ProjectCatalogService;
+  /** Agent Platform routes are registered only when the core is supplied (AP-T11, opt-in). */
+  agentPlatform?: AgentPlatformCore;
 }
 
 export async function buildApp(
@@ -561,6 +565,18 @@ export async function buildApp(
     });
     return reply.code(204).send();
   });
+
+  if (dependencies.agentPlatform !== undefined) {
+    registerAgentPlatformRoutes(app, dependencies.agentPlatform, {
+      requireSession: (request) => {
+        requireSession(request, sessions);
+      },
+      requireUnsafeRequest: (request) => {
+        requireUnsafeRequest(request, config, sessions);
+      },
+      requireSurfaceController: (request) => requireSurfaceController(request, leases),
+    });
+  }
 
   app.get("/api/projects", (request) => {
     requireSession(request, sessions);
@@ -1816,6 +1832,9 @@ function sendProtocolError(socket: SocketLike, error: unknown, requestId?: strin
 
 function normalizeError(error: unknown): AppError {
   if (error instanceof AppError) return error;
+  if (error instanceof AgentPlatformError) {
+    return new AppError(error.code, AGENT_ERROR_STATUS[error.code], error.message);
+  }
   if (error instanceof ZodError || error instanceof SyntaxError) {
     return new AppError("REQUEST_INVALID", 400, "요청 형식이 올바르지 않습니다.");
   }
@@ -1829,3 +1848,15 @@ function normalizeError(error: unknown): AppError {
   }
   return new AppError("INTERNAL_ERROR", 500, "서버에서 요청을 처리하지 못했습니다.");
 }
+
+const AGENT_ERROR_STATUS: Record<AgentPlatformError["code"], number> = {
+  AGENT_NOT_FOUND: 404,
+  AGENT_SCOPE_DENIED: 403,
+  AGENT_ROLE_DENIED: 403,
+  AGENT_HELD_BY_HUMAN: 409,
+  AGENT_REVISION_STALE: 409,
+  AGENT_IDEMPOTENCY_CONFLICT: 409,
+  AGENT_INVALID_REFERENCE: 400,
+  AGENT_INVALID_STATE: 409,
+  AGENT_DEPENDENCY_CYCLE: 400,
+};

@@ -49,6 +49,16 @@ export const ErrorCodeSchema = z.enum([
   "WS_BACKPRESSURE",
   "REQUEST_INVALID",
   "INTERNAL_ERROR",
+  // Agent Platform (naru-agent/v1); older web builds fall back to their default message.
+  "AGENT_NOT_FOUND",
+  "AGENT_SCOPE_DENIED",
+  "AGENT_ROLE_DENIED",
+  "AGENT_HELD_BY_HUMAN",
+  "AGENT_REVISION_STALE",
+  "AGENT_IDEMPOTENCY_CONFLICT",
+  "AGENT_INVALID_REFERENCE",
+  "AGENT_INVALID_STATE",
+  "AGENT_DEPENDENCY_CYCLE",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 

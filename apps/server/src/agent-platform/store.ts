@@ -421,6 +421,32 @@ export class AgentPlatformStore {
     return row === undefined ? null : agentSessionFromRow(row);
   }
 
+  /** Sessions of one project, or the global ones when projectId is null. */
+  listAgentSessions(projectId: string | null): AgentSession[] {
+    const rows = (
+      projectId === null
+        ? this.#database
+            .prepare("SELECT * FROM agent_sessions WHERE project_id IS NULL ORDER BY created_at")
+            .all()
+        : this.#database
+            .prepare("SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY created_at")
+            .all(projectId)
+    ) as AgentSessionRow[];
+    return rows.map(agentSessionFromRow);
+  }
+
+  listAgentProjectIds(): string[] {
+    return this.#database
+      .prepare(
+        `SELECT project_id FROM agent_sessions WHERE project_id IS NOT NULL
+         UNION SELECT project_id FROM agent_tasks
+         UNION SELECT project_id FROM agent_handoffs WHERE project_id IS NOT NULL
+         ORDER BY project_id`,
+      )
+      .pluck()
+      .all() as string[];
+  }
+
   updateAgentSession(session: AgentSession): void {
     this.#database
       .prepare(

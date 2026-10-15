@@ -85,8 +85,13 @@
 
 ### AP-T10. Event Store와 reconciler
 
-- [ ] outbox, idempotency, orchestrator별 lease와 revision check, 재시작 reconcile(`unknown` 상태의
-      Run은 런타임에 조회한다).
+- [-] outbox, idempotency, orchestrator별 lease와 revision check, 재시작 reconcile(`unknown` 상태의
+  Run은 런타임에 조회한다).
+- 진행(2026-10-15):
+  - 완료: AP-T09의 전역 순서 이벤트, cursor, idempotency, 재시작 시 `unknown` 처리.
+    `OrchestratorWakeups`와 테스트 5개. 다룬 범위는 오케스트레이터별 in-flight turn 하나, 자기 이벤트
+    무시, 사람 hold 중 누적, 빈도 제한, cursor 기반 재전달, main 오케스트레이터 범위, 전달 실패 재시도다.
+  - 남음: 런타임 조회 reconciler(Phase 3 어댑터의 probe가 필요하다), 실제 OrchestratorInvoker 연결.
 
 ### AP-T11. Agent identity와 Naru MCP
 
@@ -98,9 +103,10 @@
     - stdio MCP bin(`agent-mcp-cli`)과 L1 도구 18개. zod 하나로 입력 검증과 MCP schema를 함께 만든다.
     - 테스트: 신원 바인딩, 권한 거부, 위조 인자와 원문 미노출, revoke, MCP stdio 왕복.
     - 실제 Claude Code 2.1.296 왕복(`tests/spikes/agent-platform/claude-mcp-roundtrip.ts`)이 통과했다.
+    - browser HTTP API(사람 행위자)는 `agentPlatform` 의존성을 주입할 때만 등록된다. 읽기에는 세션이
+      필요하고, 쓰기에는 CSRF와 사람 기기 lease가 필요하다. 테스트 3개.
   - 남음:
     - L2~L6 도구(DS, managed agent, 사람 채널, Workspace, merge 실행). AP-T12와 Phase 3에서 한다.
-    - browser HTTP API
     - Naru 시작 경로에 연결하기. 기본은 꺼 두고 opt-in으로 켠다.
     - Codex에서 MCP를 주입하는 방식(V08 Codex)
 
