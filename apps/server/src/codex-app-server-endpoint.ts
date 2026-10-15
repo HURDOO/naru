@@ -75,6 +75,9 @@ export function inspectCodexAppServerEndpoint(advertisedPath: string): CodexAppS
   )
     throw new CodexEndpointError();
   remember(socket);
+  // Never leave Node's process-wide stat buffer on a socket (see lstatSocketSync in
+  // @naru/durable-session-client): a later lazy require() could mis-resolve a pnpm symlink.
+  lstatSync(dirname(connectPath));
   return { advertisedPath, connectPath, identity: identities.join("|") };
 }
 

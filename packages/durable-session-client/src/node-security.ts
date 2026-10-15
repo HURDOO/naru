@@ -1,5 +1,5 @@
-import { lstatSync, readFileSync } from "node:fs";
-import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { lstatSync, readFileSync, type Stats } from "node:fs";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { DurableSessionClientError } from "./errors.js";
 
 export function readPrivateCredentialFile(path: string): string {
@@ -32,10 +32,23 @@ export function readPrivateJsonFile(path: string, maximumBytes = 256 * 1_024): u
   }
 }
 
+/**
+ * Node's JavaScript realpath, which the CommonJS loader uses with its cache, reads the process-wide
+ * stat buffer for cached path components and stops resolving when the last stat was a socket or
+ * FIFO. A lazy `require()` right after a socket `lstat` can then resolve a pnpm symlink to a path
+ * whose dependencies are missing (reproduced on Node 24.19 and 26.4). Stat the parent directory
+ * afterwards so the buffer never ends on a socket.
+ */
+export function lstatSocketSync(path: string): Stats {
+  const metadata = lstatSync(path);
+  lstatSync(dirname(path));
+  return metadata;
+}
+
 export function assertPrivateSocket(path: string): void {
   try {
     assertAbsolutePathWithoutSymlinks(path);
-    const metadata = lstatSync(path);
+    const metadata = lstatSocketSync(path);
     if (
       !metadata.isSocket() ||
       metadata.isSymbolicLink() ||
