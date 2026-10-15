@@ -338,3 +338,10 @@
   - AP-D021: 승인 대기를 기존 "입력 필요" 상태와 알림으로 알림
   - 사용자 요청: 운영에 바로 넣기 전에 별도 테스트 앱(기존 Gateway 아래 별도 route)으로 며칠 쓴 뒤
     main에 합친다. 배포 계획과 승인은 별도다.
+  - 테스트 앱 준비(배포 전):
+    - distribution이 Agent Platform을 켤 수 있게 했다(WV0-D016).
+    - 이 branch로 artifact를 빌드했다. 독립 instance intent(같은 Gateway에 별도 app으로 묶음, 자체 Host와
+      DB)와 운영 Gateway reconfigure intent를 만들고 read-only plan을 돌렸다.
+    - 운영 reconfigure plan은 Gateway와 Naru만 재시작한다. Host는 재시작하지 않는다.
+    - 설치 plan은 Claude Agent SDK가 아직 설치되지 않아 blocked다(사용자 설치, AP-D012).
+    - 남은 것: 사용자의 SDK 설치, 새 instance 설치와 운영 reconfigure 승인
