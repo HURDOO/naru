@@ -378,3 +378,26 @@
 - 대안:
   - 명령도 project 단위로 자동 허용한다(사용자가 project별로 켬).
   - 모든 편집을 묻는다(자율성은 낮아진다).
+
+## AP-D018. OpenCode 관리형 어댑터는 v0에서 미룬다
+
+- 상태: proposed (2026-10-15). AP-T15("구현 여부와 범위는 V12 결과로 정한다")의 결정안이다.
+- 근거(V12):
+  - OpenCode는 공식 `serve` API와 `attach`로 진짜 live 공유가 되는 유일한 런타임이다.
+  - 관리형으로 만들려면 다음이 필요하다.
+    - Naru가 띄우는 별도 `opencode serve`
+    - 세션별 신원을 위한 plugin(`OPENCODE_CONFIG_CONTENT`)
+    - 동시 write를 막을 Naru proxy. TUI(`attach`)도 이 proxy를 거쳐야 하므로 새 local HTTP listener가
+      생긴다.
+  - 사용자 결정이 남아 있다(AP-D013 1·2): OmO가 10분 뒤 지우는 child 이력, 운영 `/omo/` 목록에 관리형
+    세션이 보이는 문제.
+  - A01~A16 인수 시나리오는 OpenCode를 요구하지 않는다. Claude와 Codex 관리형 경로로 모두 다룬다.
+- 결정안:
+  - v0에서는 OpenCode 관리형 어댑터를 만들지 않는다.
+  - 운영 `/omo/`는 지금처럼 그대로 쓴다.
+  - Naru Agent Platform의 런타임은 Claude와 Codex다. `AgentRuntimeSchema`의 `opencode` 값은 계약에
+    남긴다. 이 값으로 등록할 수 있지만 Naru가 실행하지는 않는다.
+- 다시 열 조건:
+  - 사용자가 AP-D013 1·2를 정한다.
+  - OmO 관리형 세션이 필요한 실제 작업이 생긴다.
+  - proxy listener의 보안 검토를 마친다.

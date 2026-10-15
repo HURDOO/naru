@@ -210,6 +210,7 @@ class Person {
   #csrf = "";
   #headers: Record<string, string> = {};
   #socket: WsClient | null = null;
+  #heartbeat: ReturnType<typeof setInterval> | undefined;
 
   constructor(readonly stack: NaruStack) {}
 
@@ -249,6 +250,20 @@ class Person {
         );
       },
     );
+    // Keep the device lease like a browser does; without heartbeats it expires.
+    clearInterval(this.#heartbeat);
+    this.#heartbeat = setInterval(
+      () =>
+        socket.send(
+          JSON.stringify({
+            type: "heartbeat",
+            sentAt: Date.now(),
+            leaseGeneration: state.generation,
+            presence: { visible: true, focused: true, interactionRevision: 0 },
+          }),
+        ),
+      15_000,
+    );
     this.#headers = {
       origin: this.stack.origin,
       cookie: this.#cookie,
@@ -285,6 +300,7 @@ class Person {
   }
 
   close(): void {
+    clearInterval(this.#heartbeat);
     this.#socket?.terminate();
   }
 }

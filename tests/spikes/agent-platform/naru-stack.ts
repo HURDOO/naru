@@ -33,9 +33,21 @@ export interface NaruStack {
   stop(): Promise<void>;
 }
 
+/** The user's installed runtimes and login, for real-model acceptance (no stand-ins). */
+export interface RealRuntimes {
+  readonly sdkPath: string;
+  readonly claudePath: string;
+  readonly home: string;
+  readonly user: string;
+}
+
 export async function startNaruStack(options: {
   /** Source of the stand-in Claude Agent SDK module (exports query and getSessionMessages). */
-  readonly sdkSource: string;
+  readonly sdkSource?: string;
+  /** Real runtimes instead of stand-ins; the projects must then live under `projectRoot`. */
+  readonly real?: RealRuntimes;
+  /** The approved project root (default: the Host fixture's temp root). */
+  readonly projectRoot?: string;
   readonly port?: number;
   /** Extra environment for the Host's agent processes (e.g. a puppet socket path). */
   readonly agentEnvironment?: Readonly<Record<string, string>>;
@@ -43,15 +55,17 @@ export async function startNaruStack(options: {
   const node = process.execPath;
   const wsModule = createRequire(join(repositoryRoot, "apps/server/package.json")).resolve("ws");
   const fixture = createHostFixture();
-  const projectRoot = fixture.config.roots[0]!.path;
+  const projectRoot = options.projectRoot ?? fixture.config.roots[0]!.path;
   mkdirSync(projectRoot, { recursive: true });
+  const real = options.real;
 
-  const sdkEntry = join(fixture.root, "fake-sdk.mjs");
-  writeFileSync(sdkEntry, options.sdkSource, { mode: 0o600 });
-  const claude = join(fixture.root, "claude");
-  writeFileSync(
-    claude,
-    `#!${node}
+  const sdkEntry = real?.sdkPath ?? join(fixture.root, "fake-sdk.mjs");
+  if (real === undefined) writeFileSync(sdkEntry, options.sdkSource ?? "", { mode: 0o600 });
+  const claude = real?.claudePath ?? join(fixture.root, "claude");
+  if (real === undefined) {
+    writeFileSync(
+      claude,
+      `#!${node}
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 if (args[0] === "auth") { process.stdout.write('{"loggedIn":true}'); process.exit(0); }
@@ -67,9 +81,10 @@ process.stdout.write("stand-in Claude TUI (resumed)\\r\\n");
 setInterval(() => {}, 1000);
 process.on("SIGTERM", () => process.exit(0));
 `,
-    { mode: 0o700 },
-  );
-  chmodSync(claude, 0o700);
+      { mode: 0o700 },
+    );
+    chmodSync(claude, 0o700);
+  }
   const codex = join(fixture.root, "codex");
   writeFileSync(codex, fakeCodexScript(node, wsModule), { mode: 0o700 });
   chmodSync(codex, 0o700);
@@ -77,11 +92,17 @@ process.on("SIGTERM", () => process.exit(0));
   writeFileSync(codexLog, "", { mode: 0o600 });
 
   const integrationSocket = join(fixture.root, "ci.sock");
-  const executablePath = `${dirname(node)}:/usr/bin:/bin`;
+  const executablePath = `${real === undefined ? "" : `${dirname(claude)}:`}${dirname(node)}:/usr/bin:/bin`;
+  // Real Claude reads the user's login from the keychain, which needs the user's identity.
+  const identity: Record<string, string> =
+    real === undefined
+      ? { HOME: fixture.root }
+      : { HOME: real.home, USER: real.user, LOGNAME: real.user, LANG: "en_US.UTF-8" };
   const launcher = (name: string) => [join(repositoryRoot, `apps/server/dist/${name}.js`)];
   const host = await startDurableSessionHost(
     DurableSessionHostConfigSchema.parse({
       ...fixture.config,
+      roots: [{ rootId: "projects", path: projectRoot }],
       // The fixture's limit of 10 is for unit tests; a team of agents with processes needs more.
       sessionLimit: 100,
       profiles: [
@@ -113,7 +134,7 @@ process.on("SIGTERM", () => process.exit(0));
           inherit: [],
           values: {
             PATH: executablePath,
-            HOME: fixture.root,
+            ...identity,
             FAKE_CODEX_LOG: codexLog,
             NARU_CODEX_INTEGRATION_SOCKET: integrationSocket,
             NARU_CLAUDE_HOOK_RUNNER: node,
@@ -192,7 +213,7 @@ process.on("SIGTERM", () => process.exit(0));
     const logDescriptor = openSync(logFile, "a", 0o600);
     server = spawn(node, [join(repositoryRoot, "apps/server/dist/index.js")], {
       cwd: repositoryRoot,
-      env: { PATH: executablePath, HOME: fixture.root, NARU_ENV_FILE: environmentFile },
+      env: { PATH: executablePath, ...identity, NARU_ENV_FILE: environmentFile },
       stdio: ["ignore", logDescriptor, logDescriptor],
     });
     closeSync(logDescriptor);
