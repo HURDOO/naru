@@ -134,6 +134,14 @@
       - supervisor interrupt(실제 runner process)
       - Handoff push(service, app 연결, service worker)
     - 이전 "남음"의 native bridge 시작 경로와 Codex MCP 주입은 AP-T13·T14 때 연결했다.
+  - 2026-10-15 결함 수정(AP-T18 준비 중 발견):
+    - wakeup turn은 orchestrator에게만 갔다. 그래서 위임받은 작업자가 깨어나지 않았다.
+      - 이제 모든 관리형 에이전트를 wakeup에 등록한다.
+      - 작업 역할은 자기에게 온 일(자기·자기 Task 위임, 배정, 리뷰, 답이 온 Handoff, hold 반환)에만
+        깨어난다(`eventConcernsAgent`).
+    - 작업자가 읽을 수 있는 지시는 사람 지시뿐이었다. orchestrator의 위임 원문을 읽을 수 없었다.
+      - 이제 `get_delegated_work`가 자기·자기 Task에 온 지시 원문과, 그 지시가 따르는 원본 사용자
+        지시를 돌려준다(A03).
   - 2026-10-15 추가: AP-D015 native 메시징 bridge를 구현했다. hook 전용 tool, hook bin, settings builder,
     TUI 직접 입력 기록이 들어갔다. MCP bin은 광고한 tool만 전달한다. 테스트 5개와 V06c 실제 세션 검증이
     통과했다.
@@ -285,7 +293,7 @@
 
 ### AP-T18. 인수 테스트 A01~A16
 
-- [ ] fake runtime 기반 자동 E2E, 실제 모델 인수, 사용자 Manual Test 절차.
+- [-] fake runtime 기반 자동 E2E, 실제 모델 인수, 사용자 Manual Test 절차.
 
 ### AP-T19. 파일럿과 운영 문서
 

@@ -2,8 +2,9 @@ import type { AgentEvent, AgentEventType, AgentSession } from "@naru/contracts/n
 import type { AgentPlatformCore } from "./core.js";
 
 /**
- * Event-driven orchestrator turns (SOURCE_SPEC §5, ARCHITECTURE §3). Naru decides only *when* an
- * orchestrator is woken and with which event references; what to do is the LLM's judgement.
+ * Event-driven agent turns (SOURCE_SPEC §5, ARCHITECTURE §3). Naru decides only *when* an agent is
+ * woken and with which event references; what to do is the LLM's judgement. Orchestrators follow
+ * their scope; working agents only what is addressed to them (`eventConcernsAgent`).
  *
  * Guarantees: one in-flight turn per orchestrator, no wakeups from the orchestrator's own actions,
  * nothing delivered while a human holds it (AP-D005), bounded frequency, and at-least-once delivery
@@ -168,7 +169,7 @@ export class OrchestratorWakeups {
         limit: this.#maxBatchEvents,
       },
     );
-    const events = scanned.filter((event) => relevantTo(session, event));
+    const events = scanned.filter((event) => relevantTo(session, event, this.#core));
     const toSeq = scanned.at(-1)?.seq ?? afterSeq;
     if (events.length === 0) {
       // Only self-caused or irrelevant events: skip them without spending a turn.
@@ -219,8 +220,16 @@ export function consumerId(agentSessionId: string): string {
 /** Runtime liveness states worth a turn; routine active/idle churn is not. */
 const NOTABLE_AGENT_STATES = new Set<unknown>(["failed", "unknown", "stopped"]);
 
-function relevantTo(orchestrator: AgentSession, event: AgentEvent): boolean {
+function relevantTo(
+  orchestrator: AgentSession,
+  event: AgentEvent,
+  core: AgentPlatformCore,
+): boolean {
   if (event.actor.kind === "agent" && event.actor.agentSessionId === orchestrator.id) return false;
+  // A working agent wakes only for what is addressed to it (delegated work, its task, its handoff).
+  if (orchestrator.role !== "main-orchestrator" && orchestrator.role !== "project-orchestrator") {
+    return core.eventConcernsAgent(event, orchestrator.id);
+  }
   // Runtime state reports (system) follow every turn, including the orchestrator's own; waking on
   // them would loop. Only another agent failing, stopping or going silent is worth a turn.
   if (event.type === "agent_session.updated") {

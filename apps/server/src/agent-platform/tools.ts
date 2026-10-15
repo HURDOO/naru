@@ -213,6 +213,13 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
         ...(actor.kind === "agent" ? { agentSessionId: actor.agentSessionId } : {}),
       }),
   ),
+  readTool(
+    "get_delegated_work",
+    "Read the work given to you or your tasks (verbatim, by orchestrators or the user) and the " +
+      "original user instruction each one serves. Call it when Naru wakes you.",
+    z.strictObject({}),
+    (core, actor) => core.getDelegatedWork(actor),
+  ),
   writeTool(
     "delegate",
     "Send a delegation message. It must cite the original user instruction it serves. Fails with " +

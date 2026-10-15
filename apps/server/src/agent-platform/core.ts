@@ -241,6 +241,32 @@ export class AgentPlatformCore {
   }
 
   /**
+   * The work addressed to the acting agent (delegations to it or its tasks, by orchestrators or the
+   * user) and the original user instruction each one serves, verbatim (AP-D002, A03).
+   */
+  getDelegatedWork(actor: Actor): {
+    readonly instructions: Instruction[];
+    readonly origins: Instruction[];
+  } {
+    if (actor.kind !== "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only an agent has delegated work.");
+    }
+    const agent = this.#authorize(actor, "state.read", this.#actorProject(actor))!;
+    const instructions = this.#store.listAddressedInstructions(agent.id, 50);
+    const originIds = [
+      ...new Set(
+        instructions
+          .map((instruction) => instruction.originUserInstructionId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const origins = originIds
+      .map((id) => this.#store.getInstruction(id))
+      .filter((instruction): instruction is Instruction => instruction !== null);
+    return { instructions, origins };
+  }
+
+  /**
    * AP-D015 sender side: a managed Claude session is about to send a native cross-session message.
    * Naru allows only managed recipients in scope that no human holds, and records the verbatim
    * message as a delegation tied to the sender's originating user instruction.
@@ -1784,6 +1810,39 @@ export class AgentPlatformCore {
   }
 
   // Events ---------------------------------------------------------------------------------------
+
+  /**
+   * Whether an event is addressed to a working agent (worker, reviewer, specialist): work delegated
+   * to it or its tasks, a change to its task, a review of it, its handoff answered, its hold or its
+   * process handed back. Naru wakes the agent for these; orchestrators follow their whole scope.
+   */
+  eventConcernsAgent(event: AgentEvent, agentSessionId: string): boolean {
+    const assignedTo = (taskId: string | null) =>
+      taskId !== null && this.#store.getTask(taskId)?.assigneeAgentSessionId === agentSessionId;
+    switch (event.type) {
+      case "instruction.created": {
+        const scope = this.#store.getInstruction(event.subjectId)?.scope;
+        if (scope?.kind === "agent") return scope.agentSessionId === agentSessionId;
+        return scope?.kind === "task" && assignedTo(scope.taskId);
+      }
+      case "task.created":
+      case "task.updated":
+        return assignedTo(event.subjectId);
+      case "review.submitted":
+        return assignedTo(event.correlationId);
+      case "handoff.resolved":
+      case "handoff.cancelled": {
+        const requester = this.#store.getHandoff(event.subjectId)?.requestedBy;
+        return requester?.kind === "agent" && requester.agentSessionId === agentSessionId;
+      }
+      case "agent_session.hold_released":
+        return event.subjectId === agentSessionId;
+      case "shared_process.hold_released":
+        return this.#store.getSharedProcess(event.subjectId)?.agentSessionId === agentSessionId;
+      default:
+        return false;
+    }
+  }
 
   readEvents(
     actor: Actor,

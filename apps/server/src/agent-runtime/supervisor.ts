@@ -346,7 +346,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     connection.send({ type: "ack", seq: runtime.lastSeq });
     // A live runtime (Codex) fences its own TUI by the writer Naru remembers.
     this.#announceWriter(runtime);
-    this.#trackOrchestrator(connection.agentSessionId);
+    this.#trackWakeups(connection.agentSessionId);
     this.#core.updateAgentRuntimeState(SYSTEM, {
       agentSessionId: connection.agentSessionId,
       ...(hello.runtimeSessionRef === null ? {} : { runtimeSessionRef: hello.runtimeSessionRef }),
@@ -458,7 +458,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           runtimeSessionRef: event.runtimeSessionRef,
           status: runtime.gate.turnActive ? "active" : "idle",
         });
-        this.#trackOrchestrator(agentSessionId);
+        this.#trackWakeups(agentSessionId);
         return;
       case "turn-started":
         this.#transition(agentSessionId, runtime, { type: "turn-started" });
@@ -643,12 +643,12 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     });
   }
 
-  /** Orchestrators are woken by Naru events once their conversation is reachable (AP-T16). */
-  #trackOrchestrator(agentSessionId: string): void {
-    const role = this.#core.getAgentSession(SYSTEM, agentSessionId).role;
-    if (role === "main-orchestrator" || role === "project-orchestrator") {
-      this.#wakeups?.register(agentSessionId);
-    }
+  /**
+   * Managed agents are woken by Naru events once their conversation is reachable (AP-T16):
+   * orchestrators by their scope, working agents by what is addressed to them.
+   */
+  #trackWakeups(agentSessionId: string): void {
+    this.#wakeups?.register(agentSessionId);
   }
 
   /** Codex shares one thread between Chat and the TUI (live); Claude's forms are separate processes. */

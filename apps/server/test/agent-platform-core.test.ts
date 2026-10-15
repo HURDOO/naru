@@ -59,6 +59,47 @@ describe("Agent Platform core", () => {
     );
   });
 
+  it("shows a worker the work addressed to it with the user instruction it serves (A03)", () => {
+    const fixture = platform();
+    const { orchestrator, worker, reviewer } = fixture.team();
+    const goal = fixture.goal();
+    const task = fixture.core.createTask(fixture.ctx(agent(orchestrator)), {
+      projectId: fixture.projectId,
+      title: "login",
+      purpose: "",
+      completionCriteria: [],
+      originInstructionId: goal,
+      assigneeAgentSessionId: worker,
+    });
+    const first = fixture.core.delegate(fixture.ctx(agent(orchestrator)), {
+      scope: { kind: "task", projectId: fixture.projectId, taskId: task.id },
+      verbatim: "OAuth로 로그인 화면을 만들어라",
+      originUserInstructionId: goal,
+    });
+    fixture.core.delegate(fixture.ctx(agent(orchestrator)), {
+      scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: reviewer },
+      verbatim: "not for the worker",
+      originUserInstructionId: goal,
+    });
+    // The user speaks to the task directly, then corrects themselves: only the correction stays.
+    const userFirst = fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "task", projectId: fixture.projectId, taskId: task.id },
+      verbatim: "OAuth로 해",
+    });
+    const userLatest = fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "task", projectId: fixture.projectId, taskId: task.id },
+      verbatim: "OAuth 말고 passkey로",
+      supersedesId: userFirst.id,
+    });
+    const work = fixture.core.getDelegatedWork(agent(worker));
+    expect(work.instructions.map((instruction) => instruction.id)).toEqual([
+      first.id,
+      userLatest.id,
+    ]);
+    expect(work.origins).toMatchObject([{ id: goal, verbatim: "프로젝트 목표" }]);
+    expectCode(() => fixture.core.getDelegatedWork(HUMAN), "AGENT_ROLE_DENIED");
+  });
+
   it("keeps the latest human instruction in force and forgets text on request", () => {
     const fixture = platform();
     const { worker } = fixture.team();

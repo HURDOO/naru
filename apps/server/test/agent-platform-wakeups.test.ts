@@ -43,6 +43,69 @@ describe("orchestrator wakeups", () => {
     wakeups.close();
   });
 
+  it("wakes a working agent only for work addressed to it", async () => {
+    const fixture = setup();
+    const wakeups = fixture.wakeups();
+    const orchestratorActor: Actor = { kind: "agent", agentSessionId: fixture.orchestrator };
+    wakeups.register(fixture.worker);
+    await flush();
+    // The project goal and registrations are the project's business, not the worker's.
+    expect(fixture.batches).toHaveLength(0);
+
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "project-wide follow-up",
+    });
+    const unassigned = fixture.core.createTask(fixture.ctx(orchestratorActor), {
+      projectId: fixture.projectId,
+      title: "someone else's",
+      purpose: "",
+      completionCriteria: [],
+      originInstructionId: fixture.goal,
+    });
+    await flush();
+    expect(fixture.batches).toHaveLength(0);
+
+    // Assigned a task, then given work: one turn each (one turn in flight at a time).
+    const task = fixture.core.createTask(fixture.ctx(orchestratorActor), {
+      projectId: fixture.projectId,
+      title: "login screen",
+      purpose: "",
+      completionCriteria: [],
+      originInstructionId: fixture.goal,
+      assigneeAgentSessionId: fixture.worker,
+    });
+    fixture.core.delegate(fixture.ctx(orchestratorActor), {
+      scope: { kind: "task", projectId: fixture.projectId, taskId: task.id },
+      verbatim: "build the login screen",
+      originUserInstructionId: fixture.goal,
+    });
+    await flush();
+    expect(fixture.batches).toHaveLength(1);
+    expect(fixture.batches[0]!.orchestrator.id).toBe(fixture.worker);
+    expect(fixture.types(0)).toEqual(["task.created"]);
+    fixture.clock.value += 10_000;
+    wakeups.turnCompleted(fixture.worker);
+    await flush();
+    expect(fixture.types(1)).toEqual(["instruction.created"]);
+    expect(
+      fixture.batches.flatMap((batch) => batch.events.map((event) => event.subjectId)),
+    ).not.toContain(unassigned.id);
+
+    // Its own status change does not wake it again.
+    fixture.clock.value += 10_000;
+    wakeups.turnCompleted(fixture.worker);
+    fixture.core.updateTask(fixture.ctx({ kind: "agent", agentSessionId: fixture.worker }), {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      status: "running",
+    });
+    fixture.clock.value += 10_000;
+    await flush();
+    expect(fixture.batches).toHaveLength(2);
+    wakeups.close();
+  });
+
   it("ignores routine runtime state reports but wakes when another agent fails", async () => {
     const fixture = setup();
     const wakeups = fixture.wakeups();

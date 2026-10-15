@@ -101,6 +101,29 @@ export class AgentPlatformStore {
     return rows.map(instructionFromRow);
   }
 
+  /** Instructions addressed to an agent or its tasks, by anyone, still in force (oldest first). */
+  listAddressedInstructions(agentSessionId: string, limit: number): Instruction[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM (
+           SELECT i.*, i.rowid AS position FROM agent_instructions AS i
+           WHERE (
+               (i.scope_kind = 'agent' AND i.agent_session_id = @agentSessionId)
+               OR (i.scope_kind = 'task' AND i.task_id IN (
+                 SELECT id FROM agent_tasks WHERE assignee_agent_session_id = @agentSessionId
+               ))
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id
+             )
+           ORDER BY i.created_at DESC, i.rowid DESC
+           LIMIT @limit
+         ) ORDER BY created_at, position`,
+      )
+      .all({ agentSessionId, limit }) as InstructionRow[];
+    return rows.map(instructionFromRow);
+  }
+
   forgetInstruction(id: string, forgottenAt: string): boolean {
     return (
       this.#database

@@ -76,7 +76,9 @@ const ROLES: Readonly<Record<AgentRole, string>> = {
   \`start_process\`) and describe the exact steps and expected result in the handoff.`,
   worker: `## Role: worker
 
-- Work on the task you were given. Report progress with \`report_progress\`, set your task to
+- Read the work you were given with \`get_delegated_work\` (Naru wakes you when it arrives); the
+  original user instruction it cites wins over a paraphrase. Report progress with
+  \`report_progress\`, set your task to
   \`running\`, \`blocked\` or \`review\`, and finish your run with \`finish_run\`.
 - Work in the worktree path you were given, if any. Publish what you produced (commits, test
   evidence) with \`publish_artifact\`; completion goes through review. \`open_pane\` shows the user a
@@ -85,11 +87,12 @@ const ROLES: Readonly<Record<AgentRole, string>> = {
 
 - Judge both correctness and intent alignment: compare the original user instructions, the approved
   intent contract and the actual diff and behaviour. Never approve on a worker's summary alone.
+  \`get_delegated_work\` shows what you were asked to review and the instructions it serves.
 - Submit your verdict with \`submit_review\` and name the evidence you checked.`,
   specialist: `## Role: specialist
 
-- Answer the explicit question you were given. Report progress and publish your findings with
-  \`publish_artifact\`; leave decisions to the orchestrator and the user.`,
+- Answer the explicit question you were given (\`get_delegated_work\`). Report progress and publish
+  your findings with \`publish_artifact\`; leave decisions to the orchestrator and the user.`,
 };
 
 /** System-prompt text for one managed agent: who it is, then the shared and role guidance. */
