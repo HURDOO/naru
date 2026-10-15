@@ -61,6 +61,58 @@ function autoReview(status: "inProgress" | "approved" | "denied" | "timedOut" | 
 }
 
 describe("Codex interaction relay metadata state", () => {
+  it("keeps the user thread bound when the TUI opens a native subagent with /subagents", () => {
+    const { state, latest } = fixture();
+    bind(state);
+    state.observeClient({ id: 7, method: "thread/resume", params: { threadId: SECOND } });
+    // Real 0.162.1 child resume responses carry the parent thread; this used to stop the relay.
+    expect(() =>
+      state.observeServer({
+        id: 7,
+        result: {
+          thread: {
+            id: SECOND,
+            cwd: CWD,
+            parentThreadId: FIRST,
+            ephemeral: false,
+            status: { type: "active" },
+          },
+        },
+      }),
+    ).not.toThrow();
+    state.observeClient({
+      id: 8,
+      method: "turn/start",
+      params: { threadId: FIRST, input: [] },
+    });
+    expect(latest()).toMatchObject({ phase: "running" });
+    // Events of the subagent thread never drive the Pane.
+    state.observeServer({
+      method: "turn/completed",
+      params: { threadId: SECOND, turn: { id: "child-turn", status: "completed" } },
+    });
+    expect(latest()).toMatchObject({ phase: "running" });
+  });
+
+  it("still rejects a top-level thread from another directory", () => {
+    const { state } = fixture();
+    state.observeClient({ id: 9, method: "thread/resume", params: { threadId: SECOND } });
+    expect(() =>
+      state.observeServer({
+        id: 9,
+        result: {
+          thread: {
+            id: SECOND,
+            cwd: "/fixture/other",
+            parentThreadId: null,
+            ephemeral: false,
+            status: { type: "idle" },
+          },
+        },
+      }),
+    ).toThrow(/identity/);
+  });
+
   it.each(["approved", "denied", "timedOut", "aborted"] as const)(
     "keeps an automatic approval review running through %s without a user request",
     (status) => {
