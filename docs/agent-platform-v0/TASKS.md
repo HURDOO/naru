@@ -327,7 +327,7 @@
 ### AP-T19. 파일럿과 운영 문서
 
 - [-] 사용자가 지정한 project 하나를 실제로 투입하고, OPERATIONS, LIMITATIONS, 운영 한도를 결정한다
-      (AP-D007). 운영 배포는 별도 승인을 받는다.
+  (AP-D007). 운영 배포는 별도 승인을 받는다.
 - 2026-10-15: [OPERATIONS.md](OPERATIONS.md) 초안과 [LIMITATIONS.md](LIMITATIONS.md)를 썼다.
   - 남은 사용자 결정: pilot project, 운영 한도(동시 에이전트, 예산, wakeup 빈도), proposed 결정
     (AP-D013, AP-D016, AP-D017, AP-D018)
