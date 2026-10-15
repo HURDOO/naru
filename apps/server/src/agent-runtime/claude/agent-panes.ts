@@ -178,7 +178,7 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
         "--name",
         nativeSessionName(agent.id),
         "--setting-sources",
-        "project,local",
+        "user,project,local",
         "--append-system-prompt",
         roleInstructions(agent),
         "--settings",

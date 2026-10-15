@@ -33,6 +33,11 @@ export interface NaruSessionFacade {
   onActivity(listener: SessionActivityListener): () => void;
   onCodexIdentity(listener: SessionCodexIdentityListener): () => void;
   acknowledgeCompleted(paneId: string, eventId: string): SessionOperation;
+  /**
+   * A managed agent waits for the person (AP-D017): its Pane takes the existing input-needed
+   * state, or leaves it. Only Durable Host mode runs managed agents.
+   */
+  showAgentAttention?(paneId: string, required: boolean): void;
   start(paneId: string, columns?: number, rows?: number): SessionOperation;
   attach(
     paneId: string,

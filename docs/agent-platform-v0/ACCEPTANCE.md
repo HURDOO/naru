@@ -33,7 +33,7 @@
 | A12 | Claude↔Claude native 메시지 추적               | **PASS**    | V06c 실제 Claude 세션 3개                                               |
 | A13 | 재시작 뒤 복구, 중복 없음                      | **PASS**    | fake 인수(서버 재시작), AP-T10 테스트, AP-T14 실제 boot 인수            |
 | A14 | Manual Test 요청에 환경·절차, 필요한 것만 재개 | **PASS**    | fake 인수, UI sandbox 화면                                              |
-| A15 | 다른 worktree 결과를 충돌 없이 통합            | **PASS**    | fake 인수(실제 git, fast-forward), workspace 테스트                     |
+| A15 | 다른 worktree 결과를 충돌 없이 통합            | **PASS**    | fake 인수(실제 git, merge commit, 충돌 해결), workspace 테스트          |
 | A16 | 미지원을 지원이라 하지 않음, 비공식 API 없음   | **PASS**    | capability 표, 결정 기록 감사                                           |
 
 ## 시나리오별
@@ -158,10 +158,13 @@
 
 ### A15. worktree 통합
 
-- fake(실제 git): 두 작업이 각자 worktree(`naru/<slug>-<task>`)에서 commit했다.
-  - 먼저 리뷰가 끝난 branch는 fast-forward로 main에 들어갔다.
-  - 갈라진 다른 branch는 거부됐다. worktree에서 rebase하고 다시 리뷰받은 뒤 통합됐다.
-  - main의 merge commit은 0개다. push는 하지 않는다(AP-D016).
+- 2026-10-16, AP-D019 뒤 다시 실행(fake, 실제 git): 두 작업이 각자 worktree(`naru/<slug>-<task>`)에서
+  commit했다. 둘 다 `docs/plan.md`를 고쳐 일부러 충돌하게 했다.
+  - 먼저 리뷰가 끝난 branch는 merge commit으로 main에 들어갔다.
+  - 다른 branch는 충돌로 거부됐다. project checkout은 merge 전 그대로였다(`git status` 깨끗함).
+  - 작업자가 worktree에서 main을 merge해 충돌을 풀었다. 다시 리뷰받은 뒤 merge commit으로 통합됐다.
+  - main에는 두 작업이 모두 있고, push는 하지 않는다.
+- 이전 결과(2026-10-15, AP-D016 fast-forward)는 갈라진 branch를 rebase와 재리뷰로 통합했다.
 
 ### A16. 정직한 지원 표시
 
@@ -170,11 +173,25 @@
   - OpenCode 관리형(AP-D018, 미룸)
   - native subagent 직접 입력(AP-D014)
   - Home의 리소스 사용량
-  - 승인 대기 push
 - 비공식 API는 쓰지 않는다. 쓰는 경로는 다음뿐이다.
   - Codex app-server JSON-RPC와 TUI
   - Claude Agent SDK와 hook
   - Web Push 표준
+
+## 사용자 결정 뒤 추가 확인 (2026-10-16)
+
+- AP-D021 승인 대기 알림
+  - 실제 Claude(`acceptance-real.ts ap17`): 작업자가 `python3 -c …` 명령 승인을 기다리는 동안 에이전트
+    Pane이 `interaction-required`였다. 사람이 승인한 뒤 `idle`로 돌아왔다. 이 run은 AP-D020(사용자
+    settings 포함) 설정으로 실행했다.
+  - UI sandbox: "입력 필요" 알림이 여는 주소로 들어가면 에이전트 화면에서 그 작업자와 승인 대기가 열렸다.
+    1440px, 360px에서 확인했고 가로 넘침은 0px다. 로그인 직후 에이전트 API를 아직 모를 때 workspace로
+    가던 문제를 이 확인에서 찾아 고쳤다.
+  - 실제 Web Push 전달은 기존 활동 알림 경로다. 실제 기기 수신은 사용자 Manual Test 8, 9에서 본다.
+- AP-D020 사용자 settings
+  - SDK probe: 사용자 source를 넣으면 개인 skill(`update-agent-clis`)과 plugin(`swift-lsp`)이 보였다.
+    빼면 보이지 않았다.
+- AP-D019 merge commit: workspace 테스트와 fake 인수 A15(위)
 
 ## 인수 중 찾은 결함과 수정
 
@@ -191,5 +208,5 @@
 - 실제 모델 인수는 비용 때문에 범위를 줄였다.
   - 실제 모델이 계획부터 리뷰와 통합까지 끝까지 가는 흐름은 fake로만 확인했다.
   - 실제 모델의 판단 품질(계획의 적절성, 일탈 제안, 리뷰의 엄격함)은 pilot에서 확인한다(AP-T19).
-- 기본값은 proposed 상태로 사용자 확인이 필요하다: AP-D013, AP-D016, AP-D017, AP-D018.
+- 사용자 결정: AP-D013, AP-D016, AP-D017, AP-D018은 2026-10-16에 확인됐다. 바꾼 부분은 AP-D019~D021이다.
 - 운영 배포 전 확인이 필요한 수정: Codex relay `/subagents`(d7f3061), Node realpath·socket stat(0183088).

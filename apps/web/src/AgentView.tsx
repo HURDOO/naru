@@ -68,6 +68,8 @@ interface AgentViewProps {
   readonly onSelectProject: (projectId: string) => void;
   /** Opened from a handoff alert: start on that Inbox item. */
   readonly initialHandoffId?: string | null;
+  /** Opened from an input-needed alert on an agent's Pane: start on that agent (AP-D017). */
+  readonly initialAgentPaneId?: string | null;
 }
 
 /**
@@ -84,6 +86,7 @@ export function AgentView({
   onOpenPane,
   onSelectProject,
   initialHandoffId = null,
+  initialAgentPaneId = null,
 }: AgentViewProps): React.JSX.Element {
   const [view, setView] = useState<AgentProjectView | null>(null);
   const [overview, setOverview] = useState<AgentOverview | null>(null);
@@ -173,6 +176,15 @@ export function AgentView({
     () => [...(view?.agents ?? []), ...(overview?.globalAgents ?? [])],
     [view, overview],
   );
+
+  const pendingAgentPane = useRef(initialAgentPaneId);
+  useEffect(() => {
+    // The alert names the agent's Pane; open the agent once the lists that bind it have loaded.
+    if (pendingAgentPane.current === null || view === null || overview === null) return;
+    const agent = allAgents.find((candidate) => candidate.paneId === pendingAgentPane.current);
+    pendingAgentPane.current = null;
+    if (agent !== undefined) setSelection({ kind: "agent", id: agent.id });
+  }, [allAgents, overview, view]);
 
   const selectedAgent =
     selection?.kind === "agent" ? allAgents.find((agent) => agent.id === selection.id) : undefined;

@@ -602,9 +602,9 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   ),
   writeTool(
     "merge_task",
-    "Integrate a task's branch into the branch checked out in its project, by fast-forward only, " +
-      "once the merge gate is open. Naru never pushes. A diverged branch must be rebased in its " +
-      "worktree and reviewed again.",
+    "Integrate a task's branch into the branch checked out in its project with a merge commit " +
+      "once the merge gate is open. Naru never pushes. A conflict is undone and refused: merge the " +
+      "project branch into the task branch in its worktree, resolve it, get it reviewed again.",
     z.strictObject({ task_id: Id }),
     (_core, context, input, runtime) =>
       requireRuntime(runtime, "workspace").merge(context, { taskId: input.task_id }),

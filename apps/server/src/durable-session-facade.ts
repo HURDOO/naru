@@ -228,6 +228,23 @@ export class DurableHostSessionFacade implements NaruSessionFacade {
     if (change) this.#emitActivity(change);
   }
 
+  /**
+   * The badge, project state and push alert (and its clear) follow the Pane's input-needed state
+   * like any Codex or Claude Pane. Leaving touches only that state, so what the runtime's own
+   * hooks report stays theirs.
+   */
+  showAgentAttention(paneId: string, required: boolean): void {
+    const activity = this.repository.getPaneContext(paneId)?.pane.activity;
+    if (activity === undefined || activity.runtimeId === null) return;
+    if ((activity.state === "interaction-required") === required) return;
+    const change = this.repository.setPaneActivityForRuntime(
+      paneId,
+      activity.runtimeId,
+      required ? "interaction-required" : "idle",
+    );
+    if (change !== null) this.#emitActivity(change);
+  }
+
   start(paneId: string, columns = DEFAULT_COLUMNS, rows = DEFAULT_ROWS): Promise<void> {
     return this.#enqueue(paneId, () => this.#start(paneId, columns, rows, false));
   }

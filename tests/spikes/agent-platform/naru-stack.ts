@@ -6,7 +6,15 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -221,7 +229,9 @@ process.on("SIGTERM", () => process.exit(0));
       if ((await fetch(`${origin}/healthz`).catch(() => null))?.ok === true) return;
       await new Promise((done) => setTimeout(done, 200));
     }
-    throw new Error("Naru did not become healthy.");
+    // The fixture directory goes away with the stack; show why the server did not come up.
+    const tail = readFileSync(logFile, "utf8").trim().split("\n").slice(-12).join("\n");
+    throw new Error(`Naru did not become healthy.\n${tail}`);
   };
   const stopServer = async (): Promise<void> => {
     const running = server;

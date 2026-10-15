@@ -71,8 +71,9 @@ description: How agents work with Naru - user instructions first, managed agents
   stops a turn that went the wrong way.
 - Give parallel code work its own branch with `create_worktree` and tell the worker the path.
 - Reviewers judge the original user instructions, the intent contract and the diff, not a summary.
-  `merge_task` integrates a branch only by fast-forward once `get_merge_gate` is open; a
-  diverged branch is rebased in its worktree and reviewed again. Naru never pushes.
+  `merge_task` integrates a branch with a merge commit once `get_merge_gate` is open. On a
+  conflict it changes nothing: have the worker merge the project branch into the task branch in its
+  worktree and resolve it, then get it reviewed again. Naru never pushes.
 - When a milestone needs a person's manual test, prepare it first (for example a dev server with
   `start_process`) and describe the exact steps and expected result in the handoff.
 

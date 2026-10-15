@@ -6,13 +6,15 @@
  * - A02: the user gives the main orchestrator goals for two projects; the real orchestrators plan.
  * - A04: a real worker uses a native subagent; Naru observes it (observe-only, AP-D014).
  * - A08: a real worker starts a localhost-only dev server through Naru; the user can see it.
+ * - AP17: a real worker's command waits for the person; its Pane shows the existing input-needed
+ *   state (which alerts the person's devices) until the person answers (AP-D017).
  *
  * Tool approvals other than Naru's own tools are denied by this runner (the person's role); it
  * prints only metadata (counts, statuses, provenance links), never conversation text.
  *
  * Run (Node 24) after `pnpm build`:
  *   NARU_REAL_SDK=<sdk.mjs> NARU_REAL_CLAUDE=<claude> NARU_REAL_DIR=<owner-only dir> \
- *     node --import tsx tests/spikes/agent-platform/acceptance-real.ts [a02,a04,a08]
+ *     node --import tsx tests/spikes/agent-platform/acceptance-real.ts [a02,a04,a08,ap17]
  */
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -240,7 +242,7 @@ try {
     );
   }
 
-  if (scenarios.has("a04") || scenarios.has("a08")) {
+  if (scenarios.has("a04") || scenarios.has("a08") || scenarios.has("ap17")) {
     const worker = await post<Agent>("/api/agent/agents", {
       projectId: projects.beta,
       role: "worker",
@@ -288,6 +290,56 @@ try {
         "A04",
         seenChildren > 0,
         `Naru observed ${seenChildren} native subagent(s) under the real worker while the turn ran (observe-only)`,
+      );
+    }
+    if (scenarios.has("ap17")) {
+      // Not a read-only command, so Claude asks before running it.
+      await turn(
+        "Bash 도구로 `python3 -c 'print(21*2)'` 명령을 한 번 실행하고, 출력된 숫자만 답해 줘.",
+      );
+      const paneState = async (): Promise<string> => {
+        const view = await get<View>(`/api/agent/projects/${projects.beta!}`);
+        const paneId = view.agents.find((agent) => agent.id === worker.id)?.paneId;
+        const workspace = await get<{ panes: { id: string; activity: { state: string } }[] }>(
+          `/api/projects/${projects.beta!}/workspace`,
+        );
+        return workspace.panes.find((pane) => pane.id === paneId)?.activity.state ?? "?";
+      };
+      await until(
+        () => get<{ turnActive: boolean }>(`/api/agent/agents/${worker.id}/runtime`),
+        (state) => state.turnActive,
+        "command turn started",
+        5 * 60_000,
+      );
+      const asked = await until(
+        async () => ({
+          view: await get<View>(`/api/agent/projects/${projects.beta!}`),
+          runtime: await get<{ turnActive: boolean; connected: boolean }>(
+            `/api/agent/agents/${worker.id}/runtime`,
+          ),
+        }),
+        ({ view, runtime }) =>
+          view.pendingApprovals.some((approval) => approval.agentSessionId === worker.id) ||
+          !runtime.turnActive,
+        "command approval requested or turn ended",
+        10 * 60_000,
+      );
+      if (!asked.view.pendingApprovals.some((approval) => approval.agentSessionId === worker.id)) {
+        throw new Error("the turn ended without asking for the command");
+      }
+      const waiting = await paneState();
+      await until(
+        () => get<{ turnActive: boolean }>(`/api/agent/agents/${worker.id}/runtime`),
+        (state) => !state.turnActive,
+        "approved turn ended",
+        10 * 60_000,
+        () => answerApprovals(projects.beta!, /^Bash/u),
+      );
+      const answered = await paneState();
+      report(
+        "AP17",
+        waiting === "interaction-required" && answered !== "interaction-required",
+        `while the real worker's command waited for the person its Pane was "${waiting}"; after the person approved it was "${answered}"`,
       );
     }
     if (scenarios.has("a08")) {

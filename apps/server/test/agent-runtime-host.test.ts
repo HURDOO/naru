@@ -393,7 +393,7 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
         "--strict-mcp-config",
       ]),
     );
-    expect(tuiArgs?.join(" ")).toContain("--setting-sources project,local");
+    expect(tuiArgs?.join(" ")).toContain("--setting-sources user,project,local");
     // The TUI form gets the same naru-orchestration guidance as the runner.
     expect(tuiArgs?.[tuiArgs.indexOf("--append-system-prompt") + 1]).toContain("## Role: worker");
     expect(() => supervisor.sendTurn(worker, "late", "orchestrator", 1)).toThrow();

@@ -127,7 +127,7 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
     socket과 token만 추가할 수 있다(응답 schema가 다른 키를 거부한다). token은 실행할 때마다 새로
     발급되어 이전 세대 runner는 다시 붙지 못한다.
   - `tui`: 같은 대화를 `claude --resume`으로 연다. Naru MCP 설정, bridge hook(`tui` mode), Pane 활동
-    hook, 역할별 model, `--setting-sources project,local`을 함께 넣는다.
+    hook, 역할별 model, `--setting-sources user,project,local`을 함께 넣는다(AP-D020).
   - 두 형태 모두 실행할 때마다 agent capability를 새로 발급하고 이전 것을 폐기한다.
 - writer gate(`stop-resume`): orchestrator와 Chat(gui)은 같은 runner를 쓰므로 바로 넘긴다. TUI로
   오가는 전환만 Pane process를 끝내고(Host session remove) 다른 형태로 다시 시작한다. TUI 쪽은 활동
@@ -198,8 +198,14 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
     명령당 8초.
   - worktree는 `ProjectCatalogService.register`로 연결한다. `agent_worktrees`가 부모 project를 기록한다.
     Core의 scope 검사는 에이전트의 project와 그 project에 묶인 worktree를 같은 범위로 본다.
-  - merge는 대상 checkout이 깨끗할 때 `--ff-only`로만 한다. 결과 commit을 artifact로 남긴다.
+  - merge는 대상 checkout이 깨끗할 때 `--no-ff` merge commit으로 한다(AP-D019). 충돌하면 `--abort`로
+    되돌리고 충돌 파일과 함께 거부한다. 신원은 project, 사용자 git config 순서로 읽고, 저장소 hook은
+    실행하지 않는다. 결과 commit을 artifact로 남긴다.
 - `interrupt_agent`는 supervisor의 writer gate를 거친다. 대화 writer가 orchestrator일 때만 보낸다.
+- 승인 대기 알림(AP-D021): supervisor가 승인 대기 여부가 바뀔 때 `attention`을 부른다.
+  `DurableHostSessionFacade.showAgentAttention`이 에이전트 Pane의 활동 상태를
+  `interaction-required`와 `idle` 사이에서 바꾼다. 그 뒤는 기존 활동 경로(Pane·project 표시, push,
+  clear)다. 웹은 그 알림이 관리형 에이전트 Pane을 가리키면 에이전트 화면에서 그 에이전트를 연다.
 - Handoff push: app이 Core 이벤트 `handoff.requested`를 받아 `notifyHandoff`를 부른다.
   - payload(`PushHandoffPayloadSchema`)는 ID와 종류만 담는다. 이유, 선택지, 환경은 서버에만 있다.
   - topic은 Handoff별이다. project의 clear 알림이 아직 전달되지 않은 Handoff 알림을 대체하지 않게 한다.

@@ -81,7 +81,8 @@ export class ClaudeRunner {
         env: this.#plan.environment,
         model: this.#plan.model,
         ...(this.#plan.resumeRef === null ? {} : { resume: this.#plan.resumeRef }),
-        settingSources: ["project", "local"],
+        // The person's own Claude settings too (AP-D020); Naru's flag settings take precedence.
+        settingSources: ["user", "project", "local"],
         settings: this.#plan.settings,
         mcpServers: this.#plan.mcpServers,
         strictMcpConfig: true,

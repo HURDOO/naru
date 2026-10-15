@@ -542,6 +542,32 @@ describe("Durable Host Naru Session facade", () => {
     expect(lifecycle.operations).not.toContain("stopSession");
     restartedRepository.close();
   });
+
+  it("shows a managed agent's pending approval as its Pane's input-needed state (AP-D017)", async () => {
+    const repository = new NaruRepository(":memory:", { sessionOwner: "durable-host" });
+    const paneId = terminalPane(repository);
+    const target = facade(repository, new FakeLifecycleClient());
+    const states: string[] = [];
+    target.onActivity((change) => states.push(change.activity.state));
+
+    // No runtime yet: no alert can name one.
+    target.showAgentAttention(paneId, true);
+    expect(states).toEqual([]);
+
+    repository.beginPaneRuntime(paneId, randomUUID());
+    target.showAgentAttention(paneId, true);
+    target.showAgentAttention(paneId, true);
+    target.showAgentAttention(paneId, false);
+    target.showAgentAttention(paneId, false);
+    expect(states).toEqual(["interaction-required", "idle"]);
+
+    // Leaving never overwrites a state the runtime's own hooks reported.
+    repository.setPaneActivity(paneId, "running");
+    target.showAgentAttention(paneId, false);
+    expect(repository.getPaneContext(paneId)?.pane.activity.state).toBe("running");
+    await target.shutdown();
+    repository.close();
+  });
 });
 
 class FakeLifecycleClient implements DurableSessionLifecycleClient {

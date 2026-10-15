@@ -241,7 +241,7 @@
 
 ## AP-D013. Gate 1에서 사용자 확인이 필요한 항목
 
-- 상태: proposed. 아래 기본값으로 진행하고, 사용자가 바꾸면 새 결정으로 반영한다.
+- 상태: accepted (2026-10-16, 사용자 확인). 1~3은 기본값대로 두고, 4는 AP-D020으로 바꿨다.
 - 1. OmO child 이력(V12): OmO가 끝난 subagent 세션을 10분 뒤 삭제한다.
   - 기본값: Naru는 저장하지 않는다. 실시간 관찰만 하고, 나중에 검토가 필요한 작업은 Naru managed agent로
     보낸다.
@@ -303,7 +303,7 @@
 
 ## AP-D016. Naru MCP L2~L6의 세부 범위: worktree, fast-forward merge, 사람 채널
 
-- 상태: proposed (2026-10-15). 아래 기본값으로 구현했다. 사용자가 바꾸면 새 결정으로 반영한다.
+- 상태: accepted (2026-10-16, 사용자 확인). L6 merge 방식은 AP-D019로 바꿨다.
 - 배경: AP-D004가 L1~L6을 정했고, 사용자는 L5·L6을 포함하라고 했다(K2). merge 방식과 main 보호는
   아직 정하지 않았다.
 - 결정(기본값):
@@ -354,7 +354,7 @@
 
 ## AP-D017. orchestrator가 대화를 쓰는 동안의 도구 승인
 
-- 상태: proposed (2026-10-15). 아래 기본값으로 구현했다. 사용자가 바꾸면 새 결정으로 반영한다.
+- 상태: accepted (2026-10-16, 사용자 확인). 승인 대기 알림은 AP-D021로 더했다.
 - 배경:
   - 관리형 에이전트의 도구 승인 요청은 대화 writer만 답할 수 있었다.
   - orchestrator는 승인에 답하는 도구가 없다. 그래서 orchestrator가 writer일 때(자율 진행)는 첫 명령이나
@@ -381,7 +381,7 @@
 
 ## AP-D018. OpenCode 관리형 어댑터는 v0에서 미룬다
 
-- 상태: proposed (2026-10-15). AP-T15("구현 여부와 범위는 V12 결과로 정한다")의 결정안이다.
+- 상태: accepted (2026-10-16, 사용자 확인). AP-T15("구현 여부와 범위는 V12 결과로 정한다")의 결정이다.
 - 근거(V12):
   - OpenCode는 공식 `serve` API와 `attach`로 진짜 live 공유가 되는 유일한 런타임이다.
   - 관리형으로 만들려면 다음이 필요하다.
@@ -401,3 +401,56 @@
   - 사용자가 AP-D013 1·2를 정한다.
   - OmO 관리형 세션이 필요한 실제 작업이 생긴다.
   - proxy listener의 보안 검토를 마친다.
+
+## AP-D019. merge_task는 merge commit으로 통합한다
+
+- 상태: accepted (2026-10-16, 사용자 결정). AP-D016의 L6 merge 방식(`--ff-only`)을 대체한다. 다른 L6
+  조건(merge gate, 깨끗한 checkout, push 없음, 결과 commit artifact)은 그대로다.
+- 배경: 사용자는 merge도 에이전트에게 맡기는 것이 보통이라며 merge commit을 자동으로 만들어도 된다고
+  했다. fast-forward만 하면 먼저 통합된 작업이 있을 때마다 rebase와 재리뷰가 필요했다.
+- 결정:
+  - `git merge --no-ff`로 작업마다 merge commit을 하나 만든다. 메시지는 `Merge <branch>: <작업 제목>`과
+    `Naru-Task: <task ID>` trailer다.
+  - 갈라진 branch도 충돌이 없으면 바로 통합한다. 재리뷰를 요구하지 않는다.
+  - 충돌하면 `git merge --abort`로 사람의 checkout을 merge 전 상태로 되돌리고 거부한다. 거부 메시지에
+    충돌 파일(최대 20개)을 담는다. 작업자는 task worktree에서 대상 branch를 merge해 충돌을 풀고, 다시
+    리뷰받은 뒤 통합한다. 되돌리기가 실패하면 사람에게 확인하라고 거부한다.
+  - commit 신원: Naru의 git은 사용자 global·system config 없이 실행한다(기존 경계). 그래서 신원은 project
+    local config, 사용자 `~/.gitconfig`, XDG git config 순서로 `user.name`·`user.email`만 읽는다. 셋 다
+    없으면 `Naru <naru@localhost>`다.
+  - Naru의 merge는 저장소 hook을 실행하지 않는다(`core.hooksPath=/dev/null`). hook은 서버의 최소 환경에서
+    실행돼 실패하거나 의도하지 않은 코드를 돌릴 수 있다.
+- 검증: workspace 테스트(merge commit, 신원, hook 미실행, 충돌 abort 뒤 깨끗한 checkout), fake 인수
+  A15(충돌 거부 → worktree에서 해결 → 재리뷰 → 통합).
+
+## AP-D020. 관리형 Claude 세션은 사용자 설정을 함께 불러온다
+
+- 상태: accepted (2026-10-16, 사용자 결정). AP-D013 4를 대체한다.
+- 배경: 사용자는 개인 설정이 에이전트에도 적용돼야 한다고 했다. AP-D013 4의 기본값은 검증 격리를 위한
+  보수적 선택이었고(V03), 운영상 이유는 없었다. 확인 결과 사용자 global hook은 다른 도구의 hook이고 그
+  도구의 환경 변수가 없으면 아무것도 하지 않는다.
+- 결정:
+  - runner와 TUI 모두 `user,project,local` 설정을 불러온다. 개인 skill, plugin, 권한 허용 규칙, hook이
+    에이전트에도 적용된다.
+  - Naru가 주입하는 flag 설정이 더 높은 우선순위다. 역할별 model, 권한 모드(runner), `mcp__naru` 허용,
+    messaging bridge hook은 그대로다. `disableAllHooks: false`를 함께 넣어 개인 설정이 bridge hook을 끄지
+    못하게 한다.
+  - MCP 서버는 지금처럼 Naru 서버만 쓴다(`strictMcpConfig`). capability가 묶인 `naru` 서버와 이름이
+    겹치지 않게 하기 위해서다.
+- 영향: 개인 권한 허용 규칙이 있으면 Inbox 승인 요청이 그만큼 줄어든다. 개인 hook이 무거우면 에이전트
+  turn도 느려진다.
+
+## AP-D021. 승인 대기는 기존 "입력 필요" 상태와 알림으로 알린다
+
+- 상태: accepted (2026-10-16, 사용자 결정). AP-D017에서 하지 않았던 승인 대기 알림이다.
+- 결정:
+  - 관리형 에이전트가 사람의 승인을 기다리기 시작하면 그 에이전트 Pane의 활동 상태를
+    `interaction-required`로 바꾼다. 승인이 모두 답해지거나 runtime이 끝나면 `idle`로 돌린다.
+  - 기존 경로를 그대로 탄다: Pane과 project의 "입력 필요" 표시, Web Push "입력 필요" 알림(사람이 활동
+    중이면 생략), 답한 뒤 기기에서 알림 지우기.
+  - 알림을 누르면 workspace 대신 에이전트 화면에서 그 에이전트를 연다. Pane의 launch profile이 관리형
+    에이전트일 때만 그렇다.
+  - 되돌릴 때는 상태가 아직 `interaction-required`일 때만 바꾼다. runtime의 자체 hook이 보고한 다른
+    상태는 덮어쓰지 않는다.
+- 하지 않은 것: 알림 문구는 기존 일반 문구("N개의 작업에 입력 또는 승인이 필요합니다")다. 무엇을
+  승인하는지는 알림에 넣지 않는다(AP-D003, 기존 push 원칙).

@@ -104,6 +104,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   #wakeups: OrchestratorWakeups | null = null;
   #startupTimer: NodeJS.Timeout | null = null;
   readonly #disconnectGraceMs: number;
+  readonly #attention: ((agentSessionId: string, required: boolean) => void) | undefined;
 
   constructor(options: {
     readonly core: AgentPlatformCore;
@@ -114,8 +115,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     readonly planFor: (agent: AgentSession) => AnyRunnerPlan;
     /** How long a vanished runtime may take to come back before it is `unknown`. */
     readonly disconnectGraceMs?: number;
+    /** Shows that an agent waits for the person's approval, and that it stopped waiting. */
+    readonly attention?: (agentSessionId: string, required: boolean) => void;
   }) {
     this.#disconnectGraceMs = options.disconnectGraceMs ?? DISCONNECT_GRACE_MS;
+    this.#attention = options.attention;
     this.#core = options.core;
     this.#launcher = options.launcher;
     this.#channelSocketPath = options.channelSocketPath;
@@ -357,6 +361,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       runtime.approvals.clear();
       runtime.children.clear();
       runtime.gate = { ...runtime.gate, turnActive: false };
+      this.#showAttention(connection.agentSessionId, runtime);
       let plan: AnyRunnerPlan;
       try {
         plan = this.#planFor(this.#core.getAgentSession(SYSTEM, connection.agentSessionId));
@@ -374,6 +379,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         runtime.approvals.set(requestId, { kind: "permission" });
       }
     }
+    this.#showAttention(connection.agentSessionId, runtime);
     if (hello.busy) runtime.gate = { ...runtime.gate, turnActive: true };
     connection.send({ type: "ack", seq: runtime.lastSeq });
     // A live runtime (Codex) fences its own TUI by the writer Naru remembers.
@@ -452,6 +458,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     runtime.approvals.clear();
     runtime.children.clear();
     runtime.gate = { ...runtime.gate, turnActive: false };
+    this.#showAttention(agentSessionId, runtime);
     this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "unknown" });
     this.#core.markInterruptedRunsUnknown(
       { actor: SYSTEM, idempotencyKey: randomUUID() },
@@ -507,14 +514,17 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           kind: event.kind,
           ...(event.summary === undefined ? {} : { summary: event.summary }),
         });
+        this.#showAttention(agentSessionId, runtime);
         return;
       case "approval-resolved":
         runtime.approvals.delete(event.requestId);
+        this.#showAttention(agentSessionId, runtime);
         return;
       case "exited":
         runtime.connection = null;
         runtime.approvals.clear();
         runtime.children.clear();
+        this.#showAttention(agentSessionId, runtime);
         this.#core.endRuntimeLaunch(SYSTEM, agentSessionId);
         // Stopped for a writer switch: the conversation continues in the other form.
         if (runtime.gate.phase !== "active") return;
@@ -538,6 +548,18 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           { agentSessionId, verbatim: event.text },
         );
         return;
+    }
+  }
+
+  /**
+   * A pending approval shows on the agent's Pane as the existing input-needed state, which also
+   * alerts the person's devices; answering it clears both (AP-D017).
+   */
+  #showAttention(agentSessionId: string, runtime: ManagedRuntime): void {
+    try {
+      this.#attention?.(agentSessionId, runtime.approvals.size > 0);
+    } catch {
+      // Display only: the approval itself stays pending in the Agent Panel and Inbox.
     }
   }
 

@@ -21,10 +21,14 @@
 
 ## 작업 흐름
 
-- 통합은 fast-forward만 한다. 갈라진 branch는 rebase와 재리뷰가 필요하다. push와 PR은 하지 않는다(AP-D016).
+- 통합은 merge commit으로 한다. 충돌은 Naru가 풀지 않는다. 되돌리고 거부하면 작업자가 worktree에서 풀고
+  다시 리뷰받는다. push와 PR은 하지 않는다(AP-D019).
+- Naru의 merge는 저장소 hook을 실행하지 않는다. commit-msg 같은 hook 규칙은 merge commit에 적용되지
+  않는다(AP-D019).
 - worktree는 project 옆, 승인된 root 안에만 만든다. git 명령은 하나에 8초를 넘으면 실패한다. 큰 저장소에서는
   worktree 생성이 실패할 수 있다.
-- 명령 실행 승인은 사람이 답해야 진행된다. 승인 대기 push는 아직 없다(AP-D017).
+- 명령 실행 승인은 사람이 답해야 진행된다. 알림은 기존 "입력 필요" 문구라서 무엇을 승인하는지는 Naru를
+  열어야 보인다(AP-D021).
 - 전역 Handoff(project 없음)는 push하지 않는다.
 
 ## 화면

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 import { buildApp } from "./app.js";
@@ -179,6 +181,10 @@ if (agentPlatform !== undefined && (agentPanes !== undefined || codexAgentPanes 
     launcher: launchers,
     channelSocketPath: runtimeChannelSocketPath(config.dataDir),
     planFor: (agent) => launchers.plan(agent),
+    attention: (agentSessionId, required) => {
+      const paneId = agentPlatform.getAgentSession({ kind: "system" }, agentSessionId).paneId;
+      if (paneId !== null) supervisor.showAgentAttention?.(paneId, required);
+    },
   });
   runtimeChannel = new RuntimeChannelServer(config.dataDir, managedAgents);
   wakeups = new OrchestratorWakeups(agentPlatform, managedAgents);
@@ -201,6 +207,11 @@ const agentWorkspace =
         pathPolicy,
         git: new SystemGitCommandRunner(undefined, AGENT_GIT_TIMEOUT_MS),
         registerProject: (realPath, name) => projectCatalog.register(realPath, name),
+        // Merge commits carry the person's git identity, as their own agent's merge would (AP-D019).
+        personGitConfigFiles: [
+          join(homedir(), ".gitconfig"),
+          join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "git", "config"),
+        ],
         checkViewPath: async (projectPath, kind, relativePath) => {
           if (kind === "docs") await new ProjectDocumentReader().read(projectPath, relativePath);
           else await new ProjectFileService().read(projectPath, relativePath, true);

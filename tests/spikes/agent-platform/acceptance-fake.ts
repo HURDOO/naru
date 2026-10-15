@@ -15,7 +15,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -494,8 +494,8 @@ async function orchestratorTurn(turn: Turn, person: Person): Promise<string> {
       continue;
     }
     remember(task.id, merged);
-    if (/cannot fast-forward/u.test(merged.message ?? "")) {
-      // A15: the branch diverged after another merge; rebase it and review it again.
+    if (/conflicts with/u.test(merged.message ?? "")) {
+      // A15: the other branch's merge conflicts with this one; resolve it in the worktree, review again.
       await turn.call("update_task", {
         task_id: task.id,
         expected_revision: task.revision,
@@ -506,9 +506,9 @@ async function orchestratorTurn(turn: Turn, person: Person): Promise<string> {
         scope_kind: "task",
         project_id: projectId,
         task_id: task.id,
-        verbatim: `REBASE ${task.id} onto main`,
+        verbatim: `MERGE main INTO ${task.id}`,
         origin_user_instruction_id: originOf(task.id),
-        idempotency_key: uuidFrom(`rebase:${task.id}:${rounds}`),
+        idempotency_key: uuidFrom(`sync:${task.id}:${rounds}`),
       });
     }
   }
@@ -638,11 +638,18 @@ async function workerTurn(turn: Turn): Promise<string> {
       await doTask(turn, assignment[1]!, assignment[2]!, assignment[3]!, assignment[4]);
       continue;
     }
-    const rebase = /^REBASE (\S+)/u.exec(said);
-    if (rebase !== null && once(`worker:${id}`)) {
-      const taskId = rebase[1]!;
+    const sync = /^MERGE main INTO (\S+)/u.exec(said);
+    if (sync !== null && once(`worker:${id}`)) {
+      const taskId = sync[1]!;
       const worktree = memory.worktrees.get(taskId)!;
-      git(worktree.path, "rebase", "--quiet", "main");
+      try {
+        git(worktree.path, "merge", "--quiet", "--no-edit", "main");
+      } catch {
+        // Both tasks added a line to the plan: keep both.
+        writeFileSync(join(worktree.path, "docs", "plan.md"), "# plan\n\n- screen\n- api\n");
+        git(worktree.path, "add", ".");
+        git(worktree.path, "commit", "--quiet", "--no-edit");
+      }
       await setStatus(turn, taskId, "review");
     }
   }
@@ -662,6 +669,8 @@ async function doTask(turn: Turn, taskId: string, kind: string, runId: string, w
   await setStatus(turn, taskId, "running");
   if (worktree !== undefined) {
     writeFileSync(join(worktree, `${kind}.ts`), `export const ${kind} = true;\n`);
+    // Both alpha tasks note themselves in the plan, so the later merge conflicts (A15).
+    writeFileSync(join(worktree, "docs", "plan.md"), `# plan\n\n- ${kind}\n`);
     git(worktree, "add", ".");
     git(worktree, "commit", "--quiet", "-m", `${kind} work`);
   }
@@ -988,13 +997,18 @@ try {
   );
   const log = git(paths.alpha, "log", "--format=%s", "main");
   const merges = git(paths.alpha, "rev-list", "--merges", "--count", "main");
+  const plan = readFileSync(join(paths.alpha, "docs", "plan.md"), "utf8");
+  const checkout = git(paths.alpha, "status", "--porcelain");
   check(
     "A15",
     log.includes("screen work") &&
       log.includes("api work") &&
-      merges === "0" &&
-      [...screenRefusals, ...apiRefusals].some((line) => line.includes("cannot fast-forward")),
-    `two worktrees integrated into alpha main by fast-forward (merge commits: ${merges}); the branch that diverged was refused, rebased in its worktree and re-reviewed before merging`,
+      Number(merges) >= 2 &&
+      plan.includes("- screen") &&
+      plan.includes("- api") &&
+      checkout === "" &&
+      [...screenRefusals, ...apiRefusals].some((line) => line.includes("conflicts with")),
+    `two worktrees integrated into alpha main by merge commits (${merges}); the conflicting one was refused without touching the checkout, merged main in its worktree, was reviewed again and merged`,
   );
   check(
     "A13",
@@ -1034,7 +1048,6 @@ try {
   process.stdout.write(
     `agents: ${JSON.stringify(agents.map((agent) => ({ role: agent.role, status: agent.status, pane: agent.paneId !== null, turns: turns.get(agent.id) ?? 0 })))}\n`,
   );
-  const { readFileSync } = await import("node:fs");
   for (const line of readFileSync(stack.logFile, "utf8").split("\n")) {
     if (line.includes('"agent.tool.failed"') || line.includes('"level":50')) {
       process.stdout.write(`log ${line.slice(0, 400)}\n`);

@@ -36,7 +36,9 @@ function git(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
-async function fixture(options: { readonly rootIsRepository?: boolean } = {}) {
+async function fixture(
+  options: { readonly rootIsRepository?: boolean; readonly personGitConfig?: string } = {},
+) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "naru-agent-workspace-")));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
   const repositoryPath = join(root, "app");
@@ -91,6 +93,9 @@ async function fixture(options: { readonly rootIsRepository?: boolean } = {}) {
     pathPolicy,
     git: new SystemGitCommandRunner(undefined, 8_000),
     registerProject: (realPath, name) => catalog.register(realPath, name),
+    ...(options.personGitConfig === undefined
+      ? {}
+      : { personGitConfigFiles: [join(root, "missing.gitconfig"), options.personGitConfig] }),
     checkViewPath: async (projectPath, _kind, relativePath) => {
       await new ProjectFileService().read(projectPath, relativePath, true);
     },
@@ -187,8 +192,21 @@ describe("Agent workspace tools (AP-D004 L5/L6, AP-D016)", () => {
     expect(git(f.repositoryPath, "branch", "--list", "naru/*")).toBe("");
   });
 
-  it("merges a reviewed branch by fast-forward only and never touches a dirty checkout", async () => {
-    const f = await fixture();
+  it("merges a reviewed branch with a merge commit and never touches a dirty checkout", async () => {
+    const configDirectory = mkdtempSync(join(tmpdir(), "naru-person-git-"));
+    cleanups.push(() => rmSync(configDirectory, { recursive: true, force: true }));
+    const personGitConfig = join(configDirectory, "gitconfig");
+    writeFileSync(personGitConfig, "[user]\n\tname = Person\n\temail = person@example.test\n");
+    const f = await fixture({ personGitConfig });
+    // Naru's git never runs repository hooks.
+    const marker = join(f.root, "hook-ran");
+    writeFileSync(
+      join(f.repositoryPath, ".git", "hooks", "post-merge"),
+      `#!/bin/sh\ntouch ${marker}\n`,
+      {
+        mode: 0o755,
+      },
+    );
     const first = f.task("로그인 화면");
     const second = f.task("세션 API");
     const one = await f.workspace.createWorktree(f.ctx(agent(f.orchestrator)), {
@@ -227,18 +245,55 @@ describe("Agent workspace tools (AP-D004 L5/L6, AP-D016)", () => {
 
     const merged = await f.workspace.merge(f.ctx(agent(f.orchestrator)), { taskId: first });
     const head = git(f.repositoryPath, "rev-parse", "HEAD");
-    expect(head).toBe(git(one.path, "rev-parse", "HEAD"));
     expect(merged).toMatchObject({ kind: "commit", reference: head });
-    expect(git(f.repositoryPath, "rev-list", "--merges", "--count", "HEAD")).toBe("0");
+    expect(git(f.repositoryPath, "rev-list", "--merges", "--count", "HEAD")).toBe("1");
+    expect(git(f.repositoryPath, "rev-parse", "HEAD^2")).toBe(git(one.path, "rev-parse", "HEAD"));
+    expect(git(f.repositoryPath, "log", "-1", "--format=%an <%ae>|%s|%b")).toBe(
+      `Person <person@example.test>|Merge ${one.branch}: 로그인 화면|Naru-Task: ${first}`,
+    );
+    expect(existsSync(marker)).toBe(false);
 
-    // The second branch started from the old main: it must be rebased and reviewed again.
+    // The second branch started from the old main: it merges with its own merge commit.
     f.pass(second);
-    const diverged = await expectCode(
-      f.workspace.merge(f.ctx(agent(f.orchestrator)), { taskId: second }),
+    await f.workspace.merge(f.ctx(agent(f.orchestrator)), { taskId: second });
+    expect(git(f.repositoryPath, "rev-list", "--merges", "--count", "HEAD")).toBe("2");
+    expect(existsSync(join(f.repositoryPath, "login.ts"))).toBe(true);
+    expect(existsSync(join(f.repositoryPath, "session.ts"))).toBe(true);
+
+    // A conflict is aborted: the person's checkout stays as it was and the agents resolve it.
+    const third = f.task("소개 문구");
+    const three = await f.workspace.createWorktree(f.ctx(agent(f.orchestrator)), {
+      taskId: third,
+      slug: "intro",
+    });
+    writeFileSync(join(three.path, "README.md"), "agent intro\n");
+    git(three.path, "commit", "--quiet", "-am", "intro");
+    writeFileSync(join(f.repositoryPath, "README.md"), "person intro\n");
+    git(f.repositoryPath, "commit", "--quiet", "-am", "person edit");
+    const before = git(f.repositoryPath, "rev-parse", "HEAD");
+    f.pass(third);
+    const conflict = await expectCode(
+      f.workspace.merge(f.ctx(agent(f.orchestrator)), { taskId: third }),
       "AGENT_INVALID_STATE",
     );
-    expect(diverged.message).toContain("cannot fast-forward");
-    expect(git(f.repositoryPath, "rev-parse", "HEAD")).toBe(head);
+    expect(conflict.message).toContain(`${three.branch} conflicts with main (README.md)`);
+    expect(git(f.repositoryPath, "rev-parse", "HEAD")).toBe(before);
+    expect(git(f.repositoryPath, "status", "--porcelain")).toBe("");
+    expect(existsSync(join(f.repositoryPath, ".git", "MERGE_HEAD"))).toBe(false);
+  });
+
+  it("names Naru on a merge commit when neither the project nor the person has a git identity", async () => {
+    const f = await fixture();
+    const only = f.task("문서");
+    const tree = await f.workspace.createWorktree(f.ctx(agent(f.orchestrator)), {
+      taskId: only,
+      slug: "docs",
+    });
+    writeFileSync(join(tree.path, "docs", "plan.md"), "# plan\n\n- one\n");
+    git(tree.path, "commit", "--quiet", "-am", "plan");
+    f.pass(only);
+    await f.workspace.merge(f.ctx(agent(f.orchestrator)), { taskId: only });
+    expect(git(f.repositoryPath, "log", "-1", "--format=%an <%ae>")).toBe("Naru <naru@localhost>");
   });
 
   it("opens a Files or Docs Pane marked as opened by an agent", async () => {

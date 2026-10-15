@@ -127,7 +127,7 @@ describe("Claude SDK runner", () => {
       pathToClaudeCodeExecutable: "/fixture/claude",
       cwd: "/fixture/project",
       model: "claude-opus-5-5",
-      settingSources: ["project", "local"],
+      settingSources: ["user", "project", "local"],
       strictMcpConfig: true,
       extraArgs: { name: "naru-000000000001" },
       forwardSubagentText: true,

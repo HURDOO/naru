@@ -66,6 +66,8 @@ import type { WorkspaceViewMode } from "./workspace-view";
 const LAST_PROJECT_KEY = "naru-last-project";
 const SCREEN_READER_MODE_KEY = "naru-screen-reader-mode";
 const TERMINAL_INPUT_TOOLS_MODE_KEY = "naru-terminal-input-tools-mode";
+/** Launch profiles of managed agents' Panes (server `launch-profiles.ts`). */
+const AGENT_LAUNCH_PROFILES: ReadonlySet<string> = new Set(["claude-agent", "codex-agent"]);
 
 type SidebarFocusTarget = "close" | "project-form" | "selected-action";
 
@@ -119,6 +121,8 @@ export default function App(): React.JSX.Element {
   );
   /** The Inbox item a handoff alert opened; the agent screen starts on it. */
   const [focusedHandoffId, setFocusedHandoffId] = useState<string | null>(null);
+  /** The agent whose Pane an input-needed alert named (an approval); the agent screen opens it. */
+  const [focusedAgentPaneId, setFocusedAgentPaneId] = useState<string | null>(null);
   const routingHandoffRef = useRef(false);
   const passkeyReturnFocusRef = useRef<HTMLElement | null>(null);
   const pushReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -717,6 +721,7 @@ export default function App(): React.JSX.Element {
         }
         setSidebarOpen(false);
         setSidebarPreviewOpen(false);
+        setFocusedAgentPaneId(null);
         setFocusedHandoffId(handoffTarget.handoffId);
         setMainView("agents");
       } catch (error) {
@@ -772,6 +777,22 @@ export default function App(): React.JSX.Element {
         }
         setSidebarOpen(false);
         setSidebarPreviewOpen(false);
+        // A managed agent waits for an approval, which is answered on the agent screen. Right
+        // after sign-in the agent API may not be known yet, so ask it here.
+        const agentScreen =
+          AGENT_LAUNCH_PROFILES.has(pane.launchProfile) &&
+          (agentsAvailable ||
+            (await api.agentOverview().then(
+              () => true,
+              () => false,
+            )));
+        if (agentScreen) {
+          setAgentsAvailable(true);
+          setFocusedHandoffId(null);
+          setFocusedAgentPaneId(pane.id);
+          setMainView("agents");
+          return;
+        }
         activatePane(pane.id);
         focusPaneSoon(pane.id);
       } catch (error) {
@@ -783,6 +804,8 @@ export default function App(): React.JSX.Element {
     })();
   }, [
     activatePane,
+    agentsAvailable,
+    api,
     authState,
     clearWorkspace,
     currentWorkspace,
@@ -1078,7 +1101,7 @@ export default function App(): React.JSX.Element {
             <>
               <MainViewTabs view={mainView} onChange={setMainView} />
               <AgentView
-                key={`${selectedProject.id}:${focusedHandoffId ?? ""}`}
+                key={`${selectedProject.id}:${focusedHandoffId ?? ""}:${focusedAgentPaneId ?? ""}`}
                 api={api}
                 projectId={selectedProject.id}
                 projects={projects}
@@ -1086,6 +1109,7 @@ export default function App(): React.JSX.Element {
                 onOpenPane={(paneId) => void openAgentPane(paneId)}
                 onSelectProject={selectProject}
                 initialHandoffId={focusedHandoffId}
+                initialAgentPaneId={focusedAgentPaneId}
               />
             </>
           ) : (

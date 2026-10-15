@@ -21,6 +21,11 @@ export interface AgentWorkspaceOptions {
   readonly git: GitCommandRunner;
   /** Registers a path as a Naru project (the catalog groups worktrees with their repository). */
   readonly registerProject: (realPath: string, name: string) => Promise<{ readonly id: string }>;
+  /**
+   * The person's own git config files (e.g. `~/.gitconfig`). Naru's git runs without them, so the
+   * merge commit's identity is read from them; the project's own identity comes first.
+   */
+  readonly personGitConfigFiles?: readonly string[];
   /** Throws when the path is not a readable document or file inside the project. */
   readonly checkViewPath: (
     projectPath: string,
@@ -30,9 +35,9 @@ export interface AgentWorkspaceOptions {
 }
 
 /**
- * Workspace and merge tools (AP-D004 L5/L6, AP-D016). Core decides who may act; this class does the
- * git and Naru project work. Naru never pushes and merges only by fast-forward, so a merge cannot
- * leave conflicts in the person's checkout.
+ * Workspace and merge tools (AP-D004 L5/L6, AP-D016, AP-D019). Core decides who may act; this class
+ * does the git and Naru project work. Naru never pushes. A merge commits on its own or not at all: a
+ * conflict is aborted, so it never leaves conflicts in the person's checkout.
  */
 export class AgentWorkspace {
   readonly #options: AgentWorkspaceOptions;
@@ -82,8 +87,9 @@ export class AgentWorkspace {
   }
 
   /**
-   * Fast-forwards the branch checked out in the task's project to the task's branch once the merge
-   * gate is open. Refuses a dirty checkout, a detached HEAD and a branch that diverged.
+   * Merges the task's branch into the branch checked out in the task's project with a merge commit
+   * once the merge gate is open (AP-D019). Refuses a dirty checkout and a detached HEAD; a conflict
+   * is aborted and refused, so the agents resolve it in the task's worktree.
    */
   async merge(context: CommandContext, input: { readonly taskId: string }): Promise<Artifact> {
     const { core } = this.#options;
@@ -115,17 +121,95 @@ export class AgentWorkspace {
         `The project checkout of ${target} has uncommitted changes; ask the person first.`,
       );
     }
-    await this.#git(project.path, root, ["merge", "--ff-only", "--quiet", `refs/heads/${branch}`], {
-      refusal:
-        `${branch} cannot fast-forward ${target}. Rebase the task branch onto ${target} in its ` +
-        "worktree, get it reviewed again, then merge.",
-    });
+    const before = (await this.#git(project.path, root, ["rev-parse", "HEAD"])).trim();
+    const title = task.title.replace(/\s+/gu, " ").trim().slice(0, 100);
+    try {
+      await this.#git(
+        project.path,
+        root,
+        [
+          "merge",
+          "--no-ff",
+          "--no-edit",
+          "--quiet",
+          "-m",
+          `Merge ${branch}: ${title}`,
+          "-m",
+          `Naru-Task: ${task.id}`,
+          `refs/heads/${branch}`,
+        ],
+        { config: [...MERGE_CONFIG, ...(await this.#identity(project.path, root))] },
+      );
+    } catch (error) {
+      throw await this.#refuseMerge(project.path, root, branch, target, error);
+    }
     const commit = (await this.#git(project.path, root, ["rev-parse", "HEAD"])).trim();
     return core.recordMerge(context, {
       taskId: task.id,
       commit,
-      summary: `${branch} → ${target} (fast-forward)`,
+      summary:
+        commit === before
+          ? `${branch} was already in ${target}`
+          : `${branch} → ${target} (merge commit)`,
     });
+  }
+
+  /**
+   * A failed merge that stopped on conflicts is aborted, so the person's checkout is as it was; the
+   * agents resolve the conflict in the task's worktree and get the result reviewed again.
+   */
+  async #refuseMerge(
+    cwd: string,
+    root: string,
+    branch: string,
+    target: string,
+    error: unknown,
+  ): Promise<unknown> {
+    const merging = await this.#git(cwd, root, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).then(
+      () => true,
+      () => false,
+    );
+    if (!merging) return error;
+    const conflicted = (
+      await this.#git(cwd, root, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")
+    )
+      .split("\n")
+      .filter((line) => line !== "");
+    const restored = await this.#git(cwd, root, ["merge", "--abort"]).then(
+      () => true,
+      () => false,
+    );
+    const files =
+      conflicted.length === 0
+        ? ""
+        : ` (${conflicted.slice(0, 20).join(", ")}${conflicted.length > 20 ? ", …" : ""})`;
+    return new AgentPlatformError(
+      "AGENT_INVALID_STATE",
+      restored
+        ? `${branch} conflicts with ${target}${files}. Merge ${target} into the task branch in its ` +
+            "worktree, resolve the conflicts, get it reviewed again, then merge."
+        : `${branch} conflicts with ${target}${files} and the merge could not be undone; ask the ` +
+            "person to look at the project checkout.",
+    );
+  }
+
+  /** The merge commit's identity: the project's own, else the person's, else Naru's. */
+  async #identity(cwd: string, root: string): Promise<readonly string[]> {
+    const sources = [
+      [],
+      ...(this.#options.personGitConfigFiles ?? []).map((file) => ["--file", file]),
+    ];
+    for (const source of sources) {
+      const read = (key: string) =>
+        this.#git(cwd, root, ["config", ...source, "--get", key]).then(
+          (value) => value.trim(),
+          () => "",
+        );
+      const name = await read("user.name");
+      const email = await read("user.email");
+      if (name !== "" && email !== "") return [`user.name=${name}`, `user.email=${email}`];
+    }
+    return ["user.name=Naru", "user.email=naru@localhost"];
   }
 
   /** Opens a Files or Docs Pane for the person, titled so they know an agent opened it. */
@@ -190,10 +274,11 @@ export class AgentWorkspace {
     cwd: string,
     root: string,
     args: readonly string[],
-    options: { readonly refusal?: string } = {},
+    options: { readonly refusal?: string; readonly config?: readonly string[] } = {},
   ): Promise<string> {
+    const config = (options.config ?? []).flatMap((entry) => ["-c", entry]);
     try {
-      return (await this.#options.git.run(cwd, root, args)).toString("utf8");
+      return (await this.#options.git.run(cwd, root, [...config, ...args])).toString("utf8");
     } catch (error) {
       if (error instanceof GitCommandError && error.reason === "exit") {
         throw new AgentPlatformError(
@@ -208,6 +293,9 @@ export class AgentWorkspace {
     }
   }
 }
+
+/** Naru's own git never runs repository code: hooks would run in the server with its bare env. */
+const MERGE_CONFIG = ["core.hooksPath=/dev/null"] as const;
 
 /** Lowercase letters, digits and dashes; what is left of the agent's label, never empty. */
 export function worktreeSlug(label: string): string {

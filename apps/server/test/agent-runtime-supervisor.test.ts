@@ -101,6 +101,7 @@ function setup() {
     environment: {},
   });
   const consoleLines: string[] = [];
+  const attention: boolean[] = [];
   let current: ManagedAgentSupervisor | null = null;
   const launcher = new ChildProcessRunnerLauncher({
     runnerEnvironment: (agentSessionId) => current!.runnerEnvironment(agentSessionId),
@@ -119,6 +120,9 @@ function setup() {
       launcher,
       channelSocketPath: runtimeChannelSocketPath(directory),
       planFor: (agent) => plan(agent.runtimeSessionRef),
+      attention: (agentSessionId, required) => {
+        if (agentSessionId === worker) attention.push(required);
+      },
     });
     current = supervisor;
     const server = new RuntimeChannelServer(directory, supervisor);
@@ -127,7 +131,7 @@ function setup() {
     return { core, supervisor, server };
   }
   const status = (core: AgentPlatformCore) => core.getAgentSession(HUMAN, worker).status;
-  return { naru, worker, status, consoleLines, ctx };
+  return { naru, worker, status, consoleLines, attention, ctx };
 }
 
 describe("managed agent supervisor with a real runner process", () => {
@@ -168,8 +172,11 @@ describe("managed agent supervisor with a real runner process", () => {
     await until(() => first.supervisor.pendingApprovals(fixture.worker).length === 1, "approval");
     const [approval] = first.supervisor.pendingApprovals(fixture.worker);
     expect(approval?.kind).toBe("file");
+    // The wait shows as the Pane's input-needed state, which alerts the person (AP-D017).
+    expect(fixture.attention.at(-1)).toBe(true);
     first.supervisor.respondApproval(fixture.worker, approval!.requestId, "approve", "gui", 2);
     await until(() => first.supervisor.pendingApprovals(fixture.worker).length === 0, "resolved");
+    expect(fixture.attention.at(-1)).toBe(false);
     await until(() => fixture.status(first.core) === "idle", "approved turn ends");
 
     const history = await first.supervisor.readHistory(fixture.worker, null);
