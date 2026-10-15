@@ -297,6 +297,10 @@ export const AgentEventTypeSchema = z.enum([
   "handoff.cancelled",
   "review.submitted",
   "artifact.published",
+  "shared_process.started",
+  "shared_process.updated",
+  "shared_process.hold_started",
+  "shared_process.hold_released",
 ]);
 export type AgentEventType = z.infer<typeof AgentEventTypeSchema>;
 
@@ -347,8 +351,21 @@ export const AgentCommandNameSchema = z.enum([
   "handoff.cancel",
   "review.submit",
   "artifact.publish",
+  "process.start",
+  "process.input",
+  "process.read",
+  "process.stop",
+  "agent.spawn",
 ]);
 export type AgentCommandName = z.infer<typeof AgentCommandNameSchema>;
+
+/** Shared processes (AP-D006): start in the own project, write and read while not held, stop. */
+const PROCESS_COMMANDS = [
+  "process.start",
+  "process.input",
+  "process.read",
+  "process.stop",
+] as const satisfies readonly AgentCommandName[];
 
 /**
  * Initial per-role command policy for agent actors (ARCHITECTURE §4). Human-only commands such as
@@ -361,6 +378,7 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "instruction.delegate",
     "message.send",
     "agent_session.register",
+    "agent.spawn",
     "handoff.request",
     "handoff.cancel",
   ],
@@ -376,9 +394,11 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "run.finish",
     "run.report_progress",
     "agent_session.register",
+    "agent.spawn",
     "handoff.request",
     "handoff.cancel",
     "artifact.publish",
+    ...PROCESS_COMMANDS,
   ],
   worker: [
     "state.read",
@@ -389,8 +409,16 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "handoff.request",
     "handoff.cancel",
     "artifact.publish",
+    ...PROCESS_COMMANDS,
   ],
-  reviewer: ["state.read", "message.send", "review.submit", "handoff.request", "handoff.cancel"],
+  reviewer: [
+    "state.read",
+    "message.send",
+    "review.submit",
+    "handoff.request",
+    "handoff.cancel",
+    "process.read",
+  ],
   specialist: [
     "state.read",
     "message.send",
@@ -398,8 +426,44 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "handoff.request",
     "handoff.cancel",
     "artifact.publish",
+    ...PROCESS_COMMANDS,
   ],
 };
+
+/**
+ * A terminal process an agent started through Naru (AP-D006, SOURCE_SPEC SharedProcess): a dev
+ * server or an interactive tool in a DurableSession Pane. Naru records it before the Host session
+ * exists. The creating agent holds it; a person may hold it (AP-D005) and it returns afterwards.
+ */
+export const SharedProcessStatusSchema = z.enum([
+  "starting",
+  "running",
+  "exited",
+  "failed",
+  "stopped",
+  "unknown",
+]);
+/** `run`: stopped when the starting Run finishes. `keep`: kept until someone stops it (A08). */
+export const SharedProcessKeepSchema = z.enum(["run", "keep"]);
+export const SharedProcessSchema = z.strictObject({
+  id: Id,
+  projectId: Id,
+  taskId: Id.nullable(),
+  runId: Id.nullable(),
+  agentSessionId: Id.nullable(),
+  purpose: Title,
+  /** Agent-written shell command, recorded verbatim (AP-D003). */
+  command: z.string().min(1).max(NARU_AGENT_LIMITS.freeTextCharacters),
+  ports: z.array(z.number().int().min(1).max(65_535)).max(8),
+  keep: SharedProcessKeepSchema,
+  paneId: Id.nullable(),
+  humanHoldSince: Timestamp.nullable(),
+  status: SharedProcessStatusSchema,
+  exitCode: z.number().int().nullable(),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+});
+export type SharedProcess = z.infer<typeof SharedProcessSchema>;
 
 /** Statuses a worker may set on a task assigned to it; completion goes through review. */
 export const WORKER_TASK_STATUSES = ["running", "blocked", "review"] as const;
@@ -449,6 +513,12 @@ export const CreateManagedAgentRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
 });
 export type CreateManagedAgentRequest = z.infer<typeof CreateManagedAgentRequestSchema>;
+
+/** A person takes over (or returns) an agent's shared process terminal (AP-D005, A09). */
+export const SetProcessHoldRequestSchema = z.strictObject({
+  held: z.boolean(),
+  idempotencyKey: IdempotencyKeySchema,
+});
 
 /** Writer generation the browser last saw; a stale one is fenced (INV-05). */
 const WriterGeneration = z.number().int().positive();

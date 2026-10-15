@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmodSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +16,7 @@ import {
   RuntimeChannelServer,
   runtimeChannelSocketPath,
 } from "../src/agent-runtime/runtime-channel-server.js";
+import { SharedProcessRuntime } from "../src/agent-runtime/shared-processes.js";
 import { ManagedAgentSupervisor } from "../src/agent-runtime/supervisor.js";
 import { NaruRepository } from "../src/database.js";
 import { DurableHostSessionFacade } from "../src/durable-session-facade.js";
@@ -124,7 +126,7 @@ async function startFixture() {
     subject: "fixture-owner",
     callerTtlMs: 50_000,
     idempotencyTtlMs: fixture.config.idempotencyTtlMs,
-    profileIds: ["claude-code"],
+    profileIds: ["claude-code", "shell"],
     roots: fixture.config.roots,
   };
   const repository = new NaruRepository(join(fixture.root, "naru.sqlite"), {
@@ -172,6 +174,14 @@ async function startFixture() {
       ...fixture.config,
       profiles: [
         {
+          // Agents' shared processes run in a plain shell (no user rc files).
+          profileId: "shell",
+          executable: "/bin/zsh",
+          args: ["-f"],
+          envPolicyId: "safe-env",
+          resourcePolicyId: "fixture-resource",
+        },
+        {
           profileId: "claude-code",
           executable: node,
           args: [
@@ -200,7 +210,11 @@ async function startFixture() {
         },
       ],
       resourcePolicies: [
-        { ...fixture.config.resourcePolicies[0], allowedExecutables: [node], stopTimeoutMs: 5_000 },
+        {
+          ...fixture.config.resourcePolicies[0],
+          allowedExecutables: [node, "/bin/zsh"],
+          stopTimeoutMs: 5_000,
+        },
       ],
       integrationPolicies: [
         {
@@ -390,4 +404,83 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     supervisor.stop(worker);
     await until(() => agent().status === "stopped", "stopped");
   }, 180_000);
+
+  it("runs an agent's shared process in a terminal Pane and hands it to a person and back", async () => {
+    const env = await startFixture();
+    const worker = env.registerWorker();
+    const asWorker: Actor = { kind: "agent", agentSessionId: worker };
+    const context = (actor: Actor) => ({ actor, idempotencyKey: randomUUID() });
+    const runtime = new SharedProcessRuntime({
+      core: env.core,
+      repository: env.repository,
+      sessions: () => env.facade,
+    });
+    cleanups.push(() => runtime.close());
+    const changed: string[] = [];
+    runtime.onChange((paneId) => changed.push(paneId));
+
+    const process = await runtime.start(context(asWorker), {
+      projectId: env.project.id,
+      purpose: "echo server",
+      command: "printf 'READY\\n'; read line; printf 'GOT-%s\\n' \"$line\"",
+      ports: [],
+      keep: "keep",
+    });
+    expect(process).toMatchObject({ status: "running", agentSessionId: worker });
+    const paneId = process.paneId!;
+    const workspace = env.repository.getWorkspace(env.project.id);
+    expect(workspace.panes.find((pane) => pane.id === paneId)).toMatchObject({
+      kind: "terminal",
+      launchProfile: "shell",
+    });
+    expect(isPaneCollapsed(workspace.layout, paneId)).toBe(true);
+    // A person looking at the Pane observes; the agent keeps control.
+    expect(runtime.humanMayControl(paneId)).toBe(false);
+
+    const screen = async () => (await runtime.read(asWorker, process.id, 40)).screen;
+    await untilAsync(async () => (await screen()).includes("READY"), "command ran");
+    await runtime.input(context(asWorker), process.id, "hello\r");
+    await untilAsync(async () => (await screen()).includes("GOT-hello"), "agent input");
+
+    await runtime.setHold(context(HUMAN), process.id, true, "takeover");
+    expect(runtime.humanMayControl(paneId)).toBe(true);
+    await expect(runtime.input(context(asWorker), process.id, "late\r")).rejects.toMatchObject({
+      code: "AGENT_HELD_BY_HUMAN",
+    });
+    await runtime.setHold(context(HUMAN), process.id, false, "release");
+    expect(runtime.humanMayControl(paneId)).toBe(false);
+    expect(changed).toEqual([paneId, paneId]);
+    await runtime.input(context(asWorker), process.id, "echo AGAIN-$((40+2))\r");
+    await untilAsync(async () => (await screen()).includes("AGAIN-42"), "input after the hold");
+    expect(
+      env.repository.agentPlatform.listSharedProcessInputs(process.id).map((row) => row.verbatim),
+    ).toEqual(["hello\r", "echo AGAIN-$((40+2))\r"]);
+
+    // Naru restarts: a new runtime reattaches to the surviving Host session and keeps going.
+    runtime.close();
+    const restarted = new SharedProcessRuntime({
+      core: env.core,
+      repository: env.repository,
+      sessions: () => env.facade,
+    });
+    cleanups.push(() => restarted.close());
+    await restarted.restore();
+    const reread = async () => (await restarted.read(asWorker, process.id, 40)).screen;
+    await untilAsync(async () => (await reread()).includes("AGAIN-42"), "screen after restart");
+    await restarted.input(context(asWorker), process.id, "echo AFTER-RESTART\r");
+    await untilAsync(async () => (await reread()).includes("AFTER-RESTART"), "input after restart");
+
+    const stopped = await restarted.stop(asWorker, process.id);
+    expect(stopped.status).toBe("stopped");
+    await until(() => !env.facade.isRunning(paneId), "terminal stopped");
+  }, 120_000);
 });
+
+async function untilAsync(check: () => Promise<boolean>, label: string, ms = 30_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  throw new Error(`timed out: ${label}`);
+}

@@ -220,6 +220,38 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE agent_shared_processes (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        task_id TEXT REFERENCES agent_tasks(id) ON DELETE SET NULL,
+        run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+        agent_session_id TEXT REFERENCES agent_sessions(id) ON DELETE SET NULL,
+        purpose TEXT NOT NULL,
+        command TEXT NOT NULL,
+        ports_json TEXT NOT NULL,
+        keep TEXT NOT NULL CHECK (keep IN ('run', 'keep')),
+        pane_id TEXT UNIQUE REFERENCES panes(id) ON DELETE SET NULL,
+        human_hold_since TEXT,
+        status TEXT NOT NULL CHECK (
+          status IN ('starting', 'running', 'exited', 'failed', 'stopped', 'unknown')
+        ),
+        exit_code INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX agent_shared_processes_project ON agent_shared_processes(project_id, status);
+
+      -- Input an agent sent to a shared process, verbatim (AP-D003). Human keys are never stored.
+      CREATE TABLE agent_shared_process_inputs (
+        id TEXT PRIMARY KEY,
+        process_id TEXT NOT NULL REFERENCES agent_shared_processes(id) ON DELETE CASCADE,
+        agent_session_id TEXT REFERENCES agent_sessions(id) ON DELETE SET NULL,
+        verbatim TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX agent_shared_process_inputs_process
+        ON agent_shared_process_inputs(process_id, created_at);
+
       CREATE TABLE agent_commands (
         actor_key TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,

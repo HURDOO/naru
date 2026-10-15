@@ -127,6 +127,16 @@ export class LeaseManager {
     return this.#state(owner, "preempted");
   }
 
+  /** Whether this connection is the controller now, whatever generation it last saw. */
+  isController(owner: LeaseOwner): boolean {
+    return this.#controller?.owner === owner;
+  }
+
+  /** Whether any of the person's devices currently holds the control surface. */
+  hasController(): boolean {
+    return this.#controller !== undefined;
+  }
+
   isMember(owner: LeaseOwner, generation: number): boolean {
     return this.#members.has(owner) && this.#generation === generation;
   }

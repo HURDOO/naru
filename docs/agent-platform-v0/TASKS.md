@@ -122,8 +122,34 @@
 
 ### AP-T12. 쓰기 권리와 Session 확장
 
-- [ ] 사람 기기 lease 범위 조정, Session holder와 hold(AP-D005), 에이전트 Session 생성(AP-D006),
-      SharedProcess, secure input(AP-D003). 회귀 검증: reconnect, 단일 controller handoff, 권한 거부.
+- [-] 사람 기기 lease 범위 조정, Session holder와 hold(AP-D005), 에이전트 Session 생성(AP-D006),
+  SharedProcess, secure input(AP-D003). 회귀 검증: reconnect, 단일 controller handoff, 권한 거부.
+- 진행(2026-10-15):
+  - 완료:
+    - SharedProcess
+      - v20 `agent_shared_processes`와 에이전트 입력 원문 기록 `agent_shared_process_inputs`
+      - Core가 먼저 기록한 뒤 실행기가 접힌 terminal Pane을 만들고 명령을 입력한다(AP-D006).
+      - `keep: run`인 process는 Run이 끝나면 정지한다.
+      - 재시작 뒤에는 살아 있는 Host session에 다시 붙는다.
+    - MCP 도구: `start_process`, `send_process_input`(재전송해도 한 번만 입력), `read_process_screen`
+      (headless terminal로 텍스트화, 저장하지 않음), `stop_process`, `list_processes`, `spawn_agent`
+      (부모 기록, 자기보다 낮은 역할만).
+    - holder와 hold
+      - 만든 에이전트만 입력할 수 있다. 사람이 hold하면 입력을 queue에 넣지 않고 거부한다.
+      - 반환은 명시적 해제, 기기 연결 끊김 유예, 입력 없는 idle 세 경우에 일어난다(`HoldMonitor`,
+        `NARU_AGENT_HOLD_IDLE_MS`, `NARU_AGENT_HOLD_DISCONNECT_MS`). 에이전트 대화와 process 모두 같다.
+    - 사람 기기 lease의 범위: 에이전트가 운영하는 Pane에는 lease가 있는 기기도 observer로 붙는다.
+      hold하면 에이전트가 먼저 제어권을 놓고 기기가 받는다. 반환 시에는 반대 순서다
+      (`PaneControlPolicy`). 에이전트 동작은 lease를 거치지 않는다.
+    - secure input의 서버 경계: `terminal.input.secure`
+      - bytes는 PTY에만 간다. Naru는 사람이 입력했다는 사실만 hold idle 판정에 쓴다.
+    - 테스트
+      - Core: 기록 순서, 권한 거부, hold 거부, 재전송, spawn, 자동 반환
+      - MCP: runtime 없음과 있음
+      - WebSocket: observer → controller → observer, secure input
+      - 격리 Host: 실제 shell 실행, 화면 읽기, 입력, hold, 재시작 뒤 재접속, 정지
+  - 남음: secure input 입력 UI(AP-T17에서 Pane UI와 함께 만들고 화면 검증), 바인딩 없는 Session 찾기
+    (AP-T10 reconciler)
 
 ## Phase 3: 런타임 어댑터
 

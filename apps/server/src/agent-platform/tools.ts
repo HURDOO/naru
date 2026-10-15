@@ -3,15 +3,44 @@ import { z } from "zod";
 import {
   AgentRuntimeSchema,
   AgentTaskStatusSchema,
+  SharedProcessKeepSchema,
   ArtifactKindSchema,
   HandoffKindSchema,
   NARU_AGENT_LIMITS,
   ReviewKindSchema,
   ReviewVerdictSchema,
   type Actor,
+  type AgentSession,
   type InstructionScope,
+  type SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
-import { AgentPlatformError, type AgentPlatformCore } from "./core.js";
+import { AgentPlatformError, type AgentPlatformCore, type CommandContext } from "./core.js";
+
+/**
+ * Runtime-backed operations (AP-D004 L2/L3) that need the Host or a runtime, not only Core. Absent
+ * when Naru runs without managed runtimes; the tools then answer AGENT_RUNTIME_UNAVAILABLE.
+ */
+export interface AgentToolRuntime {
+  readonly processes?: {
+    start(
+      context: CommandContext,
+      input: Parameters<AgentPlatformCore["startSharedProcess"]>[1],
+    ): Promise<SharedProcess>;
+    input(context: CommandContext, processId: string, text: string): Promise<SharedProcess>;
+    read(
+      actor: Actor,
+      processId: string,
+      lines: number,
+    ): Promise<{ readonly process: SharedProcess; readonly screen: string }>;
+    stop(actor: Actor, processId: string): Promise<SharedProcess>;
+  };
+  readonly agents?: {
+    spawn(
+      context: CommandContext,
+      input: { readonly projectId: string; readonly role: AgentSession["role"] },
+    ): Promise<AgentSession>;
+  };
+}
 
 /**
  * Agent-facing tools (AP-D004 L1). The same zod schema validates socket input and produces the MCP
@@ -21,7 +50,7 @@ export interface AgentTool {
   readonly name: string;
   readonly description: string;
   readonly input: z.ZodType;
-  run(core: AgentPlatformCore, actor: Actor, input: unknown): unknown;
+  run(core: AgentPlatformCore, actor: Actor, input: unknown, runtime?: AgentToolRuntime): unknown;
 }
 
 const Id = z.string().uuid();
@@ -38,13 +67,18 @@ function readTool<S extends z.ZodObject>(
   name: string,
   description: string,
   input: S,
-  run: (core: AgentPlatformCore, actor: Actor, input: z.infer<S>) => unknown,
+  run: (
+    core: AgentPlatformCore,
+    actor: Actor,
+    input: z.infer<S>,
+    runtime: AgentToolRuntime | undefined,
+  ) => unknown,
 ): AgentTool {
   return {
     name,
     description,
     input,
-    run: (core, actor, raw) => run(core, actor, input.parse(raw)),
+    run: (core, actor, raw, runtime) => run(core, actor, input.parse(raw), runtime),
   };
 }
 
@@ -56,6 +90,7 @@ function writeTool<S extends z.ZodObject>(
     core: AgentPlatformCore,
     context: { actor: Actor; idempotencyKey: string },
     input: z.infer<S>,
+    runtime: AgentToolRuntime | undefined,
   ) => unknown,
 ): AgentTool {
   const input = shape.extend({ idempotency_key: IdempotencyKey }).strict();
@@ -63,11 +98,30 @@ function writeTool<S extends z.ZodObject>(
     name,
     description,
     input,
-    run: (core, actor, raw) => {
+    run: (core, actor, raw, runtime) => {
       const parsed = input.parse(raw) as z.infer<S> & { idempotency_key?: string };
-      return run(core, { actor, idempotencyKey: parsed.idempotency_key ?? randomUUID() }, parsed);
+      return run(
+        core,
+        { actor, idempotencyKey: parsed.idempotency_key ?? randomUUID() },
+        parsed,
+        runtime,
+      );
     },
   };
+}
+
+function requireRuntime<K extends keyof AgentToolRuntime>(
+  runtime: AgentToolRuntime | undefined,
+  key: K,
+): NonNullable<AgentToolRuntime[K]> {
+  const part = runtime?.[key];
+  if (part === undefined) {
+    throw new AgentPlatformError(
+      "AGENT_RUNTIME_UNAVAILABLE",
+      "Naru runs without managed runtimes here.",
+    );
+  }
+  return part;
 }
 
 const HandoffFields = {
@@ -393,6 +447,76 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       core.readEvents(actor, {
         afterSeq: input.after_seq,
         ...(input.limit === undefined ? {} : { limit: input.limit }),
+      }),
+  ),
+  writeTool(
+    "start_process",
+    "Run a long-lived or interactive command (dev server, ansible) in a terminal the user can see " +
+      "in Naru. Naru records it first; use keep='run' to stop it when your run finishes. Never put " +
+      "secrets in the command.",
+    z.strictObject({
+      project_id: Id.optional(),
+      task_id: Id.optional(),
+      run_id: Id.optional(),
+      purpose: Text(NARU_AGENT_LIMITS.titleCharacters).describe("Short label shown to the user."),
+      command: Text().describe("Shell command line, typed into a login shell in the project."),
+      ports: z.array(z.number().int().min(1).max(65_535)).max(8).optional(),
+      keep: SharedProcessKeepSchema.default("keep"),
+    }),
+    (core, context, input, runtime) =>
+      requireRuntime(runtime, "processes").start(context, {
+        projectId: ownProject(core, context.actor, input.project_id),
+        ...(input.task_id === undefined ? {} : { taskId: input.task_id }),
+        ...(input.run_id === undefined ? {} : { runId: input.run_id }),
+        purpose: input.purpose,
+        command: input.command,
+        ports: input.ports ?? [],
+        keep: input.keep,
+      }),
+  ),
+  writeTool(
+    "send_process_input",
+    "Type into your own process (include \\r to press Enter); recorded verbatim. Fails with " +
+      "AGENT_HELD_BY_HUMAN while the user holds it. Never type secrets: when a password or secret " +
+      "is asked for, request a terminal-control handoff instead.",
+    z.strictObject({ process_id: Id, text: z.string().min(1).max(4_096) }),
+    (_core, context, input, runtime) =>
+      requireRuntime(runtime, "processes").input(context, input.process_id, input.text),
+  ),
+  readTool(
+    "read_process_screen",
+    "Read the process's current screen and recent output as plain text (not stored by Naru).",
+    z.strictObject({ process_id: Id, lines: z.number().int().min(1).max(400).optional() }),
+    (_core, actor, input, runtime) =>
+      requireRuntime(runtime, "processes").read(actor, input.process_id, input.lines ?? 80),
+  ),
+  readTool(
+    "stop_process",
+    "Stop a process you started (orchestrators may stop any process of their project).",
+    z.strictObject({ process_id: Id }),
+    (_core, actor, input, runtime) =>
+      requireRuntime(runtime, "processes").stop(actor, input.process_id),
+  ),
+  readTool(
+    "list_processes",
+    "List the shared processes of a project with their status, ports and holder.",
+    z.strictObject({ project_id: Id.optional() }),
+    (core, actor, input) =>
+      core.listSharedProcesses(actor, ownProject(core, actor, input.project_id)),
+  ),
+  writeTool(
+    "spawn_agent",
+    "Start a new Naru-managed agent session in a project (visible and controllable in Naru). Use it " +
+      "for separate, long, shared-write or human-facing work instead of a native subagent; then " +
+      "give it work with `delegate`.",
+    z.strictObject({
+      project_id: Id.optional(),
+      role: z.enum(["project-orchestrator", "worker", "reviewer", "specialist"]),
+    }),
+    (core, context, input, runtime) =>
+      requireRuntime(runtime, "agents").spawn(context, {
+        projectId: ownProject(core, context.actor, input.project_id),
+        role: input.role,
       }),
   ),
 ];

@@ -24,6 +24,7 @@ import {
   type Plan,
   type Review,
   type Run,
+  type SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
 import type { AgentPlatformStore } from "./store.js";
 
@@ -902,6 +903,262 @@ export class AgentPlatformCore {
   }
 
   /**
+   * An agent starts a Naru-managed agent session below its own role (AP-D006, K4). The parent link
+   * is recorded so the new session shows under its creator in Naru.
+   */
+  spawnAgentSession(
+    context: CommandContext,
+    input: { readonly projectId: string; readonly role: AgentRole },
+  ): AgentSession {
+    const agent = this.#authorize(context.actor, "agent.spawn", input.projectId);
+    return this.registerAgentSession(context, {
+      projectId: input.projectId,
+      role: input.role,
+      runtime: "claude",
+      native: false,
+      observation: "transcript",
+      conversationWriter: "orchestrator",
+      ...(agent === null ? {} : { parentAgentSessionId: agent.id }),
+    });
+  }
+
+  // Shared processes (AP-D006, AP-D005) ----------------------------------------------------------
+
+  /**
+   * Records a process an agent wants to run before any Host session exists (AP-D006): project,
+   * task, run, agent, purpose, the verbatim command and ports. The runtime then creates the Pane.
+   */
+  startSharedProcess(
+    context: CommandContext,
+    input: {
+      readonly projectId: string;
+      readonly taskId?: string;
+      readonly runId?: string;
+      readonly purpose: string;
+      readonly command: string;
+      readonly ports: readonly number[];
+      readonly keep: SharedProcess["keep"];
+    },
+  ): SharedProcess {
+    const agent = this.#authorize(context.actor, "process.start", input.projectId);
+    return this.#command(
+      context,
+      "process.start",
+      input,
+      "shared_process",
+      (events) => {
+        this.#requireProject(input.projectId);
+        if (input.taskId !== undefined) this.#requireTaskInProject(input.taskId, input.projectId);
+        if (input.runId !== undefined) {
+          const run = this.#requireRun(input.runId);
+          if (agent !== null && run.agentSessionId !== agent.id) {
+            throw new AgentPlatformError("AGENT_SCOPE_DENIED", "The run belongs to another agent.");
+          }
+        }
+        if (input.keep === "run" && input.runId === undefined) {
+          throw new AgentPlatformError(
+            "AGENT_INVALID_REFERENCE",
+            "A process tied to its run needs the run.",
+          );
+        }
+        const now = this.#timestamp();
+        const process: SharedProcess = {
+          id: this.#newId(),
+          projectId: input.projectId,
+          taskId: input.taskId ?? null,
+          runId: input.runId ?? null,
+          agentSessionId: agent?.id ?? null,
+          purpose: input.purpose,
+          command: input.command,
+          ports: [...input.ports],
+          keep: input.keep,
+          paneId: null,
+          humanHoldSince: null,
+          status: "starting",
+          exitCode: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        this.#store.insertSharedProcess(process);
+        events.push({
+          type: "shared_process.started",
+          projectId: process.projectId,
+          subjectId: process.id,
+          correlationId: process.runId,
+          data: { keep: process.keep, ports: process.ports.join(","), taskId: process.taskId },
+        });
+        return process.id;
+      },
+      (id) => this.#requireSharedProcess(id),
+    );
+  }
+
+  getSharedProcess(actor: Actor, processId: string): SharedProcess {
+    const process = this.#requireSharedProcess(processId);
+    this.#authorize(actor, "process.read", process.projectId);
+    return process;
+  }
+
+  listSharedProcesses(actor: Actor, projectId: string): SharedProcess[] {
+    this.#authorize(actor, "state.read", projectId);
+    return this.#store.listSharedProcesses({ projectId });
+  }
+
+  /** Processes to stop when their run ends (keep = "run"). */
+  sharedProcessesForRun(actor: Actor, runId: string): SharedProcess[] {
+    this.#requireSystemOrHuman(actor);
+    return this.#store.listSharedProcesses({ runId });
+  }
+
+  /**
+   * Agent input to its own process, recorded verbatim (AP-D003). The creating agent is the holder;
+   * while a person holds the process the input is refused, not queued (AP-D005).
+   */
+  recordSharedProcessInput(
+    context: CommandContext,
+    input: { readonly processId: string; readonly text: string },
+  ): { readonly process: SharedProcess; readonly replayed: boolean } {
+    // A retried call (same key, e.g. after a Naru restart) must not type the input twice.
+    const replayed = this.commandRecorded(context.actor, context.idempotencyKey);
+    const process = this.#command(
+      context,
+      "process.input",
+      input,
+      "shared_process",
+      () => {
+        const current = this.#requireSharedProcess(input.processId);
+        const agent = this.#authorize(context.actor, "process.input", current.projectId);
+        if (agent !== null && current.agentSessionId !== agent.id) {
+          throw new AgentPlatformError(
+            "AGENT_SCOPE_DENIED",
+            "Only the agent that started the process writes to it; ask it or request a handoff.",
+          );
+        }
+        this.#assertProcessWritable(current);
+        if (agent !== null) {
+          this.#store.insertSharedProcessInput({
+            id: this.#newId(),
+            processId: current.id,
+            agentSessionId: agent.id,
+            verbatim: input.text,
+            createdAt: this.#timestamp(),
+          });
+        }
+        return current.id;
+      },
+      (id) => this.#requireSharedProcess(id),
+    );
+    return { process, replayed };
+  }
+
+  /** The creating agent, an orchestrator of the project, or a person may stop a process. */
+  authorizeSharedProcessStop(actor: Actor, processId: string): SharedProcess {
+    const process = this.#requireSharedProcess(processId);
+    const agent = this.#authorize(actor, "process.stop", process.projectId);
+    if (
+      agent !== null &&
+      process.agentSessionId !== agent.id &&
+      agent.role !== "project-orchestrator"
+    ) {
+      throw new AgentPlatformError("AGENT_SCOPE_DENIED", "Another agent's process.");
+    }
+    return process;
+  }
+
+  bindSharedProcessPane(actor: Actor, processId: string, paneId: string): SharedProcess {
+    this.#requireSystem(actor);
+    const process = this.#requireSharedProcess(processId);
+    const next = { ...process, paneId, updatedAt: this.#timestamp() };
+    this.#store.updateSharedProcess(next);
+    return next;
+  }
+
+  updateSharedProcessState(
+    actor: Actor,
+    input: {
+      readonly processId: string;
+      readonly status: SharedProcess["status"];
+      readonly exitCode?: number | null;
+    },
+  ): SharedProcess {
+    this.#requireSystem(actor);
+    const appended: AgentEvent[] = [];
+    const updated = this.#store.transaction(() => {
+      const process = this.#requireSharedProcess(input.processId);
+      const exitCode = input.exitCode === undefined ? process.exitCode : input.exitCode;
+      if (process.status === input.status && process.exitCode === exitCode) return process;
+      const next: SharedProcess = {
+        ...process,
+        status: input.status,
+        exitCode,
+        updatedAt: this.#timestamp(),
+      };
+      this.#store.updateSharedProcess(next);
+      appended.push(
+        this.#store.appendEvent({
+          id: this.#newId(),
+          type: "shared_process.updated",
+          projectId: process.projectId,
+          actor,
+          subjectId: process.id,
+          correlationId: process.runId,
+          data: { status: next.status, previousStatus: process.status, exitCode },
+          createdAt: next.updatedAt,
+        }),
+      );
+      return next;
+    });
+    this.#emit(appended);
+    return updated;
+  }
+
+  /**
+   * A person takes over a process (AP-D005 "직접 개입") or Naru returns it: explicitly, after the
+   * person's device stayed disconnected, or after no human input for a while.
+   */
+  setSharedProcessHold(
+    context: CommandContext,
+    input: {
+      readonly processId: string;
+      readonly held: boolean;
+      readonly reason: "takeover" | "release" | "disconnect-timeout" | "idle-timeout";
+    },
+  ): SharedProcess {
+    if (context.actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only a human or Naru changes a hold.");
+    }
+    return this.#command(
+      context,
+      "shared_process.hold",
+      input,
+      "shared_process",
+      (events) => {
+        const process = this.#requireSharedProcess(input.processId);
+        if (input.held === (process.humanHoldSince !== null)) return process.id;
+        const now = this.#timestamp();
+        this.#store.updateSharedProcess({
+          ...process,
+          humanHoldSince: input.held ? now : null,
+          updatedAt: now,
+        });
+        events.push({
+          type: input.held ? "shared_process.hold_started" : "shared_process.hold_released",
+          projectId: process.projectId,
+          subjectId: process.id,
+          correlationId: process.runId,
+          data: {
+            reason: input.reason,
+            heldSince: process.humanHoldSince,
+            agentSessionId: process.agentSessionId,
+          },
+        });
+        return process.id;
+      },
+      (id) => this.#requireSharedProcess(id),
+    );
+  }
+
+  /**
    * Mints the bearer capability that binds MCP calls to this agent session (AP-D004, V13). The
    * token is returned once and only its digest is stored. It proves accountability, not isolation:
    * agents run as the same OS user.
@@ -1481,6 +1738,7 @@ export class AgentPlatformCore {
       command !== "state.read" &&
       command !== "instruction.delegate" &&
       command !== "agent_session.register" &&
+      command !== "agent.spawn" &&
       command !== "handoff.request" &&
       command !== "handoff.cancel"
     ) {
@@ -1579,6 +1837,34 @@ export class AgentPlatformCore {
       );
     }
     return latest.id;
+  }
+
+  #requireSharedProcess(id: string): SharedProcess {
+    return this.#store.getSharedProcess(id) ?? throwNotFound("shared process");
+  }
+
+  #assertProcessWritable(process: SharedProcess): void {
+    if (process.humanHoldSince !== null) {
+      throw new AgentPlatformError(
+        "AGENT_HELD_BY_HUMAN",
+        "A person is using this process; wait for shared_process.hold_released.",
+      );
+    }
+    if (process.status !== "running" && process.status !== "starting") {
+      throw new AgentPlatformError("AGENT_INVALID_STATE", "The process is not running.");
+    }
+  }
+
+  #requireSystem(actor: Actor): void {
+    if (actor.kind !== "system") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only Naru's runtime reports this.");
+    }
+  }
+
+  #requireSystemOrHuman(actor: Actor): void {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Agents cannot list this.");
+    }
   }
 
   #requireHuman(actor: Actor): void {

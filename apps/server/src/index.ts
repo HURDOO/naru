@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 import { buildApp } from "./app.js";
@@ -26,6 +27,9 @@ import {
   runtimeChannelSocketPath,
 } from "./agent-runtime/runtime-channel-server.js";
 import { ManagedAgentSupervisor } from "./agent-runtime/supervisor.js";
+import { SharedProcessRuntime } from "./agent-runtime/shared-processes.js";
+import { HoldMonitor } from "./agent-runtime/hold-monitor.js";
+import { LeaseManager } from "./lease.js";
 import type { NaruSessionFacade } from "./session-facade.js";
 
 const projectRoot = new URL("../../../", import.meta.url);
@@ -148,7 +152,52 @@ if (agentPlatform !== undefined && agentPanes !== undefined) {
   wakeups = new OrchestratorWakeups(agentPlatform, managedAgents);
   managedAgents.useWakeups(wakeups);
 }
+// Agents' shared processes (AP-D006) run in Host PTY Panes like managed agents.
+const sharedProcesses =
+  agentPlatform !== undefined && sessionRuntime.owner === "durable-host"
+    ? new SharedProcessRuntime({ core: agentPlatform, repository, sessions: () => supervisor })
+    : undefined;
+await sharedProcesses?.restore();
+agentSocket?.useRuntime({
+  ...(sharedProcesses === undefined ? {} : { processes: sharedProcesses }),
+  ...(managedAgents === undefined
+    ? {}
+    : { agents: { spawn: (context, input) => managedAgents.spawn(context, input) } }),
+});
+const leaseManager = new LeaseManager();
+const holdMonitor =
+  agentPlatform === undefined || config.agentHoldTimeouts === undefined
+    ? undefined
+    : new HoldMonitor({
+        store: repository.agentPlatform,
+        humanConnected: () => leaseManager.hasController(),
+        idleMs: config.agentHoldTimeouts.idleMs,
+        disconnectMs: config.agentHoldTimeouts.disconnectMs,
+        release: {
+          agent: async (agentSessionId, reason) => {
+            // Back to the orchestrator first, then lift the hold so a woken orchestrator can write.
+            await managedAgents
+              ?.switchWriter(agentSessionId, "orchestrator", false)
+              .catch(() => undefined);
+            agentPlatform.setHumanHold(
+              { actor: { kind: "system" }, idempotencyKey: randomUUID() },
+              { agentSessionId, held: false, reason },
+            );
+          },
+          process: async (processId, reason) => {
+            await sharedProcesses?.setHold(
+              { actor: { kind: "system" }, idempotencyKey: randomUUID() },
+              processId,
+              false,
+              reason,
+            );
+          },
+        },
+      });
+holdMonitor?.start();
 const closeAgents = async (): Promise<void> => {
+  holdMonitor?.close();
+  sharedProcesses?.close();
   wakeups?.close();
   managedAgents?.close();
   await runtimeChannel?.close();
@@ -165,6 +214,13 @@ try {
     supervisor,
     ...(agentPlatform === undefined ? {} : { agentPlatform }),
     ...(managedAgents === undefined ? {} : { agentRuntime: managedAgents }),
+    ...(sharedProcesses === undefined
+      ? {}
+      : { sharedProcesses, paneControlPolicy: sharedProcesses }),
+    ...(holdMonitor === undefined
+      ? {}
+      : { noteHumanInput: (target) => holdMonitor.noteHumanInput(target) }),
+    leaseManager,
   });
 } catch (error) {
   await closeAgents();

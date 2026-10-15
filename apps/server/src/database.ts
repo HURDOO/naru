@@ -1492,29 +1492,64 @@ export class NaruRepository {
           const bound = this.getPaneContext(agent.paneId)?.pane;
           if (bound !== undefined) return bound;
         }
-        const workspace = this.getWorkspace(agent.projectId);
-        const now = new Date().toISOString();
-        const pane = createPaneRecord(agent.projectId, "claude", title, CLAUDE_AGENT_LAUNCH_PROFILE, now);
-        const layout = insertCollapsedPane(workspace.layout, pane.id);
-        const activePaneId = workspace.activePaneId ?? pane.id;
-        assertWorkspaceState(
-          layout,
-          activePaneId,
-          new Set([...workspace.panes.map((existing) => existing.id), pane.id]),
+        return this.#insertCollapsedPane(
+          agent.projectId,
+          "claude",
+          title,
+          CLAUDE_AGENT_LAUNCH_PROFILE,
+          (paneId, now) => this.agentPlatform.bindAgentPane(agentSessionId, paneId, now),
         );
-        this.#insertPane(pane);
-        this.agentPlatform.bindAgentPane(agentSessionId, pane.id, now);
-        const result = this.#database
-          .prepare(
-            `UPDATE workspaces
-           SET version = version + 1, layout_json = ?, active_pane_id = ?, updated_at = ?
-           WHERE project_id = ? AND version = ?`,
-          )
-          .run(JSON.stringify(layout), activePaneId, now, agent.projectId, workspace.version);
-        assertWorkspaceUpdated(result.changes);
-        return pane;
       })
       .immediate();
+  }
+
+  /** The terminal Pane of an agent's shared process (AP-D006), added collapsed like agent Panes. */
+  createSharedProcessPane(processId: string, title: string): Pane {
+    return this.#database
+      .transaction(() => {
+        const process = this.agentPlatform.getSharedProcess(processId);
+        if (process === null) {
+          throw new AppError("AGENT_NOT_FOUND", 404, "공유 프로세스를 찾을 수 없습니다.");
+        }
+        if (process.paneId !== null) {
+          const bound = this.getPaneContext(process.paneId)?.pane;
+          if (bound !== undefined) return bound;
+        }
+        return this.#insertCollapsedPane(process.projectId, "terminal", title, "shell", (paneId, now) =>
+          this.agentPlatform.updateSharedProcess({ ...process, paneId, updatedAt: now }),
+        );
+      })
+      .immediate();
+  }
+
+  #insertCollapsedPane(
+    projectId: string,
+    kind: PaneKind,
+    title: string,
+    launchProfile: string,
+    bind: (paneId: string, now: string) => void,
+  ): Pane {
+    const workspace = this.getWorkspace(projectId);
+    const now = new Date().toISOString();
+    const pane = createPaneRecord(projectId, kind, title, launchProfile, now);
+    const layout = insertCollapsedPane(workspace.layout, pane.id);
+    const activePaneId = workspace.activePaneId ?? pane.id;
+    assertWorkspaceState(
+      layout,
+      activePaneId,
+      new Set([...workspace.panes.map((existing) => existing.id), pane.id]),
+    );
+    this.#insertPane(pane);
+    bind(pane.id, now);
+    const result = this.#database
+      .prepare(
+        `UPDATE workspaces
+           SET version = version + 1, layout_json = ?, active_pane_id = ?, updated_at = ?
+           WHERE project_id = ? AND version = ?`,
+      )
+      .run(JSON.stringify(layout), activePaneId, now, projectId, workspace.version);
+    assertWorkspaceUpdated(result.changes);
+    return pane;
   }
 
   saveWorkspace(projectId: string, input: SaveWorkspaceRequest): Workspace {

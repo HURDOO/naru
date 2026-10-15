@@ -68,6 +68,19 @@ const RawConfigSchema = z.object({
   NARU_AGENT_PLATFORM: z.enum(["0", "1"]).default("0"),
   /** User-installed Claude Agent SDK entry (AP-D012); managed Claude agents need it. */
   NARU_CLAUDE_AGENT_SDK_PATH: z.string().min(1).optional(),
+  /** AP-D005 hold auto-return; operating values are decided last (AP-D007). */
+  NARU_AGENT_HOLD_IDLE_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .max(24 * 60 * 60_000)
+    .default(30 * 60_000),
+  NARU_AGENT_HOLD_DISCONNECT_MS: z.coerce
+    .number()
+    .int()
+    .min(10_000)
+    .max(24 * 60 * 60_000)
+    .default(5 * 60_000),
   NARU_CODEX_INTEGRATION_SOCKET_PATH: z.string().min(1).optional(),
   NARU_TLS_STATE_DIR: z.string().min(1).optional(),
   NARU_TLS_RELOAD_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).optional(),
@@ -142,6 +155,7 @@ interface AppConfigBase {
   defaultAgentPaneKind?: "codex" | "claude";
   agentPlatform?: boolean;
   claudeAgentSdkPath?: string;
+  agentHoldTimeouts?: { readonly idleMs: number; readonly disconnectMs: number };
   codexIntegrationSocketPath?: string;
   tls?: TlsConfig;
   push?: PushConfig;
@@ -237,6 +251,10 @@ export function loadConfig(
     appBasePath: parseNaruAppBasePath(raw.NARU_APP_BASE_PATH),
     defaultAgentPaneKind: raw.NARU_DEFAULT_AGENT_PANE_KIND,
     agentPlatform: raw.NARU_AGENT_PLATFORM === "1",
+    agentHoldTimeouts: {
+      idleMs: raw.NARU_AGENT_HOLD_IDLE_MS,
+      disconnectMs: raw.NARU_AGENT_HOLD_DISCONNECT_MS,
+    },
     ...(raw.NARU_CLAUDE_AGENT_SDK_PATH === undefined
       ? {}
       : {

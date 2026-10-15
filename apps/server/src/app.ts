@@ -57,7 +57,9 @@ import { AgentPlatformError, type AgentPlatformCore } from "./agent-platform/cor
 import {
   registerAgentPlatformRoutes,
   type AgentRuntimeControl,
+  type SharedProcessControl,
 } from "./agent-platform/http-routes.js";
+import { OPEN_PANE_CONTROL, type PaneControlPolicy } from "./agent-runtime/shared-processes.js";
 import { Observability, safeErrorFields } from "./observability.js";
 import type { ProjectPathPolicy } from "./path-policy.js";
 import { ProjectCatalogService } from "./project-catalog.js";
@@ -140,6 +142,12 @@ export interface AppDependencies {
   agentPlatform?: AgentPlatformCore;
   /** Managed agent runtimes (durable Host mode with a configured Claude Agent SDK). */
   agentRuntime?: AgentRuntimeControl;
+  /** Agents' shared processes (durable Host mode with the Agent Platform). */
+  sharedProcesses?: SharedProcessControl;
+  /** Which Panes a person's controller device should control; agent-run Panes wait for a hold. */
+  paneControlPolicy?: PaneControlPolicy;
+  /** Notes that a person typed into a Pane or wrote to an agent (hold idle timeout, AP-D005). */
+  noteHumanInput?: (target: { readonly paneId: string } | { readonly agentSessionId: string }) => void;
 }
 
 export async function buildApp(
@@ -212,6 +220,7 @@ export async function buildApp(
       new GitMetadataAdapter(dependencies.pathPolicy),
     );
   const leases = dependencies.leaseManager ?? new LeaseManager();
+  const paneControl = dependencies.paneControlPolicy ?? OPEN_PANE_CONTROL;
   const legacySessionRuntime = config.sessionRuntime?.owner !== "durable-host";
   const legacyTerminalSizes = new Map<string, { cols: number; rows: number }>();
   const clientPresence = dependencies.clientPresence ?? new ClientPresenceRegistry();
@@ -580,7 +589,7 @@ export async function buildApp(
         requireUnsafeRequest(request, config, sessions);
       },
       requireSurfaceController: (request) => requireSurfaceController(request, leases),
-    }, dependencies.agentRuntime);
+    }, dependencies.agentRuntime, dependencies.sharedProcesses, dependencies.noteHumanInput);
   }
 
   app.get("/api/projects", (request) => {
@@ -1097,7 +1106,7 @@ export async function buildApp(
             try {
               const controlUpdate = dependencies.supervisor.setControlDesired(
                 paneId,
-                state.role === "controller",
+                state.role === "controller" && paneControl.humanMayControl(paneId),
                 attachment.cols,
                 attachment.rows,
                 attachment.attachmentKey,
@@ -1155,6 +1164,20 @@ export async function buildApp(
           sendProtocolError(socket, normalized, request.id);
         });
       });
+      // A Pane changed hands (an agent hold started or ended): follow the policy if we control.
+      const stopFollowingPaneControl = paneControl.onChange((paneId) => {
+        const attachment = attached.get(paneId);
+        if (attachment === undefined) return;
+        void Promise.resolve(
+          dependencies.supervisor.setControlDesired(
+            paneId,
+            leases.isController(owner) && paneControl.humanMayControl(paneId),
+            attachment.cols,
+            attachment.rows,
+            attachment.attachmentKey,
+          ),
+        ).catch(() => undefined);
+      });
       socket.on("close", () => {
         clearIncomingClipboardImage();
         clientPresence.remove(request.id);
@@ -1164,6 +1187,7 @@ export async function buildApp(
           activeWebSockets: sockets.size,
         });
         leases.release(owner);
+        stopFollowingPaneControl();
         for (const attachment of attached.values()) attachment.detach();
         attached.clear();
       });
@@ -1293,7 +1317,9 @@ export async function buildApp(
             attached.get(frame.paneId)?.detach();
             attached.delete(frame.paneId);
             const attachmentKey = `${owner.id}:${frame.paneId}`;
-            const wantsControl = leases.isCurrent(owner, frame.leaseGeneration);
+            const wantsControl =
+              leases.isCurrent(owner, frame.leaseGeneration) &&
+              paneControl.humanMayControl(frame.paneId);
             const detach = await dependencies.supervisor.attach(
               frame.paneId,
               frame.cols,
@@ -1320,7 +1346,9 @@ export async function buildApp(
               rows: frame.rows,
             };
             attached.set(frame.paneId, attachment);
-            const controlsNow = leases.isCurrent(owner, frame.leaseGeneration);
+            const controlsNow =
+              leases.isCurrent(owner, frame.leaseGeneration) &&
+              paneControl.humanMayControl(frame.paneId);
             if (controlsNow !== wantsControl) {
               await dependencies.supervisor.setControlDesired(
                 frame.paneId,
@@ -1352,6 +1380,9 @@ export async function buildApp(
             requireSurfaceSocketController(frame.leaseGeneration);
             const attachment = requireAttachedPane(frame.paneId);
             clientPresence.noteInteraction(request.id);
+            // Only the fact that a person typed is noted (hold idle timeout); input bytes, secure
+            // or not, go to the PTY alone (AP-D003).
+            dependencies.noteHumanInput?.({ paneId: frame.paneId });
             await dependencies.supervisor.write(frame.paneId, frame.data, attachment.attachmentKey);
             break;
           }

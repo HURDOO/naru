@@ -13,9 +13,11 @@ import {
   IdempotentRequestSchema,
   ResolveHandoffRequestSchema,
   SetAgentHoldRequestSchema,
+  SetProcessHoldRequestSchema,
   type Actor,
   type AgentRuntimeState,
   type AgentSession,
+  type SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
 import type { HistoryPage } from "../agent-runtime/adapter.js";
 import { SupervisorError } from "../agent-runtime/supervisor.js";
@@ -55,6 +57,17 @@ export interface AgentRuntimeControl {
   switchWriter(agentSessionId: string, to: WriterKind, interrupt: boolean): Promise<unknown>;
 }
 
+/** Shared processes (SharedProcessRuntime) as the browser routes use them. */
+export interface SharedProcessControl {
+  setHold(
+    context: { readonly actor: Actor; readonly idempotencyKey: string },
+    processId: string,
+    held: boolean,
+    reason: "takeover" | "release",
+  ): Promise<SharedProcess>;
+  stop(actor: Actor, processId: string): Promise<SharedProcess>;
+}
+
 export interface AgentRouteGuards {
   /** Gateway or app session; required for every read. */
   readonly requireSession: (request: FastifyRequest) => void;
@@ -70,6 +83,8 @@ export function registerAgentPlatformRoutes(
   core: AgentPlatformCore,
   guards: AgentRouteGuards,
   runtime?: AgentRuntimeControl,
+  processes?: SharedProcessControl,
+  noteHumanInput?: (target: { readonly agentSessionId: string }) => void,
 ): void {
   const mutate = (request: FastifyRequest): void => {
     guards.requireUnsafeRequest(request);
@@ -88,6 +103,7 @@ export function registerAgentPlatformRoutes(
       ...core.getProjectState(HUMAN, id),
       agents: core.listAgentSessions(HUMAN, id),
       instructions: core.getApplicableInstructions(HUMAN, { projectId: id }),
+      processes: core.listSharedProcesses(HUMAN, id),
     };
   });
 
@@ -190,6 +206,28 @@ export function registerAgentPlatformRoutes(
     return core.setHumanHold(context, { agentSessionId: id, held: false, reason: "release" });
   });
 
+  if (processes !== undefined) {
+    /** "직접 개입" in a shared process terminal (A09); return wakes the agent with an event. */
+    app.post("/api/agent/processes/:id/hold", async (request) => {
+      mutate(request);
+      const { id } = IdParamsSchema.parse(request.params);
+      const input = SetProcessHoldRequestSchema.parse(request.body);
+      return processes.setHold(
+        { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+        id,
+        input.held,
+        input.held ? "takeover" : "release",
+      );
+    });
+
+    app.post("/api/agent/processes/:id/stop", async (request) => {
+      mutate(request);
+      const { id } = IdParamsSchema.parse(request.params);
+      EmptyBodySchema.parse(request.body);
+      return processes.stop(HUMAN, id);
+    });
+  }
+
   if (runtime === undefined) return;
 
   app.post("/api/agent/agents", async (request, reply) => {
@@ -266,6 +304,7 @@ export function registerAgentPlatformRoutes(
       },
     );
     runtimeCall(() => runtime.sendTurn(id, input.text, "gui", input.generation));
+    noteHumanInput?.({ agentSessionId: id });
     return reply.code(202).send(runtimeCall(() => runtime.runtimeState(id)));
   });
 

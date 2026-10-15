@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Actor, AgentEvent, HandoffPayload } from "@naru/contracts/naru-agent/v1";
 import { AgentPlatformCore, AgentPlatformError } from "../src/agent-platform/core.js";
+import { HoldMonitor } from "../src/agent-runtime/hold-monitor.js";
 import { DATABASE_MIGRATIONS, NaruRepository, runDatabaseMigrations } from "../src/database.js";
 
 const HUMAN: Actor = { kind: "human" };
@@ -524,6 +525,207 @@ describe("Agent Platform core", () => {
     } finally {
       upgraded.close();
     }
+  });
+});
+
+describe("shared processes, holds and spawned agents (AP-D005, AP-D006)", () => {
+  it("records a process before it runs and lets only its agent write while nobody holds it", () => {
+    const fixture = platform();
+    const { orchestrator, worker, reviewer } = fixture.team();
+    const events: AgentEvent[] = [];
+    fixture.core.subscribe((event) => events.push(event));
+    const started = fixture.core.startSharedProcess(fixture.ctx(agent(worker)), {
+      projectId: fixture.projectId,
+      purpose: "dev server",
+      command: "pnpm dev --port 5173",
+      ports: [5173],
+      keep: "keep",
+    });
+    expect(started).toMatchObject({
+      status: "starting",
+      agentSessionId: worker,
+      paneId: null,
+      command: "pnpm dev --port 5173",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "shared_process.started",
+      subjectId: started.id,
+      data: { ports: "5173", keep: "keep" },
+    });
+    expect(JSON.stringify(events)).not.toContain("pnpm dev");
+    expectCode(
+      () =>
+        fixture.core.startSharedProcess(fixture.ctx(agent(worker)), {
+          projectId: fixture.projectId,
+          purpose: "tied to nothing",
+          command: "sleep 1",
+          ports: [],
+          keep: "run",
+        }),
+      "AGENT_INVALID_REFERENCE",
+    );
+    expectCode(
+      () =>
+        fixture.core.startSharedProcess(fixture.ctx(agent(reviewer)), {
+          projectId: fixture.projectId,
+          purpose: "not mine",
+          command: "true",
+          ports: [],
+          keep: "keep",
+        }),
+      "AGENT_ROLE_DENIED",
+    );
+
+    fixture.core.updateSharedProcessState(SYSTEM, { processId: started.id, status: "running" });
+    const retryKey = fixture.key();
+    const write = (actor: Actor, idempotencyKey = fixture.key()) =>
+      fixture.core.recordSharedProcessInput(
+        { actor, idempotencyKey },
+        { processId: started.id, text: "rs\r" },
+      );
+    expect(write(agent(worker), retryKey).replayed).toBe(false);
+    expect(write(agent(worker), retryKey).replayed).toBe(true);
+    expect(fixture.repository.agentPlatform.listSharedProcessInputs(started.id)).toEqual([
+      { verbatim: "rs\r", agentSessionId: worker },
+    ]);
+    expectCode(() => write(agent(orchestrator)), "AGENT_SCOPE_DENIED");
+
+    // A person takes over: the agent's input is refused, not queued, until the hold returns.
+    fixture.core.setSharedProcessHold(fixture.ctx(HUMAN), {
+      processId: started.id,
+      held: true,
+      reason: "takeover",
+    });
+    expectCode(() => write(agent(worker)), "AGENT_HELD_BY_HUMAN");
+    expectCode(
+      () =>
+        fixture.core.setSharedProcessHold(fixture.ctx(agent(worker)), {
+          processId: started.id,
+          held: false,
+          reason: "release",
+        }),
+      "AGENT_ROLE_DENIED",
+    );
+    fixture.core.setSharedProcessHold(fixture.ctx(SYSTEM), {
+      processId: started.id,
+      held: false,
+      reason: "idle-timeout",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "shared_process.hold_released",
+      data: { reason: "idle-timeout", agentSessionId: worker },
+    });
+    expect(write(agent(worker)).replayed).toBe(false);
+
+    expect(fixture.core.authorizeSharedProcessStop(agent(orchestrator), started.id).id).toBe(
+      started.id,
+    );
+    expectCode(
+      () => fixture.core.authorizeSharedProcessStop(agent(reviewer), started.id),
+      "AGENT_ROLE_DENIED",
+    );
+    fixture.core.updateSharedProcessState(SYSTEM, {
+      processId: started.id,
+      status: "exited",
+      exitCode: 0,
+    });
+    expectCode(() => write(agent(worker)), "AGENT_INVALID_STATE");
+  });
+
+  it("lets orchestrators spawn agents below their own role and records the parent", () => {
+    const fixture = platform();
+    const { main, orchestrator, worker } = fixture.team();
+    const spawned = fixture.core.spawnAgentSession(fixture.ctx(agent(orchestrator)), {
+      projectId: fixture.projectId,
+      role: "worker",
+    });
+    expect(spawned).toMatchObject({
+      role: "worker",
+      runtime: "claude",
+      projectId: fixture.projectId,
+      parentAgentSessionId: orchestrator,
+    });
+    expectCode(
+      () =>
+        fixture.core.spawnAgentSession(fixture.ctx(agent(worker)), {
+          projectId: fixture.projectId,
+          role: "specialist",
+        }),
+      "AGENT_ROLE_DENIED",
+    );
+    expectCode(
+      () =>
+        fixture.core.spawnAgentSession(fixture.ctx(agent(orchestrator)), {
+          projectId: fixture.projectId,
+          role: "project-orchestrator",
+        }),
+      "AGENT_ROLE_DENIED",
+    );
+    const fromMain = fixture.core.spawnAgentSession(fixture.ctx(agent(main)), {
+      projectId: fixture.projectId,
+      role: "project-orchestrator",
+    });
+    expect(fromMain.parentAgentSessionId).toBe(main);
+  });
+
+  it("returns holds after idle time or a disconnect grace, not while the person is active", async () => {
+    const fixture = platform();
+    const { worker } = fixture.team();
+    const process = fixture.core.startSharedProcess(fixture.ctx(agent(worker)), {
+      projectId: fixture.projectId,
+      purpose: "ansible",
+      command: "ansible-playbook site.yml",
+      ports: [],
+      keep: "keep",
+    });
+    fixture.core.setHumanHold(fixture.ctx(HUMAN), {
+      agentSessionId: worker,
+      held: true,
+      reason: "takeover",
+    });
+    fixture.core.setSharedProcessHold(fixture.ctx(HUMAN), {
+      processId: process.id,
+      held: true,
+      reason: "takeover",
+    });
+    const start = Date.now();
+    let now = start;
+    let connected = true;
+    const released: string[] = [];
+    const monitor = new HoldMonitor({
+      store: fixture.repository.agentPlatform,
+      humanConnected: () => connected,
+      idleMs: 60_000,
+      disconnectMs: 10_000,
+      now: () => now,
+      release: {
+        agent: (agentSessionId, reason) => {
+          released.push(`agent:${reason}`);
+          fixture.core.setHumanHold(fixture.ctx(SYSTEM), { agentSessionId, held: false, reason });
+          return Promise.resolve();
+        },
+        process: (processId, reason) => {
+          released.push(`process:${reason}`);
+          fixture.core.setSharedProcessHold(fixture.ctx(SYSTEM), { processId, held: false, reason });
+          return Promise.resolve();
+        },
+      },
+    });
+    now = start + 50_000;
+    monitor.noteHumanInput({ agentSessionId: worker });
+    await monitor.tick();
+    expect(released).toEqual([]);
+    now = start + 70_000;
+    await monitor.tick();
+    expect(released).toEqual(["process:idle-timeout"]);
+    connected = false;
+    now = start + 80_000;
+    await monitor.tick();
+    expect(released).toEqual(["process:idle-timeout"]);
+    now = start + 95_000;
+    await monitor.tick();
+    expect(released).toEqual(["process:idle-timeout", "agent:disconnect-timeout"]);
+    expect(fixture.repository.agentPlatform.listHumanHolds()).toEqual([]);
   });
 });
 

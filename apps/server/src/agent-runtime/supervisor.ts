@@ -4,7 +4,7 @@ import type {
   AgentRuntimeState,
   AgentSession,
 } from "@naru/contracts/naru-agent/v1";
-import type { AgentPlatformCore } from "../agent-platform/core.js";
+import type { AgentPlatformCore, CommandContext } from "../agent-platform/core.js";
 import type {
   OrchestratorInvoker,
   OrchestratorWakeups,
@@ -112,6 +112,17 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
 
   useWakeups(wakeups: OrchestratorWakeups): void {
     this.#wakeups = wakeups;
+  }
+
+  /** An agent's `spawn_agent` (or a person): record the session, then start it once. */
+  async spawn(
+    context: CommandContext,
+    input: { readonly projectId: string; readonly role: AgentSession["role"] },
+  ): Promise<AgentSession> {
+    const replayed = this.#core.commandRecorded(context.actor, context.idempotencyKey);
+    const agent = this.#core.spawnAgentSession(context, input);
+    if (!replayed) await this.launch(agent.id);
+    return this.#core.getAgentSession(SYSTEM, agent.id);
   }
 
   async launch(agentSessionId: string): Promise<void> {

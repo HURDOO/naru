@@ -145,3 +145,27 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
   완성한다).
 - runtime 상태(`GET /runtime`)는 writer, generation, 형태, 대기 중인 승인, 실행 중인 보조 에이전트를
   보여 준다. 보조 에이전트는 관찰만 한다(AP-D014).
+
+### 6.5 공유 프로세스와 사람 hold (AP-T12)
+
+- `start_process`(MCP)는 Core에 project, task, run, agent, 목적, 명령 원문, port, 유지 정책을 먼저
+  기록한다(AP-D006). 그다음 실행기가 terminal Pane(`shell`)을 접힌 채 만들고 Host session에서 명령을
+  입력한다.
+- Naru는 process마다 controller attachment 하나를 유지한다.
+  - 에이전트의 입력(`send_process_input`)은 이 attachment로 보낸다. 원문은
+    `agent_shared_process_inputs`에 남긴다(AP-D003).
+  - 화면(`read_process_screen`)은 headless terminal로 텍스트화해 에이전트에게만 돌려준다. 저장하지
+    않는다.
+- `PaneControlPolicy`: 에이전트가 운영하는 Pane(공유 프로세스, runner 형태의 관리형 에이전트)에는
+  사람 기기도 observer로 붙는다. 그래서 화면을 보기만 해서는 에이전트의 제어권을 빼앗지 않는다.
+  - hold하면 에이전트 attachment가 제어권을 놓고 기기가 받는다.
+  - 반환하면 기기가 놓고 에이전트가 새 generation으로 다시 받는다.
+  - 관리형 에이전트는 TUI 형태로 hold했을 때만 사람이 제어한다.
+- `HoldMonitor`는 사람 hold를 세 경우에 반환한다.
+  - 명시적 해제
+  - controller 기기가 없는 상태가 유예 시간 이상 지속
+  - 사람 입력(terminal 입력, Chat turn)이 idle 시간 이상 없음
+  - 반환은 명시적 해제와 같은 경로다. 에이전트 대화는 writer를 먼저 돌려준다.
+  - 이벤트 `*.hold_released`(사유 포함)가 orchestrator를 깨운다.
+- secure input(`terminal.input.secure`)의 bytes는 PTY에만 간다. Naru는 사람이 입력했다는 사실만 hold
+  idle 판정에 쓴다.

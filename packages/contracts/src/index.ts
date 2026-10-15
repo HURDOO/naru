@@ -914,6 +914,11 @@ export const ClientWsFrameSchema = z.discriminatedUnion("type", [
     paneId: z.string().uuid(),
     leaseGeneration: LeaseGenerationSchema,
     data: z.string().max(65536),
+    /**
+     * Secret typed by a person (AP-D003): delivered to the PTY only, never to observers' relays,
+     * records, logs or drafts. Absent for ordinary keys.
+     */
+    secure: z.literal(true).optional(),
   }),
   z.strictObject({
     type: z.literal("terminal.resize"),

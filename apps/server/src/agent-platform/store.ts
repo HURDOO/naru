@@ -13,6 +13,7 @@ import {
   type Plan,
   type Review,
   type Run,
+  type SharedProcess,
   HandoffPayloadSchema,
   HandoffResolutionSchema,
   IntentContractBodySchema,
@@ -489,6 +490,130 @@ export class AgentPlatformStore {
         session.updatedAt,
         session.id,
       );
+  }
+
+  // Shared processes -----------------------------------------------------------------------------
+
+  insertSharedProcess(process: SharedProcess): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_shared_processes (
+           id, project_id, task_id, run_id, agent_session_id, purpose, command, ports_json, keep,
+           pane_id, human_hold_since, status, exit_code, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        process.id,
+        process.projectId,
+        process.taskId,
+        process.runId,
+        process.agentSessionId,
+        process.purpose,
+        process.command,
+        JSON.stringify(process.ports),
+        process.keep,
+        process.paneId,
+        process.humanHoldSince,
+        process.status,
+        process.exitCode,
+        process.createdAt,
+        process.updatedAt,
+      );
+  }
+
+  getSharedProcess(id: string): SharedProcess | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_shared_processes WHERE id = ?")
+      .get(id) as SharedProcessRow | undefined;
+    return row === undefined ? null : sharedProcessFromRow(row);
+  }
+
+  findSharedProcessByPane(paneId: string): SharedProcess | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_shared_processes WHERE pane_id = ?")
+      .get(paneId) as SharedProcessRow | undefined;
+    return row === undefined ? null : sharedProcessFromRow(row);
+  }
+
+  listSharedProcesses(filter: { projectId?: string; runId?: string }): SharedProcess[] {
+    const rows = (
+      filter.runId !== undefined
+        ? this.#database
+            .prepare("SELECT * FROM agent_shared_processes WHERE run_id = ? ORDER BY created_at")
+            .all(filter.runId)
+        : this.#database
+            .prepare("SELECT * FROM agent_shared_processes WHERE project_id = ? ORDER BY created_at")
+            .all(filter.projectId ?? "")
+    ) as SharedProcessRow[];
+    return rows.map(sharedProcessFromRow);
+  }
+
+  /** Agent sessions and shared processes a person holds now (AP-D005 auto-return). */
+  listHumanHolds(): { kind: "agent" | "process"; id: string; heldSince: string; paneId: string | null }[] {
+    return this.#database
+      .prepare(
+        `SELECT 'agent' AS kind, id, human_hold_since AS heldSince, pane_id AS paneId
+           FROM agent_sessions WHERE human_hold_since IS NOT NULL
+         UNION ALL
+         SELECT 'process' AS kind, id, human_hold_since AS heldSince, pane_id AS paneId
+           FROM agent_shared_processes WHERE human_hold_since IS NOT NULL`,
+      )
+      .all() as { kind: "agent" | "process"; id: string; heldSince: string; paneId: string | null }[];
+  }
+
+  /** Processes Naru still considers alive; checked against the Host after a restart. */
+  listActiveSharedProcesses(): SharedProcess[] {
+    return (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_shared_processes WHERE status IN ('starting', 'running')
+           ORDER BY created_at`,
+        )
+        .all() as SharedProcessRow[]
+    ).map(sharedProcessFromRow);
+  }
+
+  updateSharedProcess(process: SharedProcess): void {
+    this.#database
+      .prepare(
+        `UPDATE agent_shared_processes SET pane_id = ?, human_hold_since = ?, status = ?,
+           exit_code = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        process.paneId,
+        process.humanHoldSince,
+        process.status,
+        process.exitCode,
+        process.updatedAt,
+        process.id,
+      );
+  }
+
+  insertSharedProcessInput(input: {
+    readonly id: string;
+    readonly processId: string;
+    readonly agentSessionId: string;
+    readonly verbatim: string;
+    readonly createdAt: string;
+  }): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_shared_process_inputs (id, process_id, agent_session_id, verbatim, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(input.id, input.processId, input.agentSessionId, input.verbatim, input.createdAt);
+  }
+
+  listSharedProcessInputs(processId: string): { verbatim: string; agentSessionId: string | null }[] {
+    return (
+      this.#database
+        .prepare(
+          `SELECT verbatim, agent_session_id FROM agent_shared_process_inputs
+           WHERE process_id = ? ORDER BY created_at, rowid`,
+        )
+        .all(processId) as { verbatim: string; agent_session_id: string | null }[]
+    ).map((row) => ({ verbatim: row.verbatim, agentSessionId: row.agent_session_id }));
   }
 
   // Handoffs, reviews, artifacts -----------------------------------------------------------------
@@ -1071,6 +1196,44 @@ function agentSessionFromRow(row: AgentSessionRow): AgentSession {
     status: row.status,
     paneId: row.pane_id,
     launchMode: row.launch_mode,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface SharedProcessRow {
+  id: string;
+  project_id: string;
+  task_id: string | null;
+  run_id: string | null;
+  agent_session_id: string | null;
+  purpose: string;
+  command: string;
+  ports_json: string;
+  keep: SharedProcess["keep"];
+  pane_id: string | null;
+  human_hold_since: string | null;
+  status: SharedProcess["status"];
+  exit_code: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function sharedProcessFromRow(row: SharedProcessRow): SharedProcess {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    runId: row.run_id,
+    agentSessionId: row.agent_session_id,
+    purpose: row.purpose,
+    command: row.command,
+    ports: z.array(z.number().int()).parse(JSON.parse(row.ports_json)),
+    keep: row.keep,
+    paneId: row.pane_id,
+    humanHoldSince: row.human_hold_since,
+    status: row.status,
+    exitCode: row.exit_code,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

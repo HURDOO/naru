@@ -12,7 +12,7 @@ import {
   unlinkOwnedSocket,
 } from "../private-socket.js";
 import { AgentPlatformError, type AgentPlatformCore } from "./core.js";
-import { AGENT_TOOLS, HOOK_TOOLS } from "./tools.js";
+import { AGENT_TOOLS, HOOK_TOOLS, type AgentToolRuntime } from "./tools.js";
 
 /**
  * Owner-only UDS through which the per-session MCP bin reaches AgentPlatformCore (AP-D004). The
@@ -47,14 +47,16 @@ export type AgentSocketReply =
 
 export class AgentSocketServer {
   readonly #core: AgentPlatformCore;
+  #runtime: AgentToolRuntime | undefined;
   readonly #runtimeDirectory: string;
   readonly #socketPath: string;
   readonly #connections = new Set<Socket>();
   #server: Server | null = null;
   #socketIdentity: { device: number; inode: number } | null = null;
 
-  constructor(dataDirectory: string, core: AgentPlatformCore) {
+  constructor(dataDirectory: string, core: AgentPlatformCore, runtime?: AgentToolRuntime) {
     this.#core = core;
+    this.#runtime = runtime;
     const preferred = join(dataDirectory, "runtime", SOCKET_FILENAME);
     this.#runtimeDirectory =
       Buffer.byteLength(preferred) <= SOCKET_PATH_MAX_BYTES
@@ -64,6 +66,11 @@ export class AgentSocketServer {
             `naru-agent-${createHash("sha256").update(dataDirectory).digest("hex").slice(0, 16)}`,
           );
     this.#socketPath = join(this.#runtimeDirectory, SOCKET_FILENAME);
+  }
+
+  /** Runtime-backed tools become available once managed runtimes are wired (startup order). */
+  useRuntime(runtime: AgentToolRuntime): void {
+    this.#runtime = runtime;
   }
 
   get socketPath(): string {
@@ -116,7 +123,7 @@ export class AgentSocketServer {
   }
 
   /** Validates and executes one request; exposed for transport-free tests. */
-  handle(serialized: string): AgentSocketReply {
+  async handle(serialized: string): Promise<AgentSocketReply> {
     let input: unknown;
     try {
       input = JSON.parse(serialized) as unknown;
@@ -132,7 +139,13 @@ export class AgentSocketServer {
     );
     if (tool === undefined) return failure("UNKNOWN_TOOL", "No such Naru tool.");
     try {
-      return { version: 1, ok: true, result: tool.run(this.#core, actor, parsed.data.arguments) };
+      const result: unknown = await tool.run(
+        this.#core,
+        actor,
+        parsed.data.arguments,
+        this.#runtime,
+      );
+      return { version: 1, ok: true, result };
     } catch (error) {
       if (error instanceof AgentPlatformError) return failure(error.code, error.message);
       if (error instanceof ZodError) {
@@ -168,7 +181,7 @@ export class AgentSocketServer {
       buffered = Buffer.concat([buffered, chunk]);
       const newline = buffered.indexOf(0x0a);
       if (newline === -1) return;
-      finish(this.handle(buffered.subarray(0, newline).toString("utf8")));
+      void this.handle(buffered.subarray(0, newline).toString("utf8")).then(finish);
     });
     socket.on("timeout", () => socket.destroy());
     socket.on("error", () => undefined);

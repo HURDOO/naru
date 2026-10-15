@@ -21,6 +21,68 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
+describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
+  it("answers AGENT_RUNTIME_UNAVAILABLE without managed runtimes and forwards with them", async () => {
+    const fixture = await platform();
+    const call = (capability: string, tool: string, args: Record<string, unknown>) =>
+      callAgentSocket(fixture.server.socketPath, { version: 1, capability, tool, arguments: args });
+    const startArgs = { purpose: "dev server", command: "pnpm dev", ports: [5173] };
+    expect(await call(fixture.workerToken, "start_process", startArgs)).toMatchObject({
+      ok: false,
+      code: "AGENT_RUNTIME_UNAVAILABLE",
+    });
+
+    const started: unknown[] = [];
+    const spawned: unknown[] = [];
+    fixture.server.useRuntime({
+      processes: {
+        start: (context, input) => {
+          started.push({ actor: context.actor, input });
+          return Promise.resolve(fixture.core.startSharedProcess(context, input));
+        },
+        input: () => Promise.reject(new Error("unused")),
+        read: () => Promise.reject(new Error("unused")),
+        stop: () => Promise.reject(new Error("unused")),
+      },
+      agents: {
+        spawn: (context, input) => {
+          spawned.push(input);
+          return Promise.resolve(fixture.core.spawnAgentSession(context, input));
+        },
+      },
+    });
+    const reply = await call(fixture.workerToken, "start_process", startArgs);
+    expect(reply).toMatchObject({ ok: true, result: { status: "starting", keep: "keep" } });
+    // The acting agent and its project come from the capability, not from arguments.
+    expect(started).toEqual([
+      {
+        actor: { kind: "agent", agentSessionId: fixture.worker },
+        input: {
+          projectId: fixture.projectId,
+          purpose: "dev server",
+          command: "pnpm dev",
+          ports: [5173],
+          keep: "keep",
+        },
+      },
+    ]);
+    expect(await call(fixture.workerToken, "spawn_agent", { role: "worker" })).toMatchObject({
+      ok: false,
+      code: "AGENT_ROLE_DENIED",
+    });
+    expect(
+      await call(fixture.orchestratorToken, "spawn_agent", { role: "worker" }),
+    ).toMatchObject({
+      ok: true,
+      result: { role: "worker", parentAgentSessionId: fixture.orchestrator },
+    });
+    expect(await call(fixture.workerToken, "list_processes", {})).toMatchObject({
+      ok: true,
+      result: [{ purpose: "dev server" }],
+    });
+  });
+});
+
 describe("Agent Platform socket and MCP bin", () => {
   it("binds every call to the capability's agent and never trusts argument identity", async () => {
     const fixture = await platform();
