@@ -275,7 +275,7 @@ try {
     ).agents.find((candidate) => candidate.id === agent.id)!;
   // The real SDK reports its conversation only once the first prompt arrives.
   await until(
-    async () => (await runtime()).connected && (real || (await session()).status === "active"),
+    async () => (await runtime()).connected && (real || (await session()).status === "idle"),
     "runner",
   );
   /** Assistant messages in the runtime's own history that contain `token` (never printed). */

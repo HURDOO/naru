@@ -206,7 +206,10 @@ async function startFixture() {
             FAKE_CLAUDE_CONTROL: claudeControl,
             NARU_CODEX_INTEGRATION_SOCKET: integrationServer.socketPath,
             NARU_CLAUDE_HOOK_RUNNER: join(repositoryRoot, "node_modules/.bin/tsx"),
-            NARU_CLAUDE_HOOK_ENTRY: join(repositoryRoot, "apps/server/src/claude-integration-hook-cli.ts"),
+            NARU_CLAUDE_HOOK_ENTRY: join(
+              repositoryRoot,
+              "apps/server/src/claude-integration-hook-cli.ts",
+            ),
           },
         },
       ],
@@ -360,7 +363,7 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     await until(() => status() === "stopped", "stopped");
     await until(() => !env.facade.isRunning(pane!.id), "pane process exited");
     await second.supervisor.launch(worker);
-    await until(() => status() === "active", "resumed");
+    await until(() => status() === "idle", "resumed");
     expect(env.sdkCalls().at(-1)).toMatchObject({ resume: SESSION });
     expect(env.core.getAgentSession(HUMAN, worker).paneId).toBe(pane!.id);
     expect(env.repository.getWorkspace(env.project.id).panes).toHaveLength(4);
@@ -374,7 +377,7 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     const agent = () => env.core.getAgentSession(HUMAN, worker);
     const { supervisor } = await env.naru();
     await supervisor.launch(worker);
-    await until(() => agent().runtimeSessionRef === SESSION && agent().status === "active", "ready");
+    await until(() => agent().runtimeSessionRef === SESSION && agent().status === "idle", "ready");
 
     // Runner → TUI: the runner stops and the same conversation resumes in the real TUI form.
     const toTui = await supervisor.switchWriter(worker, "tui", false);
@@ -382,13 +385,17 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     expect(agent()).toMatchObject({ launchMode: "tui", conversationWriter: "tui", status: "idle" });
     const [tuiArgs] = env.tuiCalls();
     expect(tuiArgs).toEqual(
-      expect.arrayContaining(["--resume", SESSION, "--model", "claude-opus-5-5", "--strict-mcp-config"]),
+      expect.arrayContaining([
+        "--resume",
+        SESSION,
+        "--model",
+        "claude-opus-5-5",
+        "--strict-mcp-config",
+      ]),
     );
     expect(tuiArgs?.join(" ")).toContain("--setting-sources project,local");
     // The TUI form gets the same naru-orchestration guidance as the runner.
-    expect(tuiArgs?.[tuiArgs.indexOf("--append-system-prompt") + 1]).toContain(
-      "## Role: worker",
-    );
+    expect(tuiArgs?.[tuiArgs.indexOf("--append-system-prompt") + 1]).toContain("## Role: worker");
     expect(() => supervisor.sendTurn(worker, "late", "orchestrator", 1)).toThrow();
 
     // TUI → orchestrator: the TUI exits and a fresh runner resumes the conversation.
@@ -482,7 +489,11 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
   }, 120_000);
 });
 
-async function untilAsync(check: () => Promise<boolean>, label: string, ms = 30_000): Promise<void> {
+async function untilAsync(
+  check: () => Promise<boolean>,
+  label: string,
+  ms = 30_000,
+): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (await check()) return;

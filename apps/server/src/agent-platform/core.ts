@@ -14,6 +14,7 @@ import {
   type AgentRuntime,
   type AgentSession,
   type AgentTask,
+  type AgentTaskDetail,
   type AgentTaskStatus,
   type Artifact,
   type Handoff,
@@ -1323,6 +1324,13 @@ export class AgentPlatformCore {
     };
   }
 
+  /** A proposed intent contract still waiting for the user's approval, for the Project view. */
+  getPendingIntentContract(actor: Actor, projectId: string): IntentContract | null {
+    this.#authorize(actor, "state.read", projectId);
+    this.#requireProject(projectId);
+    return this.#store.getPendingIntentContract(projectId);
+  }
+
   /** The user's cross-project view (Home); agents never call this. */
   getOverview(actor: Actor): AgentOverview {
     this.#requireHuman(actor);
@@ -1565,6 +1573,18 @@ export class AgentPlatformCore {
     return { open: reasons.length === 0, reasons };
   }
 
+  getTaskDetail(actor: Actor, taskId: string): AgentTaskDetail {
+    const task = this.#requireTask(taskId);
+    this.#authorize(actor, "state.read", task.projectId);
+    return {
+      task,
+      runs: this.#store.listRuns(task.id),
+      reviews: this.#store.listReviews(task.id),
+      artifacts: this.#store.listArtifacts(task.id),
+      mergeGate: this.mergeGate(actor, task.id),
+    };
+  }
+
   publishArtifact(
     context: CommandContext,
     input: {
@@ -1618,7 +1638,12 @@ export class AgentPlatformCore {
 
   readEvents(
     actor: Actor,
-    options: { readonly afterSeq: number; readonly projectId?: string; readonly limit?: number },
+    options: {
+      readonly afterSeq: number;
+      readonly projectId?: string;
+      readonly limit?: number;
+      readonly latest?: boolean;
+    },
   ): AgentEvent[] {
     const agent = this.#authorize(actor, "state.read", options.projectId ?? null);
     const projectId = options.projectId ?? agent?.projectId ?? undefined;
@@ -1626,6 +1651,7 @@ export class AgentPlatformCore {
       afterSeq: options.afterSeq,
       ...(projectId === undefined ? {} : { projectId }),
       limit: Math.min(options.limit ?? 100, NARU_AGENT_LIMITS.eventReadLimit),
+      latest: options.latest === true,
     });
   }
 

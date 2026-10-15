@@ -200,6 +200,12 @@ describe("TerminalConnection authentication recovery", () => {
     expect(attachment.input("한글")).toBe(true);
     attachment.viewport(runtimeId, 23.4);
     expect(sentFrame(socket, "terminal.input")).toMatchObject({ data: "한글" });
+    expect(sentFrame(socket, "terminal.input")).not.toHaveProperty("secure");
+    expect(attachment.secureInput("fixture-secret\r")).toBe(true);
+    const inputs = socket.sent
+      .map((entry) => parseSentFrame(entry))
+      .filter((frame) => frame.type === "terminal.input");
+    expect(inputs.at(-1)).toMatchObject({ paneId, data: "fixture-secret\r", secure: true });
     expect(sentFrame(socket, "terminal.viewport")).toMatchObject({
       paneId,
       runtimeId,

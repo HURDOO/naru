@@ -64,6 +64,8 @@ interface PendingClipboardImage {
 
 export interface TerminalAttachment {
   input(data: string): boolean;
+  /** A secret typed by the person: sent once to the PTY, never kept or replayed (AP-D003). */
+  secureInput(data: string): boolean;
   pasteImage(image: Uint8Array): Promise<void>;
   resize(cols: number, rows: number): void;
   viewport(runtimeId: string, bottomOffset: number): void;
@@ -147,9 +149,18 @@ export class TerminalConnection {
     return () => this.#inputListeners.delete(listener);
   }
 
-  input(paneId: string, data: string): boolean {
+  input(paneId: string, data: string, secure = false): boolean {
     if (!this.#canControlPane(paneId)) return false;
-    if (!this.#sendWithLease({ type: "terminal.input", paneId, data })) return false;
+    if (
+      !this.#sendWithLease({
+        type: "terminal.input",
+        paneId,
+        data,
+        ...(secure ? { secure: true } : {}),
+      })
+    ) {
+      return false;
+    }
     for (const listener of this.#inputListeners) listener(paneId);
     return true;
   }
@@ -167,6 +178,7 @@ export class TerminalConnection {
       input: (data) => {
         return this.input(paneId, data);
       },
+      secureInput: (data) => this.input(paneId, data, true),
       pasteImage: (image) => this.#pasteImage(paneId, image),
       resize: (nextCols, nextRows) => {
         const attachment = this.#attachments.get(paneId);

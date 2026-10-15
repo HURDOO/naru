@@ -101,6 +101,7 @@ export function registerAgentPlatformRoutes(
     const { id } = IdParamsSchema.parse(request.params);
     return {
       ...core.getProjectState(HUMAN, id),
+      pendingIntentContract: core.getPendingIntentContract(HUMAN, id),
       agents: core.listAgentSessions(HUMAN, id),
       instructions: core.getApplicableInstructions(HUMAN, { projectId: id }),
       processes: core.listSharedProcesses(HUMAN, id),
@@ -120,7 +121,14 @@ export function registerAgentPlatformRoutes(
       afterSeq: query.after,
       ...(query.projectId === undefined ? {} : { projectId: query.projectId }),
       ...(query.limit === undefined ? {} : { limit: query.limit }),
+      ...(query.latest === undefined ? {} : { latest: true }),
     });
+  });
+
+  app.get("/api/agent/tasks/:id", (request) => {
+    guards.requireSession(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    return core.getTaskDetail(HUMAN, id);
   });
 
   app.get("/api/agent/tasks/:id/merge-gate", (request) => {
@@ -196,7 +204,11 @@ export function registerAgentPlatformRoutes(
     const context = { actor: HUMAN, idempotencyKey: input.idempotencyKey };
     const managed = runtime !== undefined && isManaged(core.getAgentSession(HUMAN, id));
     if (input.held) {
-      const held = core.setHumanHold(context, { agentSessionId: id, held: true, reason: "takeover" });
+      const held = core.setHumanHold(context, {
+        agentSessionId: id,
+        held: true,
+        reason: "takeover",
+      });
       if (!managed) return held;
       const to: WriterKind = input.surface === "tui" ? "tui" : "gui";
       await runtimeCall(() => runtime.switchWriter(id, to, input.interrupt ?? false));
@@ -362,11 +374,17 @@ function translateRuntimeError(error: unknown): unknown {
   if (!(error instanceof SupervisorError)) return error;
   switch (error.code) {
     case "WRITER_REQUIRED":
-      return new AgentPlatformError("AGENT_WRITER_REQUIRED", "Another writer owns this conversation.");
+      return new AgentPlatformError(
+        "AGENT_WRITER_REQUIRED",
+        "Another writer owns this conversation.",
+      );
     case "APPROVAL_UNKNOWN":
       return new AgentPlatformError("AGENT_INVALID_STATE", "The approval is no longer pending.");
     case "RUNTIME_NOT_CONNECTED":
     case "HISTORY_TIMEOUT":
-      return new AgentPlatformError("AGENT_RUNTIME_UNAVAILABLE", "The agent runtime is unavailable.");
+      return new AgentPlatformError(
+        "AGENT_RUNTIME_UNAVAILABLE",
+        "The agent runtime is unavailable.",
+      );
   }
 }

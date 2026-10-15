@@ -36,6 +36,10 @@
 - AP-T14 Host PTY 실행, TUI 전환, browser API: [validation/agent-runtime-host.md](validation/agent-runtime-host.md)
   - 격리 fixture와 실제 SDK·Claude TUI 인수 모두 PASS다.
   - 이 검증에서 Node realpath·socket stat 결함을 찾아 고쳤다. 운영에도 영향이 있을 수 있다.
+- AP-T13 Codex 어댑터: [validation/codex-adapter.md](validation/codex-adapter.md)
+- AP-T17 웹 화면과 secure input UI: [validation/web-ui.md](validation/web-ui.md)
+  - 격리 sandbox(가짜 runtime)에서 1440px, 768px, 360px, 키보드·focus를 확인했다.
+  - secure input 값은 실제 shell 프롬프트에만 갔고, sandbox의 기록·로그 어디에도 없었다.
 
 ## 재검증 V04b, V05b, V06b (2026-10-15)
 
@@ -252,7 +256,11 @@
     방어선이다.
   - secure input을 넣을 위치: `TerminalPane` 입력 경로에 별도 입력 control을 두고 새 WS frame 유형을
     정의한다. 이 frame은 agent 입력 기록, draft, 보조 입력창 경로에서 제외한다(AP-T12).
-- 아직 하지 않은 것: 실제 SSH나 ansible 프롬프트(A09), 웹 UI 경로의 E2E(secure input 구현 뒤).
+- 2026-10-15 후속:
+  - secure input UI를 만들었다. 웹 UI 경로를 격리 sandbox에서 실제 zsh `read -s`로 확인했다
+    ([validation/web-ui.md](validation/web-ui.md)).
+  - Host fingerprint는 keyed hash(HMAC)로 바꿨다.
+- 아직 하지 않은 것: 실제 SSH나 ansible 프롬프트(A09).
 
 ## V13. Gateway 사용자 인증과 agent 인증
 

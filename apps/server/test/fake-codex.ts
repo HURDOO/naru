@@ -14,7 +14,11 @@ const readline = require("node:readline");
 const WebSocket = require(${JSON.stringify(wsModule)});
 const log = (entry) => appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify(entry) + "\\n");
 const args = process.argv.slice(2);
-if (args[0] === "doctor") { process.stdout.write("{}"); process.exit(0); }
+if (args[0] === "doctor") {
+  const ok = { status: "ok" };
+  process.stdout.write(JSON.stringify({ checks: { installation: ok, "auth.credentials": ok, "config.load": ok } }));
+  process.exit(0);
+}
 
 if (args.includes("app-server")) {
   const path = args[args.indexOf("--listen") + 1].replace("unix://", "");

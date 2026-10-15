@@ -131,8 +131,8 @@
 
 ### AP-T12. 쓰기 권리와 Session 확장
 
-- [-] 사람 기기 lease 범위 조정, Session holder와 hold(AP-D005), 에이전트 Session 생성(AP-D006),
-  SharedProcess, secure input(AP-D003). 회귀 검증: reconnect, 단일 controller handoff, 권한 거부.
+- [x] 사람 기기 lease 범위 조정, Session holder와 hold(AP-D005), 에이전트 Session 생성(AP-D006),
+      SharedProcess, secure input(AP-D003). 회귀 검증: reconnect, 단일 controller handoff, 권한 거부.
 - 진행(2026-10-15):
   - 완료:
     - SharedProcess
@@ -157,8 +157,15 @@
       - MCP: runtime 없음과 있음
       - WebSocket: observer → controller → observer, secure input
       - 격리 Host: 실제 shell 실행, 화면 읽기, 입력, hold, 재시작 뒤 재접속, 정지
-  - 남음: secure input 입력 UI(AP-T17에서 Pane UI와 함께 만들고 화면 검증), 바인딩 없는 Session 찾기
-    (AP-T10 reconciler)
+  - 2026-10-15 완료:
+    - secure input 입력 UI: shell terminal Pane 도구 모음의 `비밀 입력`. password 입력란에 넣은 값을
+      Enter와 함께 `terminal.input`(`secure: true`)으로 한 번만 보낸다. 값은 React state, draft,
+      browser 저장소에 두지 않는다. Claude·Codex Pane에는 두지 않는다. 그곳에서는 입력이 모델 prompt가
+      되기 때문이다.
+    - Host의 입력 중복 제거 fingerprint를 process별 key의 HMAC으로 바꿨다(V10 감사 후속).
+    - 검증: [validation/web-ui.md](validation/web-ui.md)의 secure input 항목. 실제 shell `read -s`
+      프롬프트에 전달됐고, 격리 sandbox의 Naru DB·Host 상태·로그 어디에도 값이 없었다.
+  - 바인딩 없는 Session은 AP-T10 reconciler가 다룬다.
 
 ## Phase 3: 런타임 어댑터
 
@@ -242,8 +249,26 @@
 
 ### AP-T17. 웹 화면
 
-- [ ] Home, Project 그래프, Agent Panel(Chat, TUI, Activity), Inbox, Sessions와 Processes. 모든 조작은
+- [x] Home, Project 그래프, Agent Panel(Chat, TUI, Activity), Inbox, Sessions와 Processes. 모든 조작은
       Core에 연결한다. 1440px, 768px, 360px와 키보드·focus를 확인한다.
+- 완료(2026-10-15):
+  - 화면: 기존 작업공간 옆의 `에이전트` 탭(`AgentView`, `AgentOverview`).
+    - 전체 현황(Home): 프로젝트별 작업 수, 결정 대기, 에이전트와 사람 hold 수, Main Orchestrator
+      시작·대화, 전 프로젝트 결정 대기.
+    - 프로젝트 개요: Project Orchestrator 시작·대화, 프로젝트 지시 원문 기록과 최근 지시, 의도 계약
+      (제안 승인과 현재 계약), 활성 계획, 의존 단계별 작업 그래프. 작업 노드에서 실행, 리뷰, 산출물,
+      병합 조건, 기다리는 결정을 연다.
+    - Agent Panel: 상태와 writer, 개입(Chat·TUI)과 반환, 지시만 보내기, 승인 대기, 대화(런타임 이력을
+      다시 읽음)와 활동(맡은 작업, 상위·하위 에이전트, native 보조 에이전트 관찰, 이벤트) 탭. TUI는
+      작업공간의 실제 Pane을 연다.
+    - Inbox, 공유 프로세스(개입, 반환, 정지, 터미널 보기).
+  - 서버 추가: `GET /api/agent/tasks/:id`(작업과 Run, 리뷰, 산출물, 병합 조건),
+    `GET /api/agent/events?latest=1`(최신 page), project 응답의 `pendingIntentContract`. 모두
+    추가형이라 기존 consumer는 그대로다.
+  - 검증: [validation/web-ui.md](validation/web-ui.md). 격리 sandbox(가짜 runtime)에서 1440px, 768px,
+    360px, 키보드·focus, 동적 resize를 확인했다.
+  - 남음(AP-T18·AP-T19): Home의 리소스 사용량과 최근 성과 요약은 아직 수집하지 않는다(화면에 그렇게
+    표시한다). 실제 Codex 이력이 화면에 그려지는지는 실제 모델 인수에서 확인한다.
 
 ## Phase 5: 통합과 실사용 준비
 

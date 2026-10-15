@@ -540,7 +540,14 @@ export const AgentRuntimeStateSchema = z.strictObject({
   connected: z.boolean(),
   writer: AgentWriterSchema,
   generation: WriterGeneration,
-  phase: z.enum(["active", "quiescing", "stopping", "resuming", "rolling-back", "recovery-required"]),
+  phase: z.enum([
+    "active",
+    "quiescing",
+    "stopping",
+    "resuming",
+    "rolling-back",
+    "recovery-required",
+  ]),
   turnActive: z.boolean(),
   launchMode: AgentLaunchModeSchema,
   pendingApprovals: z
@@ -577,6 +584,8 @@ export const AgentEventsQuerySchema = z.strictObject({
   after: z.coerce.number().int().min(0).default(0),
   projectId: Id.optional(),
   limit: z.coerce.number().int().min(1).max(NARU_AGENT_LIMITS.eventReadLimit).optional(),
+  /** "1": the newest `limit` events after `after`, still in ascending order (a view's first load). */
+  latest: z.literal("1").optional(),
 });
 
 export const ProjectAgentSummarySchema = z.strictObject({
@@ -587,6 +596,16 @@ export const ProjectAgentSummarySchema = z.strictObject({
   heldAgents: z.number().int().min(0),
 });
 export type ProjectAgentSummary = z.infer<typeof ProjectAgentSummarySchema>;
+
+/** One task with its runs, reviews, artifacts and merge gate, for the Project graph (AP-T17). */
+export const AgentTaskDetailSchema = z.strictObject({
+  task: AgentTaskSchema,
+  runs: z.array(RunSchema),
+  reviews: z.array(ReviewSchema),
+  artifacts: z.array(ArtifactSchema),
+  mergeGate: z.strictObject({ open: z.boolean(), reasons: z.array(z.string().max(80)) }),
+});
+export type AgentTaskDetail = z.infer<typeof AgentTaskDetailSchema>;
 
 export const AgentOverviewSchema = z.strictObject({
   projects: z.array(ProjectAgentSummarySchema),

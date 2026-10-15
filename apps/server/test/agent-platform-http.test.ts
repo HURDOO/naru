@@ -179,6 +179,173 @@ describe("Agent Platform browser API", () => {
   });
 });
 
+describe("Agent Platform task detail API", () => {
+  it("shows a task with its runs, reviews, artifacts and merge gate", async () => {
+    const fixture = await createFixture(true);
+    const core = fixture.core!;
+    let ordinal = 300;
+    const ctx = (actor: Actor) => ({
+      actor,
+      idempotencyKey: `90000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`,
+    });
+    const register = (role: "project-orchestrator" | "worker" | "reviewer") =>
+      core.registerAgentSession(ctx({ kind: "human" }), {
+        projectId: fixture.projectId,
+        role,
+        runtime: "claude",
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      }).id;
+    const orchestrator = register("project-orchestrator");
+    const worker = register("worker");
+    const reviewer = register("reviewer");
+    const goal = core.createHumanInstruction(ctx({ kind: "human" }), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "goal",
+    }).id;
+    const task = core.createTask(ctx({ kind: "agent", agentSessionId: orchestrator }), {
+      projectId: fixture.projectId,
+      title: "로그인 화면",
+      purpose: "passkey 로그인",
+      completionCriteria: ["tests pass"],
+      originInstructionId: goal,
+      assigneeAgentSessionId: worker,
+    });
+    const run = core.startRun(ctx({ kind: "agent", agentSessionId: orchestrator }), {
+      taskId: task.id,
+      agentSessionId: worker,
+      runtime: "claude",
+    });
+    core.publishArtifact(ctx({ kind: "agent", agentSessionId: worker }), {
+      taskId: task.id,
+      runId: run.id,
+      kind: "test-result",
+      reference: "pnpm test",
+      exitCode: 0,
+    });
+    core.finishRun(ctx({ kind: "agent", agentSessionId: worker }), {
+      runId: run.id,
+      status: "succeeded",
+    });
+    core.submitReview(ctx({ kind: "agent", agentSessionId: reviewer }), {
+      taskId: task.id,
+      runId: run.id,
+      kind: "correctness",
+      verdict: "pass",
+      findings: "covered",
+    });
+
+    expect(
+      (await fixture.app.inject({ method: "GET", url: `/api/agent/tasks/${task.id}` })).statusCode,
+    ).toBe(401);
+    const login = await fixture.login();
+    const detail = await fixture.app.inject({
+      method: "GET",
+      url: `/api/agent/tasks/${task.id}`,
+      headers: { cookie: login.cookie },
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      task: { id: task.id, assigneeAgentSessionId: worker },
+      runs: [{ id: run.id, status: "succeeded" }],
+      reviews: [{ kind: "correctness", verdict: "pass" }],
+      artifacts: [{ kind: "test-result", exitCode: 0 }],
+      mergeGate: { open: false, reasons: ["missing-intent-review"] },
+    });
+    const missing = await fixture.app.inject({
+      method: "GET",
+      url: "/api/agent/tasks/90000000-0000-4000-8000-999999999999",
+      headers: { cookie: login.cookie },
+    });
+    expect(missing.statusCode).toBe(404);
+
+    // A view's first load reads the newest events, still oldest first.
+    const all = (
+      await fixture.app.inject({
+        method: "GET",
+        url: "/api/agent/events?after=0&limit=500",
+        headers: { cookie: login.cookie },
+      })
+    ).json<{ seq: number }[]>();
+    const latest = await fixture.app.inject({
+      method: "GET",
+      url: `/api/agent/events?after=0&limit=2&latest=1&projectId=${fixture.projectId}`,
+      headers: { cookie: login.cookie },
+    });
+    expect(latest.json<{ seq: number }[]>().map((event) => event.seq)).toEqual(
+      all.slice(-2).map((event) => event.seq),
+    );
+  });
+});
+
+describe("Agent Platform intent contract approval", () => {
+  it("shows a proposal until the user approves it with the device lease", async () => {
+    const fixture = await createFixture(true);
+    const core = fixture.core!;
+    const login = await fixture.login();
+    let ordinal = 400;
+    const ctx = (actor: Actor) => ({
+      actor,
+      idempotencyKey: `90000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`,
+    });
+    const orchestrator = core.registerAgentSession(ctx({ kind: "human" }), {
+      projectId: fixture.projectId,
+      role: "project-orchestrator",
+      runtime: "claude",
+      native: false,
+      observation: "transcript",
+      conversationWriter: "orchestrator",
+    }).id;
+    const goal = core.createHumanInstruction(ctx({ kind: "human" }), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "goal",
+    }).id;
+    const proposal = core.proposeIntentContract(
+      ctx({ kind: "agent", agentSessionId: orchestrator }),
+      {
+        projectId: fixture.projectId,
+        body: { principles: ["passkey"], allowedChoices: [], requireApprovalIf: [], forbidden: [] },
+        sourceInstructionId: goal,
+      },
+    );
+    const state = async () =>
+      (
+        await fixture.app.inject({
+          method: "GET",
+          url: `/api/agent/projects/${fixture.projectId}`,
+          headers: { cookie: login.cookie },
+        })
+      ).json<{
+        intentContract: { id: string } | null;
+        pendingIntentContract: { id: string } | null;
+      }>();
+    expect(await state()).toMatchObject({
+      intentContract: null,
+      pendingIntentContract: { id: proposal.id },
+    });
+
+    const approve = (headers: Record<string, string>) =>
+      fixture.app.inject({
+        method: "POST",
+        url: `/api/agent/intent-contracts/${proposal.id}/approve`,
+        headers,
+        payload: { idempotencyKey: "90000000-0000-4000-8000-000000000499" },
+      });
+    const withoutLease = await approve({
+      origin,
+      cookie: login.cookie,
+      "x-csrf-token": login.csrfToken,
+    });
+    expect(withoutLease.statusCode).toBe(409);
+    expect((await approve(await fixture.controller(login))).statusCode).toBe(200);
+    expect(await state()).toMatchObject({
+      intentContract: { id: proposal.id },
+      pendingIntentContract: null,
+    });
+  });
+});
+
 describe("Agent Platform managed runtime API", () => {
   it("couples intervention with the writer, records Chat turns once and fences stale writers", async () => {
     const runtime = new FakeRuntime();
@@ -217,7 +384,8 @@ describe("Agent Platform managed runtime API", () => {
     });
     expect(missingHost.statusCode).toBe(400);
     fixture.repository.createAgentPane(agent.id, "agent");
-    runtime.heldNow = () => core.getAgentSession({ kind: "human" }, agent.id).humanHoldSince !== null;
+    runtime.heldNow = () =>
+      core.getAgentSession({ kind: "human" }, agent.id).humanHoldSince !== null;
 
     // Before a takeover the person is not the writer: nothing is recorded or sent.
     const early = await post(`/api/agent/agents/${agent.id}/turns`, {

@@ -170,12 +170,14 @@ export function TerminalPane({
   );
   const touchSelectionRef = useRef<TerminalTouchSelectionController | null>(null);
   const composeInputRef = useRef<HTMLTextAreaElement>(null);
+  const secureInputRef = useRef<HTMLInputElement>(null);
   const mobileImeRef = useRef<MobileTerminalImeBridge | null>(null);
   const previousConnectionStatusRef = useRef(connectionStatus);
   const transientFocusIntentRef = useRef<TransientFocusIntent | null>(null);
   const paneTitleRef = useRef(pane.title);
   const keyboardHelpId = `${pane.id}-terminal-keyboard-help`;
   const composeInputId = `${pane.id}-terminal-compose-input`;
+  const secureInputId = `${pane.id}-terminal-secure-input`;
   const [runtimeStatus, setRuntimeStatus] = useState<PaneStatus>(pane.status);
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
   const [restorePhase, setRestorePhase] = useState<RestorePhase>("waiting");
@@ -186,6 +188,8 @@ export function TerminalPane({
   const [altArmed, setAltArmed] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
+  // Only whether the field is open is state; the secret stays in the DOM field until it is sent.
+  const [secureOpen, setSecureOpen] = useState(false);
   const [clipboardNotice, setClipboardNotice] = useState<{
     kind: "status" | "error";
     message: string;
@@ -218,6 +222,10 @@ export function TerminalPane({
         connectionStatus.acquisition === "reconnect" &&
         currentPaneControl === undefined));
   const inputDisabled = (!controlsPane && !preservingReconnectInput) || runtimeStatus !== "running";
+  // Secure input is for a shell's password prompt. In a Claude or Codex TUI the text would become a
+  // prompt to the model, so those Panes do not offer it.
+  const secureInputAvailable =
+    pane.kind === "terminal" && controlsPane && runtimeStatus === "running";
   const terminalSubscriptionAllowed =
     (connectionStatus.state === "active" ||
       ((connectionStatus.state === "connecting" || connectionStatus.state === "disconnected") &&
@@ -301,6 +309,32 @@ export function TerminalPane({
       if (next) composeInputRef.current?.focus();
       else terminalRef.current?.focus();
     });
+  };
+
+  const toggleSecureInput = (): void => {
+    const next = !secureOpen;
+    setSecureOpen(next);
+    clearMobileModifiers();
+    requestAnimationFrame(() => {
+      if (next) secureInputRef.current?.focus();
+      else terminalRef.current?.focus();
+    });
+  };
+
+  const closeSecureInput = (): void => {
+    setSecureOpen(false);
+    requestAnimationFrame(() => terminalRef.current?.focus());
+  };
+
+  const submitSecureInput = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    const field = secureInputRef.current;
+    if (!field || field.value === "" || !attachmentRef.current) return;
+    // A password prompt reads up to Enter, so the secret goes with one.
+    if (!attachmentRef.current.secureInput(`${field.value}\r`)) return;
+    field.value = "";
+    returnToLiveTail();
+    closeSecureInput();
   };
 
   const copySelectedOutput = (): void => {
@@ -1702,6 +1736,22 @@ export function TerminalPane({
               Pane 제어권 가져오기
             </button>
           )}
+          {secureInputAvailable && (
+            <button
+              className={
+                secureOpen
+                  ? "secondary-button compact pane-secure-toggle is-active"
+                  : "secondary-button compact pane-secure-toggle"
+              }
+              type="button"
+              aria-expanded={secureOpen}
+              aria-controls={secureOpen ? secureInputId : undefined}
+              aria-label={`${pane.title} 비밀 입력`}
+              onClick={toggleSecureInput}
+            >
+              비밀 입력
+            </button>
+          )}
           {toolbarExtras}
           <button
             className="icon-button"
@@ -1818,6 +1868,43 @@ export function TerminalPane({
           <button type="submit" disabled={inputDisabled || composeText.length === 0}>
             입력
           </button>
+        </form>
+      )}
+      {secureOpen && secureInputAvailable && (
+        <form
+          className="terminal-secure-input"
+          aria-label={`${pane.title} 비밀 입력`}
+          autoComplete="off"
+          onSubmit={submitSecureInput}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeSecureInput();
+          }}
+        >
+          <label htmlFor={secureInputId}>비밀 입력</label>
+          <input
+            id={secureInputId}
+            ref={secureInputRef}
+            type="password"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            disabled={inputDisabled}
+            aria-describedby={`${secureInputId}-note`}
+          />
+          <button type="submit" className="primary-button compact" disabled={inputDisabled}>
+            보내기
+          </button>
+          <button type="button" className="secondary-button compact" onClick={closeSecureInput}>
+            취소
+          </button>
+          <p id={`${secureInputId}-note`}>
+            Enter와 함께 이 터미널에만 보내고 Naru는 기록하지 않습니다. 프로그램이 화면에 출력하는
+            값은 숨기지 못합니다.
+          </p>
         </form>
       )}
       <div

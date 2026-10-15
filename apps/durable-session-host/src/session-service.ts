@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   DURABLE_SESSION_LIMITS,
   type AttachmentId,
@@ -153,6 +153,9 @@ export class SessionService {
   readonly #terminalStates = new Map<SessionId, BoundedTerminalState>();
   readonly #idempotency = new Map<string, IdempotencyEntry>();
   readonly #inputDedupe = new Map<string, InputDedupeEntry>();
+  // Input fingerprints are keyed per process so a remembered secret cannot be guessed back from
+  // its hash (AP-D003).
+  readonly #inputFingerprintKey = randomBytes(32);
   readonly #attachments: AttachmentCoordinator;
   readonly #journal: BoundedEventJournal;
   readonly #eventWaiterClosers = new Set<() => void>();
@@ -900,7 +903,9 @@ export class SessionService {
       request.expectedControllerGeneration,
       request.inputId,
     );
-    const fingerprint = createHash("sha256").update(request.data).digest("hex");
+    const fingerprint = createHmac("sha256", this.#inputFingerprintKey)
+      .update(request.data)
+      .digest("hex");
     const existing = this.#inputDedupe.get(dedupeKey);
     if (existing !== undefined) {
       if (existing.fingerprint !== fingerprint) {

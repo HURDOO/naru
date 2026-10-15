@@ -33,6 +33,20 @@ import type {
   startAuthentication,
   startRegistration,
 } from "@simplewebauthn/browser";
+import type {
+  AgentEvent,
+  AgentOverview,
+  AgentRuntimeState,
+  AgentSession,
+  AgentTask,
+  AgentTaskDetail,
+  Handoff,
+  Instruction,
+  InstructionScope,
+  IntentContract,
+  Plan,
+  SharedProcess,
+} from "@naru/contracts/naru-agent/v1";
 import { currentAppPath } from "./app-base-path";
 import { isCurrentPwaOriginConsistent } from "./pwa";
 
@@ -40,6 +54,23 @@ type AuthenticationOptions = StartAuthenticationOpts["optionsJSON"];
 type RegistrationOptions = StartRegistrationOpts["optionsJSON"];
 type AuthenticationResponse = Awaited<ReturnType<typeof startAuthentication>>;
 type RegistrationResponse = Awaited<ReturnType<typeof startRegistration>>;
+
+/** One project as the agent screen shows it (`GET /api/agent/projects/:id`). */
+export interface AgentProjectView {
+  readonly intentContract: IntentContract | null;
+  /** A newer proposal the user has not approved yet. */
+  readonly pendingIntentContract: IntentContract | null;
+  readonly activePlan: Plan | null;
+  readonly tasks: AgentTask[];
+  readonly openHandoffs: Handoff[];
+  readonly agents: AgentSession[];
+  readonly instructions: Instruction[];
+  readonly processes: SharedProcess[];
+}
+
+function key(): string {
+  return globalThis.crypto.randomUUID();
+}
 
 export class ApiFailure extends Error {
   constructor(
@@ -391,6 +422,138 @@ export class NaruApi {
       { method: "POST", body: JSON.stringify({ eventId }) },
       true,
     );
+  }
+
+  // Agent Platform (naru-agent/v1). Reads need a session; changes need CSRF and the device lease.
+
+  agentOverview(): Promise<AgentOverview> {
+    return this.#request<AgentOverview>("/api/agent/overview");
+  }
+
+  agentProject(projectId: string): Promise<AgentProjectView> {
+    return this.#request<AgentProjectView>(`/api/agent/projects/${projectId}`);
+  }
+
+  agentTask(taskId: string): Promise<AgentTaskDetail> {
+    return this.#request<AgentTaskDetail>(`/api/agent/tasks/${taskId}`);
+  }
+
+  /** Events after `after`; `latest` reads the newest page instead of the oldest (first load). */
+  agentEvents(
+    projectId: string,
+    after: number,
+    options: { readonly limit?: number; readonly latest?: boolean } = {},
+  ): Promise<AgentEvent[]> {
+    const query = new URLSearchParams({ projectId, after: String(after) });
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.latest === true) query.set("latest", "1");
+    return this.#request<AgentEvent[]>(`/api/agent/events?${query.toString()}`);
+  }
+
+  agentRuntime(agentSessionId: string): Promise<AgentRuntimeState> {
+    return this.#request<AgentRuntimeState>(`/api/agent/agents/${agentSessionId}/runtime`);
+  }
+
+  agentHistory(
+    agentSessionId: string,
+    cursor: string | null,
+  ): Promise<{ items: unknown[]; nextCursor: string | null }> {
+    const query = cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+    return this.#request(`/api/agent/agents/${agentSessionId}/history${query}`);
+  }
+
+  createInstruction(scope: InstructionScope, verbatim: string): Promise<Instruction> {
+    return this.#agentWrite("/api/agent/instructions", { scope, verbatim, idempotencyKey: key() });
+  }
+
+  approveIntentContract(intentContractId: string): Promise<IntentContract> {
+    return this.#agentWrite(`/api/agent/intent-contracts/${intentContractId}/approve`, {
+      idempotencyKey: key(),
+    });
+  }
+
+  createManagedAgent(
+    input:
+      | {
+          projectId: string;
+          role: "project-orchestrator" | "worker" | "reviewer" | "specialist";
+          runtime: "claude" | "codex";
+        }
+      | { role: "main-orchestrator"; hostProjectId: string; runtime: "claude" | "codex" },
+  ): Promise<AgentSession> {
+    return this.#agentWrite("/api/agent/agents", { ...input, idempotencyKey: key() });
+  }
+
+  launchAgent(agentSessionId: string): Promise<AgentRuntimeState> {
+    return this.#agentWrite(`/api/agent/agents/${agentSessionId}/launch`, {});
+  }
+
+  stopAgent(agentSessionId: string): Promise<AgentRuntimeState> {
+    return this.#agentWrite(`/api/agent/agents/${agentSessionId}/stop`, {});
+  }
+
+  /** "직접 개입" (hold) in Chat or the TUI, or hand the agent back. */
+  setAgentHold(
+    agentSessionId: string,
+    held: boolean,
+    surface: "chat" | "tui" = "chat",
+  ): Promise<AgentSession> {
+    return this.#agentWrite(`/api/agent/agents/${agentSessionId}/hold`, {
+      held,
+      ...(held ? { surface } : {}),
+      idempotencyKey: key(),
+    });
+  }
+
+  sendAgentTurn(agentSessionId: string, text: string, generation: number): Promise<unknown> {
+    return this.#agentWrite(`/api/agent/agents/${agentSessionId}/turns`, {
+      text,
+      generation,
+      idempotencyKey: key(),
+    });
+  }
+
+  interruptAgent(agentSessionId: string, generation: number): Promise<AgentRuntimeState> {
+    return this.#agentWrite(`/api/agent/agents/${agentSessionId}/interrupt`, { generation });
+  }
+
+  respondAgentApproval(
+    agentSessionId: string,
+    requestId: string,
+    decision: "approve" | "deny",
+    generation: number,
+  ): Promise<AgentRuntimeState> {
+    return this.#agentWrite(
+      `/api/agent/agents/${agentSessionId}/approvals/${encodeURIComponent(requestId)}`,
+      { decision, generation },
+    );
+  }
+
+  resolveHandoff(
+    handoffId: string,
+    decision: string,
+    chosenOption: string | null,
+  ): Promise<Handoff> {
+    return this.#agentWrite(`/api/agent/handoffs/${handoffId}/resolve`, {
+      decision,
+      ...(chosenOption === null ? {} : { chosenOption }),
+      idempotencyKey: key(),
+    });
+  }
+
+  setProcessHold(processId: string, held: boolean): Promise<SharedProcess> {
+    return this.#agentWrite(`/api/agent/processes/${processId}/hold`, {
+      held,
+      idempotencyKey: key(),
+    });
+  }
+
+  stopProcess(processId: string): Promise<SharedProcess> {
+    return this.#agentWrite(`/api/agent/processes/${processId}/stop`, {});
+  }
+
+  #agentWrite<T>(path: string, body: unknown): Promise<T> {
+    return this.#request<T>(path, { method: "POST", body: JSON.stringify(body) }, true, true);
   }
 
   deletePane(paneId: string, workspaceVersion: number): Promise<Workspace> {

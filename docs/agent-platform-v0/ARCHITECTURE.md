@@ -186,3 +186,28 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
   - 이벤트 `*.hold_released`(사유 포함)가 orchestrator를 깨운다.
 - secure input(`terminal.input.secure`)의 bytes는 PTY에만 간다. Naru는 사람이 입력했다는 사실만 hold
   idle 판정에 쓴다.
+  - 입력 UI는 shell terminal Pane의 `비밀 입력`(password 입력란)이다. 값은 Enter와 함께 한 번 보내고
+    browser 상태나 draft에 남기지 않는다. Claude·Codex Pane에는 두지 않는다(입력이 모델 prompt가 된다).
+  - Host의 입력 중복 제거 fingerprint는 process별 key의 HMAC이다.
+
+### 6.6 웹 화면 (AP-T17)
+
+- 작업공간 옆의 `에이전트` 탭이다. 사람 기기 lease가 있어야 바꿀 수 있다(AP-D005 첫 계층). 읽기는
+  polling이다.
+  - project 상태·전체 현황·이벤트: 3초
+  - 에이전트 runtime 상태: 2초
+  - 대화 이력: turn이 끝날 때와 8초마다 runtime에서 다시 읽는다(AP-D002)
+- 화면과 근거 API
+  - 전체 현황: `GET /api/agent/overview`
+  - 프로젝트 개요: `GET /api/agent/projects/:id`. 승인된 계약, 승인 대기 제안(`pendingIntentContract`),
+    활성 계획, 작업, 열린 Handoff, 에이전트, 지시, 공유 프로세스를 함께 준다.
+    - 작업 그래프는 `dependsOn` 깊이로 단계를 나눈다.
+    - 작업 노드는 `GET /api/agent/tasks/:id`(Run, 리뷰, 산출물, 병합 조건)를 연다.
+  - Agent Panel 활동 탭: `GET /api/agent/events?projectId&after&latest=1`.
+    - 처음에는 최신 page를 읽고, 그 뒤로는 이어서 받는다. 최대 1,000개를 browser 메모리에만 둔다.
+    - 그 에이전트가 한 일이나 그 에이전트에 관한 이벤트를 보여 준다. 이벤트에는 metadata만 있다.
+  - 쓰기는 기존 command route를 쓴다: 지시, 의도 계약 승인, 에이전트 생성·실행·정지, hold, turn, 중단,
+    승인, Handoff 결정, 공유 프로세스 hold·정지.
+- 화면에 바로 보이지 않는 경계
+  - TUI는 작업공간의 실제 Pane을 연다. 에이전트 화면 안에 terminal을 다시 그리지 않는다.
+  - native 보조 에이전트는 관찰만 한다(AP-D014).

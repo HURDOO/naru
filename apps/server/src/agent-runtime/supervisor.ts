@@ -1,9 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type {
-  AgentEvent,
-  AgentRuntimeState,
-  AgentSession,
-} from "@naru/contracts/naru-agent/v1";
+import type { AgentEvent, AgentRuntimeState, AgentSession } from "@naru/contracts/naru-agent/v1";
 import type { AgentPlatformCore, CommandContext } from "../agent-platform/core.js";
 import type {
   OrchestratorInvoker,
@@ -426,10 +422,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           return;
         }
         runtime.gate = { ...runtime.gate, runtimeSessionRef: event.runtimeSessionRef };
+        // Ready, not working: a turn in flight reports itself with `turn-started`.
         this.#core.updateAgentRuntimeState(SYSTEM, {
           agentSessionId,
           runtimeSessionRef: event.runtimeSessionRef,
-          status: "active",
+          status: runtime.gate.turnActive ? "active" : "idle",
         });
         this.#trackOrchestrator(agentSessionId);
         return;
@@ -463,7 +460,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         });
         return;
       case "child-started":
-        if (runtime.children.size < 64) runtime.children.set(event.childRef, new Date().toISOString());
+        if (runtime.children.size < 64)
+          runtime.children.set(event.childRef, new Date().toISOString());
         return;
       case "child-ended":
         runtime.children.delete(event.childRef);

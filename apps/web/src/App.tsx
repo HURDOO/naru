@@ -29,6 +29,7 @@ import {
 } from "react";
 import { ApiFailure, NaruApi } from "./api";
 import { ActivityStatus } from "./ActivityStatus";
+import { AgentView } from "./AgentView";
 import { activityLabel } from "./activity-presentation";
 import { passkeyMessageFrom } from "./auth-presentation";
 import { applyCodexIdentity, PaneActivityFrameFence } from "./pane-runtime";
@@ -132,6 +133,24 @@ export default function App(): React.JSX.Element {
     updatePane,
   } = useWorkspace(api, setNotice, mutationAllowed);
 
+  // Agent Platform screen (AP-T17), shown only when the server serves the agent API.
+  const [mainView, setMainView] = useState<"workspace" | "agents">("workspace");
+  const [agentsAvailable, setAgentsAvailable] = useState(false);
+  useEffect(() => {
+    if (authState !== "signed-in") return;
+    let cancelled = false;
+    api.agentOverview().then(
+      () => {
+        if (!cancelled) setAgentsAvailable(true);
+      },
+      () => {
+        if (!cancelled) setAgentsAvailable(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [api, authState]);
   const rememberProject = useCallback((projectId: string | null): void => {
     setSelectedProjectId(projectId);
     if (projectId) localStorage.setItem(LAST_PROJECT_KEY, projectId);
@@ -393,6 +412,18 @@ export default function App(): React.JSX.Element {
       if (pane) void acknowledgeCompletedPanes([pane]);
     },
     [acknowledgeCompletedPanes, activatePane, currentWorkspace],
+  );
+
+  const openAgentPane = useCallback(
+    async (paneId: string): Promise<void> => {
+      setMainView("workspace");
+      // An agent's Pane may have joined the workspace after this screen loaded it.
+      if (!currentWorkspace()?.panes.some((pane) => pane.id === paneId)) {
+        await loadWorkspace(selectedProjectId);
+      }
+      activateAndAcknowledgePane(paneId);
+    },
+    [activateAndAcknowledgePane, currentWorkspace, loadWorkspace, selectedProjectId],
   );
 
   useEffect(() => {
@@ -988,8 +1019,22 @@ export default function App(): React.JSX.Element {
                 setSidebarOpen(true);
               }}
             />
+          ) : agentsAvailable && mainView === "agents" ? (
+            <>
+              <MainViewTabs view={mainView} onChange={setMainView} />
+              <AgentView
+                key={selectedProject.id}
+                api={api}
+                projectId={selectedProject.id}
+                projects={projects}
+                mutationAllowed={mutationAllowed}
+                onOpenPane={(paneId) => void openAgentPane(paneId)}
+                onSelectProject={selectProject}
+              />
+            </>
           ) : (
             <>
+              {agentsAvailable && <MainViewTabs view={mainView} onChange={setMainView} />}
               {workspace && workspace.panes.length > 1 && (
                 <PaneTabs
                   panes={workspace.panes}
@@ -2764,6 +2809,29 @@ function WorkspaceViewControl({
       </button>
       <button type="button" aria-pressed={mode === "multi"} onClick={() => onChange("multi")}>
         분할 보기
+      </button>
+    </div>
+  );
+}
+
+function MainViewTabs({
+  view,
+  onChange,
+}: {
+  view: "workspace" | "agents";
+  onChange: (view: "workspace" | "agents") => void;
+}): React.JSX.Element {
+  return (
+    <div className="main-view-tabs" role="group" aria-label="화면">
+      <button
+        type="button"
+        aria-pressed={view === "workspace"}
+        onClick={() => onChange("workspace")}
+      >
+        작업공간
+      </button>
+      <button type="button" aria-pressed={view === "agents"} onClick={() => onChange("agents")}>
+        에이전트
       </button>
     </div>
   );

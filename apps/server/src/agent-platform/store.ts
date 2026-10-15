@@ -151,6 +151,20 @@ export class AgentPlatformStore {
     return row === undefined ? null : intentContractFromRow(row);
   }
 
+  /** The newest proposal after the approved version: what still waits for the user. */
+  getPendingIntentContract(projectId: string): IntentContract | null {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM agent_intent_contracts
+         WHERE project_id = ? AND status = 'proposed' AND version > COALESCE(
+           (SELECT MAX(version) FROM agent_intent_contracts
+            WHERE project_id = ? AND status = 'approved'), 0)
+         ORDER BY version DESC LIMIT 1`,
+      )
+      .get(projectId, projectId) as IntentContractRow | undefined;
+    return row === undefined ? null : intentContractFromRow(row);
+  }
+
   approveIntentContract(id: string, projectId: string, handoffId: string | null): void {
     this.#database
       .prepare(
@@ -372,6 +386,13 @@ export class AgentPlatformStore {
     return row === undefined ? null : runFromRow(row);
   }
 
+  listRuns(taskId: string): Run[] {
+    const rows = this.#database
+      .prepare("SELECT * FROM agent_runs WHERE task_id = ? ORDER BY started_at, rowid")
+      .all(taskId) as RunRow[];
+    return rows.map(runFromRow);
+  }
+
   listRunsByStatus(statuses: readonly Run["status"][]): Run[] {
     const placeholders = statuses.map(() => "?").join(", ");
     const rows = this.#database
@@ -553,14 +574,21 @@ export class AgentPlatformStore {
             .prepare("SELECT * FROM agent_shared_processes WHERE run_id = ? ORDER BY created_at")
             .all(filter.runId)
         : this.#database
-            .prepare("SELECT * FROM agent_shared_processes WHERE project_id = ? ORDER BY created_at")
+            .prepare(
+              "SELECT * FROM agent_shared_processes WHERE project_id = ? ORDER BY created_at",
+            )
             .all(filter.projectId ?? "")
     ) as SharedProcessRow[];
     return rows.map(sharedProcessFromRow);
   }
 
   /** Agent sessions and shared processes a person holds now (AP-D005 auto-return). */
-  listHumanHolds(): { kind: "agent" | "process"; id: string; heldSince: string; paneId: string | null }[] {
+  listHumanHolds(): {
+    kind: "agent" | "process";
+    id: string;
+    heldSince: string;
+    paneId: string | null;
+  }[] {
     return this.#database
       .prepare(
         `SELECT 'agent' AS kind, id, human_hold_since AS heldSince, pane_id AS paneId
@@ -569,7 +597,12 @@ export class AgentPlatformStore {
          SELECT 'process' AS kind, id, human_hold_since AS heldSince, pane_id AS paneId
            FROM agent_shared_processes WHERE human_hold_since IS NOT NULL`,
       )
-      .all() as { kind: "agent" | "process"; id: string; heldSince: string; paneId: string | null }[];
+      .all() as {
+      kind: "agent" | "process";
+      id: string;
+      heldSince: string;
+      paneId: string | null;
+    }[];
   }
 
   /** Processes Naru still considers alive; checked against the Host after a restart. */
@@ -616,7 +649,9 @@ export class AgentPlatformStore {
       .run(input.id, input.processId, input.agentSessionId, input.verbatim, input.createdAt);
   }
 
-  listSharedProcessInputs(processId: string): { verbatim: string; agentSessionId: string | null }[] {
+  listSharedProcessInputs(
+    processId: string,
+  ): { verbatim: string; agentSessionId: string | null }[] {
     return (
       this.#database
         .prepare(
@@ -907,20 +942,24 @@ export class AgentPlatformStore {
     readonly afterSeq: number;
     readonly projectId?: string;
     readonly limit: number;
+    /** The newest `limit` matches instead of the oldest; the result stays ascending. */
+    readonly latest?: boolean;
   }): AgentEvent[] {
+    const order = options.latest === true ? "DESC" : "ASC";
     const rows = (
       options.projectId === undefined
         ? this.#database
-            .prepare("SELECT * FROM agent_events WHERE seq > ? ORDER BY seq LIMIT ?")
+            .prepare(`SELECT * FROM agent_events WHERE seq > ? ORDER BY seq ${order} LIMIT ?`)
             .all(options.afterSeq, options.limit)
         : this.#database
             .prepare(
               `SELECT * FROM agent_events
                WHERE seq > ? AND (project_id = ? OR project_id IS NULL)
-               ORDER BY seq LIMIT ?`,
+               ORDER BY seq ${order} LIMIT ?`,
             )
             .all(options.afterSeq, options.projectId, options.limit)
     ) as EventRow[];
+    if (options.latest === true) rows.reverse();
     return rows.map(eventFromRow);
   }
 
