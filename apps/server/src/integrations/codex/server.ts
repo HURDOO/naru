@@ -1,13 +1,22 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, realpath, unlink } from "node:fs/promises";
-import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { NaruCodexIntegrationPort } from "./port.js";
 import type { NaruClaudeIntegrationPort } from "../claude/port.js";
 import { CodexIntegrationRequestSchema, type CodexIntegrationReply } from "./protocol.js";
+import {
+  closeServer,
+  isNodeError,
+  listenOnSocket,
+  removeStaleSocket,
+  requirePrivateRuntimeDirectory,
+  unlinkOwnedSocket,
+} from "../../private-socket.js";
 
 const SOCKET_FILENAME = "codex-integration.sock";
+const LABEL = "Codex integration";
 const SOCKET_PATH_MAX_BYTES = 100;
 const MAX_MESSAGE_BYTES = 32 * 1024;
 const CONNECTION_TIMEOUT_MS = 3_000;
@@ -67,8 +76,9 @@ export class CodexIntegrationServer {
     await requirePrivateRuntimeDirectory(
       this.#runtimeDirectory,
       this.#requiresCanonicalRuntimeDirectory,
+      LABEL,
     );
-    await removeStaleSocket(this.#socketPath);
+    await removeStaleSocket(this.#socketPath, LABEL);
     const server = createServer((socket) => this.#acceptConnection(socket));
     await listenOnSocket(server, this.#socketPath);
     try {
@@ -204,92 +214,4 @@ function shortRuntimeDirectory(dataDirectory: string): string {
   const temporaryRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
   const identifier = createHash("sha256").update(dataDirectory).digest("hex").slice(0, 16);
   return join(temporaryRoot, `naru-codex-integration-${identifier}`);
-}
-
-async function requirePrivateRuntimeDirectory(
-  path: string,
-  requireCanonical: boolean,
-): Promise<void> {
-  const metadata = await lstat(path);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error("Codex integration runtime path must be a regular directory.");
-  }
-  if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
-    throw new Error("Codex integration runtime directory must be owned by the service user.");
-  }
-  if ((metadata.mode & 0o077) !== 0) {
-    throw new Error("Codex integration runtime directory must be private.");
-  }
-  if (requireCanonical && (await realpath(path)) !== path) {
-    throw new Error("Configured Codex integration runtime path must not contain symbolic links.");
-  }
-}
-
-async function removeStaleSocket(path: string): Promise<void> {
-  let metadata;
-  try {
-    metadata = await lstat(path);
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return;
-    throw error;
-  }
-  if (!metadata.isSocket() || metadata.isSymbolicLink()) {
-    throw new Error("Refusing to replace a non-socket Codex integration path.");
-  }
-  if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
-    throw new Error("Refusing to replace a Codex integration socket owned by another user.");
-  }
-  if (await isAcceptingConnections(path)) {
-    throw new Error("Another Naru Codex integration server is already running.");
-  }
-  await unlink(path);
-}
-
-async function unlinkOwnedSocket(path: string): Promise<void> {
-  try {
-    const metadata = await lstat(path);
-    if (
-      metadata.isSocket() &&
-      (typeof process.getuid !== "function" || metadata.uid === process.getuid())
-    ) {
-      await unlink(path);
-    }
-  } catch (error) {
-    if (!isNodeError(error, "ENOENT")) throw error;
-  }
-}
-
-function listenOnSocket(server: Server, path: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const onError = (error: Error): void => reject(error);
-    server.once("error", onError);
-    server.listen(path, () => {
-      server.off("error", onError);
-      resolve();
-    });
-  });
-}
-
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function isAcceptingConnections(path: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection(path);
-    const finish = (result: boolean): void => {
-      socket.destroy();
-      resolve(result);
-    };
-    socket.setTimeout(250);
-    socket.once("connect", () => finish(true));
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-  });
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
 }

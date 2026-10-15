@@ -11,6 +11,7 @@ export default defineConfig({
     "src/claude-integration-hook-cli.ts",
     "src/claude-integration-launcher.ts",
     "src/codex-integration-launcher.ts",
+    "src/agent-mcp-cli.ts",
   ],
   format: ["esm"],
   platform: "node",

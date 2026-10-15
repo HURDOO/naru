@@ -117,7 +117,13 @@
     capability와 같은 방식이다. Naru가 이 capability로 `actor_id`를 결정한다.
   - browser API와 agent API는 서로 다른 listener에 둔다. 브라우저는 agent 경로를, agent는 브라우저
     경로를 사용할 수 없다.
-- 판정: **PARTIAL**(분석만, 구현 전). 확정된 제한이 하나 있다. agent는 같은 OS 사용자로 shell을
+- 구현 근거(AP-T11): agent capability와 owner-only socket, MCP bin으로 다음을 확인했다.
+  - 위조한 `from` 인자 거부, revoke 뒤 거부, 오류 응답에 원문 미노출(`apps/server/test/agent-platform-mcp.test.ts`)
+  - 실제 Claude Code 2.1.296에서 위임이 capability의 orchestrator 신원으로 기록됐다
+    (`tests/spikes/agent-platform/claude-mcp-roundtrip.ts`, 원문 로그는 experiments에 있다).
+  - Codex 주입은 아직 확인하지 않았다(V08 Codex).
+- 판정: **PARTIAL**. Claude 경로는 동작하지만, Naru 시작 경로 연결과 Codex 경로가 남았다. 확정된
+  제한이 하나 있다. agent는 같은 OS 사용자로 shell을
   실행하므로 owner-only credential을 읽을 수 있다. agent 인증은 책임 추적과 사고 방지 수단이며,
   악성 agent를 가두는 경계가 아니다. 격리가 필요하면 별도 OS 사용자나 sandbox가 필요하고 이는 v0 범위
   밖이다. Gate 1에서 사용자에게 알린다.

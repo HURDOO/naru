@@ -191,6 +191,14 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
         last_seq INTEGER NOT NULL CHECK (last_seq >= 0)
       );
 
+      CREATE TABLE agent_capabilities (
+        digest TEXT PRIMARY KEY,
+        agent_session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      CREATE INDEX agent_capabilities_session ON agent_capabilities(agent_session_id);
+
       CREATE TABLE agent_commands (
         actor_key TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,

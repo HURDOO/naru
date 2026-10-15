@@ -196,6 +196,13 @@ export class AgentPlatformStore {
       );
   }
 
+  getActivePlan(projectId: string): Plan | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_plans WHERE project_id = ? AND status = 'active'")
+      .get(projectId) as PlanRow | undefined;
+    return row === undefined ? null : planFromRow(row);
+  }
+
   getPlan(id: string): Plan | null {
     const row = this.#database.prepare("SELECT * FROM agent_plans WHERE id = ?").get(id) as
       PlanRow | undefined;
@@ -545,6 +552,38 @@ export class AgentPlatformStore {
       .prepare("SELECT * FROM agent_artifacts WHERE task_id = ? ORDER BY created_at, rowid")
       .all(taskId) as ArtifactRow[];
     return rows.map(artifactFromRow);
+  }
+
+  // Agent capabilities --------------------------------------------------------------------------
+
+  /** Only a digest is stored; the bearer token exists in the agent process environment alone. */
+  insertCapability(digest: string, agentSessionId: string, createdAt: string): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_capabilities (digest, agent_session_id, created_at, revoked_at)
+         VALUES (?, ?, ?, NULL)`,
+      )
+      .run(digest, agentSessionId, createdAt);
+  }
+
+  findCapabilitySession(digest: string): string | null {
+    return (
+      (this.#database
+        .prepare(
+          "SELECT agent_session_id FROM agent_capabilities WHERE digest = ? AND revoked_at IS NULL",
+        )
+        .pluck()
+        .get(digest) as string | undefined) ?? null
+    );
+  }
+
+  revokeCapabilities(agentSessionId: string, revokedAt: string): number {
+    return this.#database
+      .prepare(
+        `UPDATE agent_capabilities SET revoked_at = ?
+         WHERE agent_session_id = ? AND revoked_at IS NULL`,
+      )
+      .run(revokedAt, agentSessionId).changes;
   }
 
   // Events and idempotency -----------------------------------------------------------------------

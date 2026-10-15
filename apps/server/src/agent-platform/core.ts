@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   AGENT_ROLE_COMMANDS,
   NARU_AGENT_LIMITS,
@@ -750,6 +750,75 @@ export class AgentPlatformCore {
     );
   }
 
+  /**
+   * Mints the bearer capability that binds MCP calls to this agent session (AP-D004, V13). The
+   * token is returned once and only its digest is stored. It proves accountability, not isolation:
+   * agents run as the same OS user.
+   */
+  issueAgentCapability(actor: Actor, agentSessionId: string): string {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Agents cannot mint capabilities.");
+    }
+    const token = randomBytes(32).toString("base64url");
+    this.#store.transaction(() => {
+      this.#requireAgentSession(agentSessionId);
+      this.#store.insertCapability(capabilityDigest(token), agentSessionId, this.#timestamp());
+    });
+    return token;
+  }
+
+  revokeAgentCapabilities(actor: Actor, agentSessionId: string): number {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Agents cannot revoke capabilities.");
+    }
+    return this.#store.revokeCapabilities(agentSessionId, this.#timestamp());
+  }
+
+  /** Resolves a presented capability to its agent actor, or null when unknown, revoked or ended. */
+  authenticateAgent(token: string): Actor | null {
+    if (!CAPABILITY_PATTERN.test(token)) return null;
+    // Lookup is by SHA-256 digest of a 256-bit token, so timing reveals nothing useful.
+    const agentSessionId = this.#store.findCapabilitySession(capabilityDigest(token));
+    if (agentSessionId === null) return null;
+    const session = this.#store.getAgentSession(agentSessionId);
+    if (session === null || session.status === "stopped" || session.status === "failed") {
+      return null;
+    }
+    return { kind: "agent", agentSessionId };
+  }
+
+  getAgentSession(actor: Actor, agentSessionId: string): AgentSession {
+    const session = this.#requireAgentSession(agentSessionId);
+    this.#authorize(actor, "state.read", session.projectId);
+    return session;
+  }
+
+  /** A compact project snapshot for orchestrators; content stays referenced, not expanded. */
+  getProjectState(
+    actor: Actor,
+    projectId: string,
+  ): {
+    readonly intentContract: IntentContract | null;
+    readonly activePlan: Plan | null;
+    readonly tasks: AgentTask[];
+    readonly openHandoffs: Handoff[];
+  } {
+    this.#authorize(actor, "state.read", projectId);
+    this.#requireProject(projectId);
+    return {
+      intentContract: this.#store.getApprovedIntentContract(projectId),
+      activePlan: this.#store.getActivePlan(projectId),
+      tasks: this.#store.listTasks(projectId),
+      openHandoffs: this.#store.listOpenHandoffs(projectId),
+    };
+  }
+
+  getHandoff(actor: Actor, handoffId: string): Handoff {
+    const handoff = this.#requireHandoff(handoffId);
+    this.#authorize(actor, "state.read", handoff.projectId);
+    return handoff;
+  }
+
   // Handoffs -------------------------------------------------------------------------------------
 
   requestHandoff(
@@ -1299,6 +1368,12 @@ export class AgentPlatformCore {
   #timestamp(): string {
     return this.#now().toISOString();
   }
+}
+
+const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+function capabilityDigest(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 function instructionCreated(instruction: Instruction): EventDraft {
