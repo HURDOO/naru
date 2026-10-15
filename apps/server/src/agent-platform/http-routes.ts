@@ -1,19 +1,59 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
+  AgentApprovalResponseRequestSchema,
   AgentEventsQuerySchema,
+  AgentHistoryPageSchema,
+  AgentHistoryQuerySchema,
+  AgentInterruptRequestSchema,
+  AgentTurnRequestSchema,
   ApproveIntentContractRequestSchema,
   CreateHumanInstructionRequestSchema,
+  CreateManagedAgentRequestSchema,
   IdempotentRequestSchema,
   ResolveHandoffRequestSchema,
   SetAgentHoldRequestSchema,
   type Actor,
+  type AgentRuntimeState,
+  type AgentSession,
 } from "@naru/contracts/naru-agent/v1";
-import type { AgentPlatformCore } from "./core.js";
+import type { HistoryPage } from "../agent-runtime/adapter.js";
+import { SupervisorError } from "../agent-runtime/supervisor.js";
+import type { WriterKind } from "../agent-runtime/writer-gate.js";
+import { AgentPlatformError, type AgentPlatformCore } from "./core.js";
 
 const HUMAN: Actor = { kind: "human" };
 const IdParamsSchema = z.strictObject({ id: z.string().uuid() });
 const ProjectQuerySchema = z.strictObject({ projectId: z.string().uuid().optional() });
+const ApprovalParamsSchema = z.strictObject({
+  id: z.string().uuid(),
+  requestId: z.string().min(1).max(200),
+});
+const EmptyBodySchema = z.strictObject({}).optional();
+
+/** The managed agent runtime (ManagedAgentSupervisor) as the browser routes use it. */
+export interface AgentRuntimeControl {
+  launch(agentSessionId: string): Promise<void>;
+  stop(agentSessionId: string): void;
+  runtimeState(agentSessionId: string): AgentRuntimeState;
+  assertWriter(
+    agentSessionId: string,
+    writer: WriterKind,
+    generation: number,
+    kind: "turn" | "interrupt" | "approval-response",
+  ): void;
+  sendTurn(agentSessionId: string, text: string, writer: WriterKind, generation: number): void;
+  interrupt(agentSessionId: string, writer: WriterKind, generation: number): void;
+  respondApproval(
+    agentSessionId: string,
+    requestId: string,
+    decision: "approve" | "deny",
+    writer: WriterKind,
+    generation: number,
+  ): void;
+  readHistory(agentSessionId: string, cursor: string | null): Promise<HistoryPage>;
+  switchWriter(agentSessionId: string, to: WriterKind, interrupt: boolean): Promise<unknown>;
+}
 
 export interface AgentRouteGuards {
   /** Gateway or app session; required for every read. */
@@ -29,6 +69,7 @@ export function registerAgentPlatformRoutes(
   app: FastifyInstance,
   core: AgentPlatformCore,
   guards: AgentRouteGuards,
+  runtime?: AgentRuntimeControl,
 ): void {
   const mutate = (request: FastifyRequest): void => {
     guards.requireUnsafeRequest(request);
@@ -127,13 +168,157 @@ export function registerAgentPlatformRoutes(
     );
   });
 
-  app.post("/api/agent/agents/:id/hold", (request) => {
+  /**
+   * "직접 개입" (AP-D005): the hold blocks orchestrator writes in Core first, then the conversation
+   * writer moves to the person (Chat live, TUI by stop-resume). Release reverses the order so
+   * orchestrators are woken only once they can write again.
+   */
+  app.post("/api/agent/agents/:id/hold", async (request) => {
     mutate(request);
     const { id } = IdParamsSchema.parse(request.params);
     const input = SetAgentHoldRequestSchema.parse(request.body);
-    return core.setHumanHold(
-      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
-      { agentSessionId: id, held: input.held, reason: input.held ? "takeover" : "release" },
-    );
+    const context = { actor: HUMAN, idempotencyKey: input.idempotencyKey };
+    const managed = runtime !== undefined && isManaged(core.getAgentSession(HUMAN, id));
+    if (input.held) {
+      const held = core.setHumanHold(context, { agentSessionId: id, held: true, reason: "takeover" });
+      if (!managed) return held;
+      const to: WriterKind = input.surface === "tui" ? "tui" : "gui";
+      await runtimeCall(() => runtime.switchWriter(id, to, input.interrupt ?? false));
+      return core.getAgentSession(HUMAN, id);
+    }
+    if (managed) await runtimeCall(() => runtime.switchWriter(id, "orchestrator", false));
+    return core.setHumanHold(context, { agentSessionId: id, held: false, reason: "release" });
   });
+
+  if (runtime === undefined) return;
+
+  app.post("/api/agent/agents", async (request, reply) => {
+    mutate(request);
+    const input = CreateManagedAgentRequestSchema.parse(request.body);
+    const replay = core.commandRecorded(HUMAN, input.idempotencyKey);
+    const agent = core.registerAgentSession(
+      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+      {
+        projectId: input.projectId,
+        role: input.role,
+        runtime: input.runtime,
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      },
+    );
+    if (!replay) await runtimeCall(() => runtime.launch(agent.id));
+    return reply.code(201).send(core.getAgentSession(HUMAN, agent.id));
+  });
+
+  app.post("/api/agent/agents/:id/launch", async (request) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    EmptyBodySchema.parse(request.body);
+    const agent = core.getAgentSession(HUMAN, id);
+    if (agent.runtime !== "claude" || agent.native) {
+      throw new AgentPlatformError("AGENT_RUNTIME_UNAVAILABLE", "This agent has no Naru runtime.");
+    }
+    await runtimeCall(() => runtime.launch(id));
+    return runtimeCall(() => runtime.runtimeState(id));
+  });
+
+  app.post("/api/agent/agents/:id/stop", (request) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    EmptyBodySchema.parse(request.body);
+    core.getAgentSession(HUMAN, id);
+    runtimeCall(() => runtime.stop(id));
+    return runtimeCall(() => runtime.runtimeState(id));
+  });
+
+  app.get("/api/agent/agents/:id/runtime", (request) => {
+    guards.requireSession(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    core.getAgentSession(HUMAN, id);
+    return runtimeCall(() => runtime.runtimeState(id));
+  });
+
+  app.get("/api/agent/agents/:id/history", async (request) => {
+    guards.requireSession(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    const { cursor } = AgentHistoryQuerySchema.parse(request.query);
+    core.getAgentSession(HUMAN, id);
+    const page = await runtimeCall(() => runtime.readHistory(id, cursor ?? null));
+    return AgentHistoryPageSchema.parse(page);
+  });
+
+  /** A person writing to the conversation they hold; recorded verbatim as their instruction. */
+  app.post("/api/agent/agents/:id/turns", (request, reply) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = AgentTurnRequestSchema.parse(request.body);
+    const agent = core.getAgentSession(HUMAN, id);
+    if (core.commandRecorded(HUMAN, input.idempotencyKey)) {
+      return reply.code(202).send(runtimeCall(() => runtime.runtimeState(id)));
+    }
+    runtimeCall(() => runtime.assertWriter(id, "gui", input.generation, "turn"));
+    core.createHumanInstruction(
+      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+      {
+        scope: { kind: "agent", projectId: agent.projectId, agentSessionId: id },
+        verbatim: input.text,
+      },
+    );
+    runtimeCall(() => runtime.sendTurn(id, input.text, "gui", input.generation));
+    return reply.code(202).send(runtimeCall(() => runtime.runtimeState(id)));
+  });
+
+  app.post("/api/agent/agents/:id/interrupt", (request) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    const { generation } = AgentInterruptRequestSchema.parse(request.body);
+    core.getAgentSession(HUMAN, id);
+    runtimeCall(() => runtime.interrupt(id, "gui", generation));
+    return runtimeCall(() => runtime.runtimeState(id));
+  });
+
+  app.post("/api/agent/agents/:id/approvals/:requestId", (request) => {
+    mutate(request);
+    const { id, requestId } = ApprovalParamsSchema.parse(request.params);
+    const input = AgentApprovalResponseRequestSchema.parse(request.body);
+    core.getAgentSession(HUMAN, id);
+    runtimeCall(() =>
+      runtime.respondApproval(id, requestId, input.decision, "gui", input.generation),
+    );
+    return runtimeCall(() => runtime.runtimeState(id));
+  });
+}
+
+/** Launched by Naru in a Pane; other sessions only carry the Core hold. */
+function isManaged(agent: AgentSession): boolean {
+  return agent.runtime === "claude" && !agent.native && agent.paneId !== null;
+}
+
+/** Runtime refusals become the agent error contract the browser already understands. */
+function runtimeCall<T>(call: () => T): T {
+  try {
+    const result = call();
+    if (result instanceof Promise) {
+      return result.catch((error: unknown) => {
+        throw translateRuntimeError(error);
+      }) as T;
+    }
+    return result;
+  } catch (error) {
+    throw translateRuntimeError(error);
+  }
+}
+
+function translateRuntimeError(error: unknown): unknown {
+  if (!(error instanceof SupervisorError)) return error;
+  switch (error.code) {
+    case "WRITER_REQUIRED":
+      return new AgentPlatformError("AGENT_WRITER_REQUIRED", "Another writer owns this conversation.");
+    case "APPROVAL_UNKNOWN":
+      return new AgentPlatformError("AGENT_INVALID_STATE", "The approval is no longer pending.");
+    case "RUNTIME_NOT_CONNECTED":
+    case "HISTORY_TIMEOUT":
+      return new AgentPlatformError("AGENT_RUNTIME_UNAVAILABLE", "The agent runtime is unavailable.");
+  }
 }

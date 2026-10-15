@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, AgentSession } from "@naru/contracts/naru-agent/v1";
+import type {
+  AgentEvent,
+  AgentRuntimeState,
+  AgentSession,
+} from "@naru/contracts/naru-agent/v1";
 import type { AgentPlatformCore } from "../agent-platform/core.js";
 import type {
   OrchestratorInvoker,
@@ -124,6 +128,35 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       [NARU_RUNTIME_SOCKET_ENV]: this.#channelSocketPath,
       [NARU_RUNTIME_TOKEN_ENV]: this.#core.issueRuntimeLaunchToken(SYSTEM, agentSessionId),
     };
+  }
+
+  /** What the browser shows and fences against: writer, generation, form and pending approvals. */
+  runtimeState(agentSessionId: string): AgentRuntimeState {
+    const runtime = this.#require(agentSessionId);
+    const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
+    return {
+      agentSessionId,
+      connected: runtime.connection !== null,
+      writer: runtime.gate.writer,
+      generation: runtime.gate.generation,
+      phase: runtime.gate.phase,
+      turnActive: runtime.gate.turnActive,
+      launchMode: agent.launchMode,
+      pendingApprovals: this.pendingApprovals(agentSessionId),
+    };
+  }
+
+  /** Throws unless `writer` at `generation` may perform `kind` on a connected runner now. */
+  assertWriter(
+    agentSessionId: string,
+    writer: WriterKind,
+    generation: number,
+    kind: "turn" | "interrupt" | "approval-response",
+  ): void {
+    const runtime = this.#connected(agentSessionId);
+    if (!authorizeWrite(runtime.gate, writer, generation, kind)) {
+      throw new SupervisorError("WRITER_REQUIRED", "Another writer owns this conversation.");
+    }
   }
 
   writer(agentSessionId: string): { readonly writer: WriterKind; readonly generation: number } {
@@ -256,6 +289,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     }
     if (hello.busy) runtime.gate = { ...runtime.gate, turnActive: true };
     connection.send({ type: "ack", seq: runtime.lastSeq });
+    this.#trackOrchestrator(connection.agentSessionId);
     this.#core.updateAgentRuntimeState(SYSTEM, {
       agentSessionId: connection.agentSessionId,
       ...(hello.runtimeSessionRef === null ? {} : { runtimeSessionRef: hello.runtimeSessionRef }),
@@ -338,6 +372,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           runtimeSessionRef: event.runtimeSessionRef,
           status: "active",
         });
+        this.#trackOrchestrator(agentSessionId);
         return;
       case "turn-started":
         this.#transition(agentSessionId, runtime, { type: "turn-started" });
@@ -361,6 +396,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         this.#core.endRuntimeLaunch(SYSTEM, agentSessionId);
         // Stopped for a writer switch: the conversation continues in the other form.
         if (runtime.gate.phase !== "active") return;
+        this.#wakeups?.unregister(agentSessionId);
         this.#core.updateAgentRuntimeState(SYSTEM, {
           agentSessionId,
           status: event.reason === "stopped" ? "stopped" : "failed",
@@ -496,6 +532,14 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     return runtime;
   }
 
+  /** Orchestrators are woken by Naru events once their conversation is reachable (AP-T16). */
+  #trackOrchestrator(agentSessionId: string): void {
+    const role = this.#core.getAgentSession(SYSTEM, agentSessionId).role;
+    if (role === "main-orchestrator" || role === "project-orchestrator") {
+      this.#wakeups?.register(agentSessionId);
+    }
+  }
+
   #initialWriter(agentSessionId: string): WriterKind {
     try {
       const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
@@ -506,12 +550,23 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     }
   }
 
+  /**
+   * The agent's runtime record. After a Naru restart it is rebuilt from Core for an agent that has
+   * a Pane (its runner reconnects, or its TUI is still running in the Host).
+   */
   #require(agentSessionId: string): ManagedRuntime {
     const runtime = this.#runtimes.get(agentSessionId);
-    if (runtime === undefined) {
+    if (runtime !== undefined) return runtime;
+    let agent: AgentSession | null;
+    try {
+      agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
+    } catch {
+      agent = null;
+    }
+    if (agent?.runtime !== "claude" || agent.paneId === null) {
       throw new SupervisorError("RUNTIME_NOT_CONNECTED", "No runtime is managed for this agent.");
     }
-    return runtime;
+    return this.#runtime(agentSessionId, agent.runtimeSessionRef);
   }
 
   #connected(agentSessionId: string): ManagedRuntime {

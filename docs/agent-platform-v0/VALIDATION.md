@@ -31,6 +31,12 @@
 | V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                                                        | PARTIAL (분석)                                                                                                                                            |
 | V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                                                        | PARTIAL (분석)                                                                                                                                            |
 
+## 구현 검증
+
+- AP-T14 Host PTY 실행, TUI 전환, browser API: [validation/agent-runtime-host.md](validation/agent-runtime-host.md)
+  - 격리 fixture 기준 PASS다. 실제 Claude TUI 전환은 PARTIAL이다.
+  - 이 검증에서 Node realpath·socket stat 결함을 찾아 고쳤다. 운영에도 영향이 있을 수 있다.
+
 ## 재검증 V04b, V05b, V06b (2026-10-15)
 
 ### V04b. Codex `/subagents`와 Naru relay

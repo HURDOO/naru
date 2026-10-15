@@ -1363,6 +1363,12 @@ export class AgentPlatformCore {
 
   // Internals ------------------------------------------------------------------------------------
 
+  /** True when this actor already ran a command under the key (a retried request). */
+  commandRecorded(actor: Actor, idempotencyKey: string): boolean {
+    const actorKey = actor.kind === "agent" ? `agent:${actor.agentSessionId}` : actor.kind;
+    return this.#store.findCommand(actorKey, idempotencyKey) !== null;
+  }
+
   #command<T>(
     context: CommandContext,
     name: string,

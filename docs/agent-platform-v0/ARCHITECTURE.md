@@ -109,3 +109,37 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - 재시작: 어댑터의 `probe`가 런타임 상태를 확인하기 전까지 Run은 `unknown`이다. Codex crash는 마지막
   turn을 `interrupted`로 남기고, OpenCode crash는 tool part가 `running`으로 남는다. 둘 다 성공으로
   간주하지 않는다.
+
+### 6.4 관리형 Claude 에이전트 실행 (AP-T14 구현)
+
+- 시작 조건: `NARU_AGENT_PLATFORM=1`, durable Host 소유, `NARU_CLAUDE_PATH`, 사용자가 설치한 SDK
+  경로 `NARU_CLAUDE_AGENT_SDK_PATH`(AP-D012)가 모두 있을 때만 켜진다. 하나라도 없으면 Core와 MCP만
+  동작하고 runtime API는 등록되지 않는다.
+- Pane:
+  - 에이전트마다 `claude` Pane 하나(launch profile `claude-agent`)를 만들고 `agent_sessions.pane_id`로
+    묶는다. 이 profile은 Pane API로 만들 수 없다.
+  - 작업공간에는 접힌 상태로 들어가, 사용자가 배치한 레이아웃은 바뀌지 않으면서 "접은 Pane" 목록에
+    보인다(K4). 가장 얕은 Pane을 나눠 넣으므로 깊이 제한(12)에 걸리지 않는다.
+  - Host에서는 기존 `claude-code` profile과 integration policy로 실행한다. 무엇을 띄울지(runner 또는
+    TUI)는 Naru가 launch 응답으로 정하므로 Host와 배포 설정은 바뀌지 않는다.
+- 실행 형태(`agent_sessions.launch_mode`):
+  - `runner`: launcher가 Node로 `claude-agent-runner`를 띄운다. launch 응답에는 runtime channel의
+    socket과 token만 추가할 수 있다(응답 schema가 다른 키를 거부한다). token은 실행할 때마다 새로
+    발급되어 이전 세대 runner는 다시 붙지 못한다.
+  - `tui`: 같은 대화를 `claude --resume`으로 연다. Naru MCP 설정, bridge hook(`tui` mode), Pane 활동
+    hook, 역할별 model, `--setting-sources project,local`을 함께 넣는다.
+  - 두 형태 모두 실행할 때마다 agent capability를 새로 발급하고 이전 것을 폐기한다.
+- writer gate(`stop-resume`): orchestrator와 Chat(gui)은 같은 runner를 쓰므로 바로 넘긴다. TUI로
+  오가는 전환만 Pane process를 끝내고(Host session remove) 다른 형태로 다시 시작한다. TUI 쪽은 활동
+  hook의 `SessionStart`가 Pane에 남긴 대화 ID로, runner 쪽은 `conversation-ready`로 확인한다. ID가
+  다르거나 시간 안에 오지 않으면 이전 형태로 rollback한다.
+- runner는 Naru 재시작을 넘어 살아 있다가 다시 접속한다. 아직 시작 전인 runner가 접속하면 Naru가
+  Core 기록으로 plan을 다시 만든다. 접속이 끊긴 채 15초가 지나면 상태를 `unknown`으로 둔다.
+- browser API(사람, device lease 필요):
+  - `POST /api/agent/agents`(생성과 실행), `/launch`, `/stop`, `GET /runtime`, `GET /history`
+  - `POST /hold`: 개입은 Core hold를 먼저 걸고 writer를 Chat 또는 TUI로 옮긴다. 해제는 writer를
+    orchestrator에게 돌려준 뒤 hold를 푼다. 그래서 깨어난 orchestrator가 바로 쓸 수 있다.
+  - `POST /turns`, `/interrupt`, `/approvals/:requestId`: 사람이 writer이고 browser가 본 generation이
+    현재 것일 때만 받는다. Chat turn은 그 에이전트에 대한 사람의 원문 지시로 기록한다(AP-D002).
+- orchestrator 역할의 에이전트는 대화가 준비되면 wakeup 대상에 등록된다(AP-T16에서 지시 형식을
+  완성한다).

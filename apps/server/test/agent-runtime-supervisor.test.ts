@@ -188,8 +188,24 @@ describe("managed agent supervisor with a real runner process", () => {
     );
     await until(() => fixture.status(second.core) === "idle", "turn after release");
 
-    second.supervisor.stop(fixture.worker);
-    await until(() => fixture.status(second.core) === "stopped", "stopped");
+    // An idle runner (nothing else keeps it alive) waits for Naru across another restart.
     await second.server.close();
+    second.supervisor.close();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const third = await fixture.naru();
+    await until(() => {
+      try {
+        return third.supervisor.runtimeState(fixture.worker).connected;
+      } catch {
+        return false; // not reconnected yet
+      }
+    }, "idle reconnect");
+    const { generation } = third.supervisor.writer(fixture.worker);
+    third.supervisor.sendTurn(fixture.worker, "after an idle restart", "orchestrator", generation);
+    await until(() => fixture.status(third.core) === "idle", "turn after idle restart");
+
+    third.supervisor.stop(fixture.worker);
+    await until(() => fixture.status(third.core) === "stopped", "stopped");
+    await third.server.close();
   }, 60_000);
 });

@@ -66,6 +66,8 @@ const RawConfigSchema = z.object({
   NARU_DEFAULT_AGENT_PANE_KIND: z.enum(["codex", "claude"]).default("codex"),
   /** Agent Platform (docs/agent-platform-v0) is off unless explicitly enabled. */
   NARU_AGENT_PLATFORM: z.enum(["0", "1"]).default("0"),
+  /** User-installed Claude Agent SDK entry (AP-D012); managed Claude agents need it. */
+  NARU_CLAUDE_AGENT_SDK_PATH: z.string().min(1).optional(),
   NARU_CODEX_INTEGRATION_SOCKET_PATH: z.string().min(1).optional(),
   NARU_TLS_STATE_DIR: z.string().min(1).optional(),
   NARU_TLS_RELOAD_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).optional(),
@@ -139,6 +141,7 @@ interface AppConfigBase {
   claudeExecutable?: string;
   defaultAgentPaneKind?: "codex" | "claude";
   agentPlatform?: boolean;
+  claudeAgentSdkPath?: string;
   codexIntegrationSocketPath?: string;
   tls?: TlsConfig;
   push?: PushConfig;
@@ -234,6 +237,14 @@ export function loadConfig(
     appBasePath: parseNaruAppBasePath(raw.NARU_APP_BASE_PATH),
     defaultAgentPaneKind: raw.NARU_DEFAULT_AGENT_PANE_KIND,
     agentPlatform: raw.NARU_AGENT_PLATFORM === "1",
+    ...(raw.NARU_CLAUDE_AGENT_SDK_PATH === undefined
+      ? {}
+      : {
+          claudeAgentSdkPath: validateExecutablePath(
+            raw.NARU_CLAUDE_AGENT_SDK_PATH,
+            "NARU_CLAUDE_AGENT_SDK_PATH",
+          ),
+        }),
     ...(raw.NARU_CODEX_PATH === undefined
       ? {}
       : { codexExecutable: validateExecutablePath(raw.NARU_CODEX_PATH, "NARU_CODEX_PATH") }),

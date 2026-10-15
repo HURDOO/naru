@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -100,6 +100,7 @@ async function until(check: () => boolean, label: string, ms = 30_000): Promise<
 async function startFixture() {
   if (process.versions.node.split(".")[0] !== "24") throw new Error("Node 24 required");
   const fixture = createHostFixture();
+  cleanups.push(() => rmSync(fixture.root, { recursive: true, force: true }));
   const node = realpathSync(process.execPath);
   const sdkEntry = join(fixture.root, "fake-sdk.mjs");
   writeFileSync(sdkEntry, FAKE_SDK, { mode: 0o600 });

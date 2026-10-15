@@ -19,6 +19,13 @@ import { NaruClaudeIntegration } from "./integrations/claude/port.js";
 import { CodexIntegrationServer } from "./integrations/codex/server.js";
 import { AgentPlatformCore } from "./agent-platform/core.js";
 import { AgentSocketServer } from "./agent-platform/agent-socket.js";
+import { OrchestratorWakeups } from "./agent-platform/wakeups.js";
+import { ClaudeAgentPanes } from "./agent-runtime/claude/agent-panes.js";
+import {
+  RuntimeChannelServer,
+  runtimeChannelSocketPath,
+} from "./agent-runtime/runtime-channel-server.js";
+import { ManagedAgentSupervisor } from "./agent-runtime/supervisor.js";
 import type { NaruSessionFacade } from "./session-facade.js";
 
 const projectRoot = new URL("../../../", import.meta.url);
@@ -33,13 +40,45 @@ const repository = NaruRepository.openDataDirectory(config.dataDir, {
 const pathPolicy = await ProjectPathPolicy.create(config.projectRoots, {
   allowExactRoots: config.exactProjectRoots ?? [],
 });
+// Agent Platform is opt-in (NARU_AGENT_PLATFORM=1); without it nothing agent-related starts.
+const agentPlatform = config.agentPlatform
+  ? new AgentPlatformCore(repository.agentPlatform)
+  : undefined;
+const agentSocket =
+  agentPlatform === undefined ? undefined : new AgentSocketServer(config.dataDir, agentPlatform);
 let supervisor: NaruSessionFacade;
+let managedAgents: ManagedAgentSupervisor | undefined;
+// Managed Claude agents run in Host PTY Panes and need the user-installed SDK (AP-D012).
+const agentPanes =
+  agentPlatform !== undefined &&
+  agentSocket !== undefined &&
+  sessionRuntime.owner === "durable-host" &&
+  config.claudeExecutable !== undefined &&
+  config.claudeAgentSdkPath !== undefined
+    ? new ClaudeAgentPanes({
+        config: {
+          claudeExecutable: config.claudeExecutable,
+          sdkEntry: config.claudeAgentSdkPath,
+          ...agentProcessEntries(config.environment === "production"),
+          agentSocketPath: agentSocket.socketPath,
+          activityHookCommand: CLAUDE_ACTIVITY_HOOK_COMMAND,
+        },
+        core: agentPlatform,
+        repository,
+        sessions: () => supervisor,
+        runnerEnvironment: (agentSessionId) => {
+          if (managedAgents === undefined) throw new Error("Managed agents are not running.");
+          return managedAgents.runnerEnvironment(agentSessionId);
+        },
+      })
+    : undefined;
 if (sessionRuntime.owner === "durable-host") {
   const launchProfiles = new LaunchProfileRegistry({
     ...(config.codexExecutable === undefined ? {} : { codexExecutable: config.codexExecutable }),
     ...(config.claudeExecutable === undefined ? {} : { claudeExecutable: config.claudeExecutable }),
     codexSessionHookCommand: CODEX_SESSION_HOOK_COMMAND,
     claudeActivityHookCommand: CLAUDE_ACTIVITY_HOOK_COMMAND,
+    ...(agentPanes === undefined ? {} : { agentPanes }),
   });
   const codexIntegration = new NaruCodexIntegration(repository, sessionRuntime, launchProfiles);
   const claudeIntegration =
@@ -96,28 +135,44 @@ if (sessionRuntime.owner === "durable-host") {
   });
   supervisor = new PtySupervisor(repository, undefined, launchProfiles, hookServer);
 }
-// Agent Platform is opt-in (NARU_AGENT_PLATFORM=1); without it nothing below starts.
-const agentPlatform = config.agentPlatform
-  ? new AgentPlatformCore(repository.agentPlatform)
-  : undefined;
-const agentSocket =
-  agentPlatform === undefined ? undefined : new AgentSocketServer(config.dataDir, agentPlatform);
+let runtimeChannel: RuntimeChannelServer | undefined;
+let wakeups: OrchestratorWakeups | undefined;
+if (agentPlatform !== undefined && agentPanes !== undefined) {
+  managedAgents = new ManagedAgentSupervisor({
+    core: agentPlatform,
+    launcher: agentPanes,
+    channelSocketPath: runtimeChannelSocketPath(config.dataDir),
+    planFor: (agent) => agentPanes.plan(agent),
+  });
+  runtimeChannel = new RuntimeChannelServer(config.dataDir, managedAgents);
+  wakeups = new OrchestratorWakeups(agentPlatform, managedAgents);
+  managedAgents.useWakeups(wakeups);
+}
+const closeAgents = async (): Promise<void> => {
+  wakeups?.close();
+  managedAgents?.close();
+  await runtimeChannel?.close();
+  await agentSocket?.close();
+};
 let app: Awaited<ReturnType<typeof buildApp>>;
 try {
   await agentSocket?.start();
+  // Runners that outlived a Naru restart reconnect here (their Host PTYs keep running).
+  await runtimeChannel?.start();
   app = await buildApp(config, {
     repository,
     pathPolicy,
     supervisor,
     ...(agentPlatform === undefined ? {} : { agentPlatform }),
+    ...(managedAgents === undefined ? {} : { agentRuntime: managedAgents }),
   });
 } catch (error) {
-  await agentSocket?.close();
+  await closeAgents();
   await supervisor.shutdown();
   repository.close();
   throw error;
 }
-if (agentSocket !== undefined) app.addHook("onClose", () => agentSocket.close());
+app.addHook("onClose", closeAgents);
 
 const shutdown = createGracefulShutdownHandler(app);
 
@@ -137,6 +192,29 @@ try {
   );
   await app.close();
   process.exitCode = 1;
+}
+
+/** Node command lines for the agent runner, bridge hook and MCP bins (built or from source). */
+function agentProcessEntries(production: boolean) {
+  const entry = (name: string): string =>
+    fileURLToPath(
+      production
+        ? new URL(`./${name}.js`, import.meta.url)
+        : new URL(`../src/${name}.ts`, import.meta.url),
+    );
+  return {
+    node: {
+      file: process.execPath,
+      args: production
+        ? []
+        : ["--import", new URL("../../../node_modules/tsx/dist/loader.mjs", import.meta.url).href],
+    },
+    entries: {
+      runner: entry("claude-agent-runner"),
+      hook: entry("agent-hook-cli"),
+      mcp: entry("agent-mcp-cli"),
+    },
+  };
 }
 
 function loadRootEnvironment(root: URL): void {

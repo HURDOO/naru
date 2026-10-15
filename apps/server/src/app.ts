@@ -54,7 +54,10 @@ import { GatewayRequestAuthenticator, type GatewayRequestIdentity } from "./gate
 import { GitMetadataAdapter } from "./git-metadata.js";
 import { LeaseManager, type LeaseOwner } from "./lease.js";
 import { AgentPlatformError, type AgentPlatformCore } from "./agent-platform/core.js";
-import { registerAgentPlatformRoutes } from "./agent-platform/http-routes.js";
+import {
+  registerAgentPlatformRoutes,
+  type AgentRuntimeControl,
+} from "./agent-platform/http-routes.js";
 import { Observability, safeErrorFields } from "./observability.js";
 import type { ProjectPathPolicy } from "./path-policy.js";
 import { ProjectCatalogService } from "./project-catalog.js";
@@ -135,6 +138,8 @@ export interface AppDependencies {
   projectCatalog?: ProjectCatalogService;
   /** Agent Platform routes are registered only when the core is supplied (AP-T11, opt-in). */
   agentPlatform?: AgentPlatformCore;
+  /** Managed agent runtimes (durable Host mode with a configured Claude Agent SDK). */
+  agentRuntime?: AgentRuntimeControl;
 }
 
 export async function buildApp(
@@ -575,7 +580,7 @@ export async function buildApp(
         requireUnsafeRequest(request, config, sessions);
       },
       requireSurfaceController: (request) => requireSurfaceController(request, leases),
-    });
+    }, dependencies.agentRuntime);
   }
 
   app.get("/api/projects", (request) => {
@@ -1860,4 +1865,5 @@ const AGENT_ERROR_STATUS: Record<AgentPlatformError["code"], number> = {
   AGENT_INVALID_STATE: 409,
   AGENT_DEPENDENCY_CYCLE: 400,
   AGENT_RUNTIME_UNAVAILABLE: 503,
+  AGENT_WRITER_REQUIRED: 409,
 };

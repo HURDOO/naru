@@ -152,10 +152,18 @@
       - 사람 hold는 Core에서 복원한다.
     - 통합 테스트(실제 runner 프로세스와 fake SDK): Naru 재시작 중 끝난 turn의 결과 전달, 재시작 후 사람
       writer 유지.
+    - Host PTY 실행(ARCHITECTURE §6.4)
+      - 에이전트 Pane(`claude-agent`)은 작업공간에 접힌 채 들어가고 v20 `pane_id`와 `launch_mode`로
+        묶인다.
+      - launch 응답은 runner channel env만 더할 수 있다.
+    - TUI 전환: stop 후 resume, `SessionStart` 확인, rollback, generation fencing.
+    - 시작 경로(`NARU_CLAUDE_AGENT_SDK_PATH`)와 browser API를 연결했다: 생성, 실행, 정지, 상태, 이력,
+      Chat turn, interrupt, 승인, 개입과 해제.
+    - 검증: [validation/agent-runtime-host.md](validation/agent-runtime-host.md)
+      - 격리 Host 통합 테스트와 실제 서버 진입점 boot spike가 모두 PASS다.
+      - 이 과정에서 세 결함을 고쳤다: 새 runner 순번, 대기 runner 종료, Node realpath와 socket stat.
   - 남음:
-    - Naru 시작 경로와 browser API 연결(Chat 전송, interrupt, 승인, 이력, 개입)
-    - Host PTY 실행 통합
-    - TUI 전환(stop 후 resume)
+    - 실제 SDK runner와 실제 Claude TUI로 Host PTY 전환 인수
 
 ### AP-T15. OpenCode 어댑터
 

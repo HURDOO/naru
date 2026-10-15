@@ -68,7 +68,6 @@ export const InstructionScopeSchema = z.discriminatedUnion("kind", [
 ]);
 export type InstructionScope = z.infer<typeof InstructionScopeSchema>;
 
-/** Where a verbatim instruction entered Naru (AP-D002). */
 /**
  * Where a verbatim instruction entered Naru (AP-D002): Naru UI, a person typing in a managed TUI,
  * an agent's MCP delegation, or a native Claude message authorized by the Naru bridge (AP-D015).
@@ -327,6 +326,7 @@ export const AgentPlatformErrorCodeSchema = z.enum([
   "AGENT_INVALID_STATE",
   "AGENT_DEPENDENCY_CYCLE",
   "AGENT_RUNTIME_UNAVAILABLE",
+  "AGENT_WRITER_REQUIRED",
 ]);
 export type AgentPlatformErrorCode = z.infer<typeof AgentPlatformErrorCodeSchema>;
 
@@ -431,8 +431,62 @@ export const ApproveIntentContractRequestSchema = z.strictObject({
 export const SetAgentHoldRequestSchema = z.strictObject({
   held: z.boolean(),
   idempotencyKey: IdempotencyKeySchema,
+  /**
+   * Where the person intervenes (AP-D005 "직접 개입"): Naru Chat, or the runtime's own TUI (for
+   * Claude the conversation moves by stop-resume). Defaults to Chat. Ignored on release.
+   */
+  surface: z.enum(["chat", "tui"]).optional(),
+  /** Interrupt a running turn instead of waiting for it to end. */
+  interrupt: z.boolean().optional(),
 });
 export type SetAgentHoldRequest = z.infer<typeof SetAgentHoldRequestSchema>;
+
+/** A person starts a Naru-managed agent in a project (its Pane joins the workspace collapsed). */
+export const CreateManagedAgentRequestSchema = z.strictObject({
+  projectId: Id,
+  role: z.enum(["project-orchestrator", "worker", "reviewer", "specialist"]),
+  runtime: z.literal("claude"),
+  idempotencyKey: IdempotencyKeySchema,
+});
+export type CreateManagedAgentRequest = z.infer<typeof CreateManagedAgentRequestSchema>;
+
+/** Writer generation the browser last saw; a stale one is fenced (INV-05). */
+const WriterGeneration = z.number().int().positive();
+
+export const AgentWriterSchema = z.enum(["orchestrator", "gui", "tui", "none"]);
+export const AgentRuntimeStateSchema = z.strictObject({
+  agentSessionId: Id,
+  connected: z.boolean(),
+  writer: AgentWriterSchema,
+  generation: WriterGeneration,
+  phase: z.enum(["active", "quiescing", "stopping", "resuming", "rolling-back", "recovery-required"]),
+  turnActive: z.boolean(),
+  launchMode: AgentLaunchModeSchema,
+  pendingApprovals: z
+    .array(z.strictObject({ requestId: z.string().min(1).max(200), kind: z.string().max(40) }))
+    .max(64),
+});
+export type AgentRuntimeState = z.infer<typeof AgentRuntimeStateSchema>;
+
+/** A person writing directly to the agent's conversation while holding it (recorded verbatim). */
+export const AgentTurnRequestSchema = z.strictObject({
+  text: z.string().trim().min(1).max(NARU_AGENT_LIMITS.instructionCharacters),
+  generation: WriterGeneration,
+  idempotencyKey: IdempotencyKeySchema,
+});
+export const AgentInterruptRequestSchema = z.strictObject({ generation: WriterGeneration });
+export const AgentApprovalResponseRequestSchema = z.strictObject({
+  decision: z.enum(["approve", "deny"]),
+  generation: WriterGeneration,
+});
+export const AgentHistoryQuerySchema = z.strictObject({
+  cursor: z.string().min(1).max(64).optional(),
+});
+/** Re-read from the runtime's own history API; Naru does not store transcripts (AP-D002). */
+export const AgentHistoryPageSchema = z.strictObject({
+  items: z.array(z.unknown()).max(200),
+  nextCursor: z.string().max(64).nullable(),
+});
 
 export const AgentEventsQuerySchema = z.strictObject({
   after: z.coerce.number().int().min(0).default(0),

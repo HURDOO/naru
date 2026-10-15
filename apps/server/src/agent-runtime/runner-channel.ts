@@ -113,7 +113,8 @@ export class RunnerChannelClient {
       if (this.#stopped) return;
       const delay = this.#retryMs;
       this.#retryMs = Math.min(this.#retryMs * 2, 5_000);
-      setTimeout(() => this.#connect(), delay).unref();
+      // Kept referenced: an idle runner waiting for Naru to come back has nothing else alive.
+      setTimeout(() => this.#connect(), delay);
     });
   }
 
