@@ -41,8 +41,9 @@
 
 ### AP-T04. Codex 런타임 검증 (V01, V02, V04, V11, V08 Codex 측)
 
-- [ ] 사용자가 `spike/codex-runtime` worktree에서 Sol 또는 Astra로 실행한다. 과제:
-      `assignments/codex-runtime/ASSIGNMENT.md`(해당 branch).
+- [x] 사용자가 `spike/codex-runtime` worktree에서 Sol 또는 Astra로 실행했다. 과제:
+      `assignments/codex-runtime/ASSIGNMENT.md`. 2026-10-15에 인수해 병합했다. worker의 decision request(native
+      억제)는 AP-D009로 수락했다.
 - 완료 조건: `validation/codex-runtime.md`와 `HANDOFF.yaml`을 commit하고 integration이 인수한다.
 
 ### AP-T05. Claude 런타임 검증 (V03, V05, V07)
@@ -63,10 +64,16 @@
 
 ### AP-T08. Gate 1
 
-- [ ] V01~V14 결과를 VALIDATION.md에 통합하고, Capability Matrix를 확정한다. `direction-approved`
+- [x] V01~V14 결과를 VALIDATION.md에 통합하고, Capability Matrix를 확정한다. `direction-approved`
       결정을 `accepted`로 확정하고 ARCHITECTURE.md를 작성한다. 사용자 결정이 필요한 항목은 한 번에
       모아서 묻는다.
 - 선행: AP-T02~T07
+- 완료(2026-10-15):
+  - VALIDATION.md를 통합했다.
+  - Capability Matrix(`apps/server/src/agent-runtime/capabilities.ts`)를 확정했다.
+  - AP-D002, D004, D005, D009~D012를 accepted로 바꿨다. ARCHITECTURE.md §6을 작성했다.
+  - 사용자 확인 항목은 AP-D013에 기본값과 함께 모았다.
+  - 남은 NOT TESTED 항목은 구현 Task로 넘긴다: Codex↔Claude 실제 왕복은 AP-T13·T14, 실제 SSH는 A09다.
 
 ## Phase 2: 공통 기반
 

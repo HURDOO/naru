@@ -6,7 +6,7 @@
 
 상태 값은 세 가지다.
 
-- `direction-approved`: 사용자가 방향을 승인했다. 세부 계약은 Gate 1(AP-T11)의 검증 증거로 확정한다.
+- `direction-approved`: 사용자가 방향을 승인했다. 세부 계약은 Gate 1(AP-T08)의 검증 증거로 확정한다.
 - `accepted`: 확정됐다.
 - `proposed`: 아직 승인 전이다.
 
@@ -24,7 +24,7 @@
 
 ## AP-D002. 원문 저장 경계: Naru가 원본인 데이터만 저장한다
 
-- 상태: direction-approved (2026-10-15)
+- 상태: accepted (2026-10-15; 방향은 사용자가 승인했고 세부는 Gate 1 검증으로 확정했다)
 - 배경: 기존 Naru는 terminal과 Codex·Claude 원문을 저장하지 않는다. DB에는 Project, Pane, layout,
   activity, 런타임 session ID만 있고, 대화 원문은 런타임(`~/.codex`, Claude JSONL)이 소유한다
   (SPEC "terminal/Codex 원문은 영구 저장하지 않는다", DurableSession v0 비목표).
@@ -80,7 +80,7 @@
 
 ## AP-D004. Agent-facing Naru MCP
 
-- 상태: direction-approved (2026-10-15)
+- 상태: accepted (2026-10-15; 방향은 사용자가 승인했고 세부는 Gate 1 검증으로 확정했다)
 - 배경: DurableSession v0와 LIMITATIONS는 MCP server를 비목표로 두었지만, Core API를 transport와
   무관하게 설계했고 `readEvents`와 `waitForEvents`를 MCP-ready로 남겨 두었다.
 - 결정:
@@ -106,7 +106,7 @@
 
 ## AP-D005. 쓰기 권리의 세 계층과 사람 개입 hold
 
-- 상태: direction-approved (2026-10-15)
+- 상태: accepted (2026-10-15; 방향은 사용자가 승인했고 세부는 Gate 1 검증으로 확정했다)
 - 배경: 지금 Naru `LeaseManager`(`apps/server/src/lease.ts`)는 instance 전체에서 한 browser만
   controller로 둔다. 이 lease가 모든 terminal 입력과 HTTP 변경을 통제한다. Host는 이미 Session별
   controller, generation fencing, preempt를 제공한다.
@@ -196,8 +196,8 @@
 
 ## AP-D011. 관리형 런타임과 대화 writer
 
-- 상태: proposed (Gate 1). Claude와 OpenCode 부분은 근거가 확보됐다. Codex 부분은 `spike/codex-runtime`
-  인수 뒤 확정한다.
+- 상태: accepted (2026-10-15, Gate 1 근거: V01~V03, V11, V12). Claude runner를 DurableSession에서
+  실행하는 방식은 V11(Codex)과 같은 구조다. 동작 여부는 AP-T14 구현 테스트에서 확인한다.
 - 공통:
   - 런타임의 동시 입력 중재는 믿지 않는다. Claude, OpenCode, Codex 모두 동시 입력이 진행 중인 turn에
     합쳐지거나 유실됐다.
@@ -217,13 +217,20 @@
     붙인다. 이렇게 하면 GUI와 TUI가 live로 공존한다.
   - 쓰기는 Naru proxy의 gate만 통과시킨다. 신원과 이벤트는 Naru plugin(`OPENCODE_CONFIG_CONTENT`)으로
     받는다. 운영 `/omo/` adapter는 바꾸지 않는다.
-- Codex(잠정): 공유 app-server와 relay의 single-writer proxy(A안)를 기본으로 하고, B안은 복구
-  경로로 둔다(V01, V02).
+- Codex:
+  - 공유 app-server와 relay의 single-writer proxy(A안)를 기본으로 한다. 기존 Codex Pane의 relay에 GUI
+    channel을 추가하면 실제 TUI와 Chat이 같은 thread를 live로 공유한다.
+  - proxy의 기본값은 deny다. 분류된 read와 ID만 지정한 resume만 허용한다.
+  - 승인 응답은 writer에게만 허용한다. writer 이전은 turn 경계나 명시적 interrupt 뒤에만 한다.
+  - B안(app-server 종료 → resume)은 crash와 이전 실패 때의 복구 경로로 둔다.
+  - headless 관리형 agent는 Host가 소유한 app-server와 redacted lifecycle console 구조(V11)로 실행한다.
+    console은 TUI가 아니라 관찰용 console로 표시한다.
 - 역할별 model은 항상 명시한다. Claude는 사용자 settings 없이 실행하면 기본값이 haiku가 된다.
 
 ## AP-D012. 새 production 의존성: Claude Agent SDK
 
-- 상태: proposed (Gate 1)
+- 상태: accepted (2026-10-15, Gate 1). 공식 SDK이고 비공식 경로를 대체하므로 설계 이탈이 아니다.
+  사용자 보고에 명시한다.
 - 결정: `@anthropic-ai/claude-agent-sdk`를 `apps/server`의 의존성으로 추가한다.
 - 이유:
   - 대화 이력 재구성(`getSessionMessages`, `getSubagentMessages`), 구조화 이벤트, 권한 callback을 제공하는
@@ -231,3 +238,19 @@
   - CLI만 쓰면 transcript 파일을 직접 파싱해야 한다. 이는 비공식 경로다.
 - 호환성: SDK와 CLI의 version 짝을 Capability Matrix에 기록한다. 둘 중 하나가 바뀌면 V03과 V05를 다시
   검증한다.
+
+## AP-D013. Gate 1에서 사용자 확인이 필요한 항목
+
+- 상태: proposed. 아래 기본값으로 진행하고, 사용자가 바꾸면 새 결정으로 반영한다.
+- 1. OmO child 이력(V12): OmO가 끝난 subagent 세션을 10분 뒤 삭제한다.
+  - 기본값: Naru는 저장하지 않는다. 실시간 관찰만 하고, 나중에 검토가 필요한 작업은 Naru managed agent로
+    보낸다.
+  - 대안: 완료 시 이력을 export한다. 이 경우 AP-D002의 예외가 된다.
+- 2. 관리형 OpenCode 세션이 운영 `/omo/` 목록에도 보이는 문제.
+  - 기본값: 허용하고 "Naru 관리" 표시를 붙인다.
+  - 대안: data dir을 분리한다. 이 경우 provider에 다시 로그인해야 한다.
+- 3. native cross-session 차단 범위(V06).
+  - 기본값: managed 세션에만 적용한다. 일반 Claude Pane은 그대로 둔다.
+- 4. 관리형 Claude 세션이 사용자 global settings와 hook을 불러올지(V03).
+  - 기본값: 불러오지 않는다. `--setting-sources project,local`과 Naru 설정만 주입한다.
+- 공지: agent 신원은 같은 OS 사용자 권한 아래의 책임 추적 수단이며 격리 장치가 아니다(V13).

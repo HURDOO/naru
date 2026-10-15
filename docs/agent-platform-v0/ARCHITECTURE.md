@@ -1,7 +1,6 @@
 # Agent Platform v0 기술 아키텍처 (초안)
 
-> 상태: Phase 2 공통 기반(§1~§5)을 먼저 확정한다. 런타임 어댑터, GUI와 TUI 전환, native 관찰 수준(§6)은
-> Gate 1(AP-T08)의 검증 결과로 채운다. 결정의 근거는 [DECISIONS.md](DECISIONS.md)에 있다.
+> 상태: Gate 1(AP-T08) 완료. §1~§5는 Phase 2 공통 기반이고, §6은 검증 결과에 따른 런타임 구성이다. 결정의 근거는 [DECISIONS.md](DECISIONS.md)에 있다.
 
 ## 1. 구성
 
@@ -75,9 +74,38 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - 에이전트가 보내는 자유 텍스트(진행 요약, 설계 변경 제안, review 의견)는 크기 상한을 둔다. 알려진
   token 패턴은 best-effort로 마스킹한다. 1차 방어선은 에이전트에게 비밀값을 주지 않는 것이다.
 
-## 6. Gate 1 이후 채울 항목
+## 6. 런타임 구성 (Gate 1)
 
-- 런타임별 어댑터와 Capability Matrix(V01~V05, V07, V11, V12)
-- GUI와 TUI 대화 writer 전환 protocol(AP-D005의 세 번째 계층)
-- native subagent 관찰과 managed fallback 정책(V04, V05)
-- cross-session messaging 정책(V06, V08)
+### 6.1 공통 경계
+
+- `apps/server/src/agent-runtime/adapter.ts`의 `AgentRuntimeAdapter`가 런타임별 차이를 흡수한다. 하는 일은
+  세션 시작과 resume, turn 전송, interrupt, 승인 응답, 이력 조회, 재시작 probe다.
+- 어댑터는 이력을 저장하지 않는다. Chat 화면은 런타임의 공식 history API로 다시 읽는다(AP-D002).
+- `writer-gate.ts`의 reducer가 대화 writer를 하나로 강제한다(INV-05). 이유는 세 런타임 모두 동시 입력을
+  진행 중인 turn에 합치거나 유실하기 때문이다.
+- 사람 hold(AP-D005)는 writer를 `gui`나 `tui`(사람)로 옮기는 것으로 표현한다. hold 중
+  orchestrator의 전송은 Core가 거부한다.
+- MCP capability는 런타임의 MCP server 설정에만 넣는다. agent process env에 두면 shell에서 보인다.
+- 런타임별 실제 지원 범위는 `capabilities.ts`(검증 근거 포함)를 UI에 그대로 보여 준다(A16).
+
+### 6.2 런타임별 구성
+
+| 런타임           | 실행 위치                                                                                              | Chat(GUI)                                | TUI                                                | 전환                                                           | native child                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| Codex 0.162.1    | Host PTY의 launcher와 guardian가 app-server를 소유한다. 기존 Pane relay를 쓰고, headless는 V11 console | relay의 추가 client(JSON-RPC)            | 실제 `codex --remote` TUI가 같은 thread를 공유한다 | `live`: turn 경계에서 writer만 이전한다. 복구는 B안            | L1·L2(`subAgentActivity`, child thread 구독)     |
+| Claude 2.1.296   | Host PTY의 SDK runner(protocol은 pipe와 UDS, PTY에는 console)                                          | SDK 구조화 이벤트와 `getSessionMessages` | 기존 Claude Pane(`--resume`)                       | `stop-resume`: runner 종료 → Pane resume → `SessionStart` 확인 | L1·L2(`--forward-subagent-text`, Subagent hooks) |
+| OpenCode 1.18.35 | Host PTY의 Naru 전용 `opencode serve`와 Naru plugin                                                    | serve HTTP API와 SSE                     | 같은 세션에 `opencode attach`                      | `live`: Naru proxy write gate                                  | L1~L3(OmO child). 이력은 10분 뒤 삭제된다        |
+
+### 6.3 정책 요약
+
+- native subagent: 관찰은 L2까지만 표시하고, L3·L4가 필요한 작업은 managed agent로 보낸다. 억제를
+  강제 수단으로 주장하지 않는다(AP-D009).
+- agent 간 통신: managed 세션은 Naru MCP `delegate`를 쓴다. Claude의 native cross-session은 managed
+  세션에서만 차단한다(AP-D010).
+- TUI 직접 입력 기록: managed 세션에서만 원문을 기록한다(AP-D002).
+  - Codex: relay가 보는 주 thread의 `turn/start` 입력
+  - Claude: `UserPromptSubmit` hook. cross-session inbound를 거부하고 Naru가 넣은 입력은 대조해 제외한다.
+  - OpenCode: plugin `chat.message`
+- 재시작: 어댑터의 `probe`가 런타임 상태를 확인하기 전까지 Run은 `unknown`이다. Codex crash는 마지막
+  turn을 `interrupted`로 남기고, OpenCode crash는 tool part가 `running`으로 남는다. 둘 다 성공으로
+  간주하지 않는다.

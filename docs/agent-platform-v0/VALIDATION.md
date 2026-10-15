@@ -14,22 +14,55 @@
 
 ## 요약
 
-| ID  | 항목                                                      | 위치                                                            | 상태                                                                                                                                                      |
-| --- | --------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V01 | Codex 공유 App Server와 writer 중재                       | `spike/codex-runtime` (AP-T04)                                  | NOT TESTED (사용자가 실행 예정)                                                                                                                           |
-| V02 | Codex Stop/Release → TUI Resume → GUI 복귀                | `spike/codex-runtime`                                           | NOT TESTED                                                                                                                                                |
-| V03 | Claude SDK/CLI ↔ TUI 전환                                 | [claude-runtime](validation/claude-runtime.md)                  | **PASS**(stop → resume 왕복), **FAIL**(동시 writer 보호 없음), PARTIAL(live attach는 `--bg`만)                                                            |
-| V04 | Codex native subagent L1~L4                               | `spike/codex-runtime`                                           | NOT TESTED                                                                                                                                                |
-| V05 | Claude native subagent L1~L4                              | [claude-runtime](validation/claude-runtime.md)                  | **PASS** L1, L2와 억제. **FAIL** L3, L4                                                                                                                   |
-| V06 | Claude cross-session messaging 감사와 차단                | [claude-messaging](validation/claude-messaging.md)              | **PASS**(로컬: 활성화, 형식, hook 감사·차단, 범위 한정 차단), PARTIAL(hook 없는 TUI 관찰)                                                                 |
-| V07 | Claude Agent Teams                                        | [claude-runtime](validation/claude-runtime.md)                  | PARTIAL(interactive TUI에서만, 실험적)                                                                                                                    |
-| V08 | Codex↔Codex, Codex↔Claude 통신                            | [claude-messaging](validation/claude-messaging.md), Codex spike | PARTIAL: Claude↔Claude 관리형 MCP는 **PASS**. Codex 측과 왕복은 NOT TESTED                                                                                |
-| V09 | DurableSession API, stream, control, lease와 agent caller | 이 branch                                                       | **PASS** (Host 계층), PARTIAL (Naru 계층)                                                                                                                 |
-| V10 | 비밀 입력 보호                                            | 이 branch                                                       | **PASS** (echo-off 경로), 제한 있음                                                                                                                       |
-| V11 | App Server process와 DurableSession 연결                  | `spike/codex-runtime`                                           | NOT TESTED                                                                                                                                                |
-| V12 | OpenCode/OmO attach, SDK, child trace                     | [opencode](validation/opencode.md)                              | **PASS**(serve API·SSE, permission, abort, TUI live attach, child L1~L3, plugin hook), **FAIL**(동시 write 중재, child 이력 보존), PARTIAL(MCP 세션 신원) |
-| V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                       | PARTIAL (분석)                                                                                                                                            |
-| V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                       | PARTIAL (분석)                                                                                                                                            |
+| ID  | 항목                                                      | 위치                                                                                             | 상태                                                                                                                                                      |
+| --- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V01 | Codex 공유 App Server와 writer 중재                       | [codex-runtime](validation/codex-runtime.md)                                                     | **PASS**(실제 TUI에 GUI turn이 live로 렌더, proxy single-writer gate, 완료 대기·interrupt 이전)                                                           |
+| V02 | Codex Stop/Release → TUI Resume → GUI 복귀                | [codex-runtime](validation/codex-runtime.md)                                                     | **PASS**(실패 주입 포함, API만으로 이력 복원)                                                                                                             |
+| V03 | Claude SDK/CLI ↔ TUI 전환                                 | [claude-runtime](validation/claude-runtime.md)                                                   | **PASS**(stop → resume 왕복), **FAIL**(동시 writer 보호 없음), PARTIAL(live attach는 `--bg`만)                                                            |
+| V04 | Codex native subagent L1~L4                               | [codex-runtime](validation/codex-runtime.md)                                                     | PARTIAL: L1, L2 **PASS**, L3 거부, L4 읽기 전용 관찰. 기능 플래그로 억제되지 않음                                                                         |
+| V05 | Claude native subagent L1~L4                              | [claude-runtime](validation/claude-runtime.md)                                                   | **PASS** L1, L2와 억제. **FAIL** L3, L4                                                                                                                   |
+| V06 | Claude cross-session messaging 감사와 차단                | [claude-messaging](validation/claude-messaging.md)                                               | **PASS**(로컬: 활성화, 형식, hook 감사·차단, 범위 한정 차단), PARTIAL(hook 없는 TUI 관찰)                                                                 |
+| V07 | Claude Agent Teams                                        | [claude-runtime](validation/claude-runtime.md)                                                   | PARTIAL(interactive TUI에서만, 실험적)                                                                                                                    |
+| V08 | Codex↔Codex, Codex↔Claude 통신                            | [codex-runtime](validation/codex-runtime.md), [claude-messaging](validation/claude-messaging.md) | 관리형 MCP는 Codex와 Claude 모두 **PASS**. 독립 root 사이 native 주소 지정은 FAIL. Codex↔Claude 실제 왕복은 NOT TESTED                                    |
+| V09 | DurableSession API, stream, control, lease와 agent caller | 이 branch                                                                                        | **PASS** (Host 계층), PARTIAL (Naru 계층)                                                                                                                 |
+| V10 | 비밀 입력 보호                                            | 이 branch                                                                                        | **PASS** (echo-off 경로), 제한 있음                                                                                                                       |
+| V11 | App Server process와 DurableSession 연결                  | [codex-runtime](validation/codex-runtime.md)                                                     | **PASS**(격리 Host PTY console, UDS protocol 유지, 제어 인계와 Host 재기동)                                                                               |
+| V12 | OpenCode/OmO attach, SDK, child trace                     | [opencode](validation/opencode.md)                                                               | **PASS**(serve API·SSE, permission, abort, TUI live attach, child L1~L3, plugin hook), **FAIL**(동시 write 중재, child 이력 보존), PARTIAL(MCP 세션 신원) |
+| V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                                                        | PARTIAL (분석)                                                                                                                                            |
+| V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                                                        | PARTIAL (분석)                                                                                                                                            |
+
+## V01, V02, V04, V08, V11 요약 (상세: [validation/codex-runtime.md](validation/codex-runtime.md))
+
+- **A안 채택 근거**
+  - 실제 `codex --remote` TUI가 GUI client가 시작한 turn의 delta를 완료 전에 화면에 렌더했다.
+  - native 동시 `turn/start`는 진행 중인 turn에 입력을 합친다. 그래서 single writer는 proxy가 강제해야
+    한다.
+  - spike proxy는 다음을 결정적으로 거부했다: 비소유자의 `turn/start`, 설정 변경 resume, 미분류
+    method, 중복 승인 응답.
+- **B안은 복구 경로로 둔다.**
+  - 다른 app-server 사이의 GUI→TUI→GUI resume, 존재하지 않는 ID, TUI kill, app-server crash를 모두
+    재현했다.
+  - crash 때 완료되지 않은 assistant delta는 보존되지 않는다. 마지막 turn은 `interrupted`로 남는다.
+- **이력(AP-D002 전제)**: `thread/read(includeTurns)`와 `thread/turns/list` pagination만으로 텍스트와
+  MCP tool 이력을 복원했다. rollout 파일은 파싱하지 않았다. pagination cursor는 opaque로 다룬다.
+- **승인 요청**은 같은 request ID로 모든 client에 broadcast된다. 그래서 응답 권한도 proxy가 writer에게만
+  준다.
+- **Native subagent**
+  - L1(`subAgentActivity`)과 L2(child thread 구독과 이력)가 동작한다.
+  - 실행 중 직접 입력과 steer는 거부된다.
+  - `multi_agent=false` 같은 플래그로는 spawn이 막히지 않는다. 억제를 강제 수단으로 주장하지 않는다
+    (AP-D009).
+- **MCP 주입**
+  - `thread/start.config`로 thread마다 MCP command와 env를 주입할 수 있다. 같은 설정이어도 thread마다
+    MCP process가 따로 뜬다.
+  - 따라서 Codex에서도 capability를 세션별로 바인딩할 수 있다(AP-D004).
+  - 빈 `mcp_servers`는 MCP 비활성화 수단이 아니다.
+- **DurableSession 연결(V11)**: Host가 소유한 process가 private UDS의 app-server를 갖고, PTY에는
+  redacted lifecycle console을 띄운다. 이 구조에서 control 인계, reconnect, resize, PTY 입력, Host
+  재기동이 모두 protocol을 손상하지 않았다.
+- **TUI 직접 입력(X1)**: `turn/start`의 `input[].text`로 관찰된다. TUI가 내부 thread에도 `turn/start`를
+  보내므로 기록할 때는 주 thread ID로 걸러야 한다.
+- **model 목록(X2)**: 7개 ID를 확인했고, 실제 실행은 `gpt-6-sol`만 했다.
 
 ## V03, V05, V07 요약 (상세: [validation/claude-runtime.md](validation/claude-runtime.md))
 
