@@ -52,6 +52,12 @@ describe("loadConfig", () => {
     ).toBe("claude");
   });
 
+  it("keeps the Agent Platform off unless explicitly enabled", () => {
+    expect(loadConfig(validEnvironment).agentPlatform).toBe(false);
+    expect(loadConfig({ ...validEnvironment, NARU_AGENT_PLATFORM: "1" }).agentPlatform).toBe(true);
+    expect(() => loadConfig({ ...validEnvironment, NARU_AGENT_PLATFORM: "yes" })).toThrow();
+  });
+
   it("requires an explicit project root allowlist", () => {
     const environment = { ...validEnvironment };
     delete environment.NARU_PROJECT_ROOTS;

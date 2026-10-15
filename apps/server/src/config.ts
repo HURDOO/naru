@@ -64,6 +64,8 @@ const RawConfigSchema = z.object({
   NARU_CODEX_PATH: z.string().min(1).optional(),
   NARU_CLAUDE_PATH: z.string().min(1).optional(),
   NARU_DEFAULT_AGENT_PANE_KIND: z.enum(["codex", "claude"]).default("codex"),
+  /** Agent Platform (docs/agent-platform-v0) is off unless explicitly enabled. */
+  NARU_AGENT_PLATFORM: z.enum(["0", "1"]).default("0"),
   NARU_CODEX_INTEGRATION_SOCKET_PATH: z.string().min(1).optional(),
   NARU_TLS_STATE_DIR: z.string().min(1).optional(),
   NARU_TLS_RELOAD_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).optional(),
@@ -136,6 +138,7 @@ interface AppConfigBase {
   codexExecutable?: string;
   claudeExecutable?: string;
   defaultAgentPaneKind?: "codex" | "claude";
+  agentPlatform?: boolean;
   codexIntegrationSocketPath?: string;
   tls?: TlsConfig;
   push?: PushConfig;
@@ -230,6 +233,7 @@ export function loadConfig(
       : { webDist: resolve(baseDirectory, raw.NARU_WEB_DIST) }),
     appBasePath: parseNaruAppBasePath(raw.NARU_APP_BASE_PATH),
     defaultAgentPaneKind: raw.NARU_DEFAULT_AGENT_PANE_KIND,
+    agentPlatform: raw.NARU_AGENT_PLATFORM === "1",
     ...(raw.NARU_CODEX_PATH === undefined
       ? {}
       : { codexExecutable: validateExecutablePath(raw.NARU_CODEX_PATH, "NARU_CODEX_PATH") }),

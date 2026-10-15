@@ -17,6 +17,8 @@ import { UdsDurableSessionStreamPort } from "./durable-session-stream-port.js";
 import { NaruCodexIntegration } from "./integrations/codex/port.js";
 import { NaruClaudeIntegration } from "./integrations/claude/port.js";
 import { CodexIntegrationServer } from "./integrations/codex/server.js";
+import { AgentPlatformCore } from "./agent-platform/core.js";
+import { AgentSocketServer } from "./agent-platform/agent-socket.js";
 import type { NaruSessionFacade } from "./session-facade.js";
 
 const projectRoot = new URL("../../../", import.meta.url);
@@ -94,14 +96,28 @@ if (sessionRuntime.owner === "durable-host") {
   });
   supervisor = new PtySupervisor(repository, undefined, launchProfiles, hookServer);
 }
+// Agent Platform is opt-in (NARU_AGENT_PLATFORM=1); without it nothing below starts.
+const agentPlatform = config.agentPlatform
+  ? new AgentPlatformCore(repository.agentPlatform)
+  : undefined;
+const agentSocket =
+  agentPlatform === undefined ? undefined : new AgentSocketServer(config.dataDir, agentPlatform);
 let app: Awaited<ReturnType<typeof buildApp>>;
 try {
-  app = await buildApp(config, { repository, pathPolicy, supervisor });
+  await agentSocket?.start();
+  app = await buildApp(config, {
+    repository,
+    pathPolicy,
+    supervisor,
+    ...(agentPlatform === undefined ? {} : { agentPlatform }),
+  });
 } catch (error) {
+  await agentSocket?.close();
   await supervisor.shutdown();
   repository.close();
   throw error;
 }
+if (agentSocket !== undefined) app.addHook("onClose", () => agentSocket.close());
 
 const shutdown = createGracefulShutdownHandler(app);
 
