@@ -69,7 +69,11 @@ export const InstructionScopeSchema = z.discriminatedUnion("kind", [
 export type InstructionScope = z.infer<typeof InstructionScopeSchema>;
 
 /** Where a verbatim instruction entered Naru (AP-D002). */
-export const InstructionChannelSchema = z.enum(["naru-ui", "tui", "mcp"]);
+/**
+ * Where a verbatim instruction entered Naru (AP-D002): Naru UI, a person typing in a managed TUI,
+ * an agent's MCP delegation, or a native Claude message authorized by the Naru bridge (AP-D015).
+ */
+export const InstructionChannelSchema = z.enum(["naru-ui", "tui", "mcp", "native-message"]);
 
 export const InstructionSchema = z.strictObject({
   id: Id,
@@ -269,6 +273,7 @@ export type Artifact = z.infer<typeof ArtifactSchema>;
 export const AgentEventTypeSchema = z.enum([
   "instruction.created",
   "instruction.forgotten",
+  "instruction.delivered",
   "intent_contract.proposed",
   "intent_contract.approved",
   "plan.created",
@@ -320,6 +325,7 @@ export type AgentPlatformErrorCode = z.infer<typeof AgentPlatformErrorCodeSchema
 export const AgentCommandNameSchema = z.enum([
   "state.read",
   "instruction.delegate",
+  "message.send",
   "intent_contract.propose",
   "plan.create",
   "task.create",
@@ -345,6 +351,7 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
   "main-orchestrator": [
     "state.read",
     "instruction.delegate",
+    "message.send",
     "agent_session.register",
     "handoff.request",
     "handoff.cancel",
@@ -352,6 +359,7 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
   "project-orchestrator": [
     "state.read",
     "instruction.delegate",
+    "message.send",
     "intent_contract.propose",
     "plan.create",
     "task.create",
@@ -366,6 +374,7 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
   ],
   worker: [
     "state.read",
+    "message.send",
     "task.update_own_status",
     "run.finish",
     "run.report_progress",
@@ -373,9 +382,10 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "handoff.cancel",
     "artifact.publish",
   ],
-  reviewer: ["state.read", "review.submit", "handoff.request", "handoff.cancel"],
+  reviewer: ["state.read", "message.send", "review.submit", "handoff.request", "handoff.cancel"],
   specialist: [
     "state.read",
+    "message.send",
     "run.report_progress",
     "handoff.request",
     "handoff.cancel",

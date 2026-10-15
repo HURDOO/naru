@@ -86,6 +86,11 @@
 
 - **판정: PASS.** native 메시징을 Naru 정책(관리 대상 제한, 신원과 원문 기록, hold, fail-closed) 아래에서
   쓸 수 있다.
+- **V06c (production 구성요소)**
+  - stub 대신 실제 Core, AgentSocketServer, `agent-hook-cli`, `naruClaudeHookSettings`로 같은 5단계를 실제
+    세션 3개로 다시 돌렸다. 모두 통과했다(`tests/spikes/claude-messaging/v06c-production-bridge.ts`).
+  - 위임 기록의 작성자는 보낸 에이전트, 원본 지시는 그 에이전트가 맡은 Task의 목표였다. 원문도 보존됐다.
+  - 관리 대상이 아닌 세션의 메시지는 받는 쪽 hook이 막았다. 실행된 turn이 0이었다.
 
 ## V01, V02, V04, V08, V11 요약 (상세: [validation/codex-runtime.md](validation/codex-runtime.md))
 

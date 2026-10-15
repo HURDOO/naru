@@ -40,7 +40,7 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
         agent_session_id TEXT REFERENCES agent_sessions(id) ON DELETE CASCADE,
         author_kind TEXT NOT NULL CHECK (author_kind IN ('human', 'agent', 'system')),
         author_agent_session_id TEXT REFERENCES agent_sessions(id) ON DELETE SET NULL,
-        channel TEXT NOT NULL CHECK (channel IN ('naru-ui', 'tui', 'mcp')),
+        channel TEXT NOT NULL CHECK (channel IN ('naru-ui', 'tui', 'mcp', 'native-message')),
         origin_user_instruction_id TEXT REFERENCES agent_instructions(id),
         supersedes_id TEXT REFERENCES agent_instructions(id),
         verbatim TEXT,
@@ -198,6 +198,19 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
         revoked_at TEXT
       );
       CREATE INDEX agent_capabilities_session ON agent_capabilities(agent_session_id);
+
+      CREATE TABLE agent_native_messages (
+        instruction_id TEXT PRIMARY KEY REFERENCES agent_instructions(id) ON DELETE CASCADE,
+        sender_agent_session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        recipient_agent_session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        body_digest TEXT NOT NULL,
+        sender_pids_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('authorized', 'delivered')),
+        created_at TEXT NOT NULL,
+        delivered_at TEXT
+      );
+      CREATE INDEX agent_native_messages_pending
+        ON agent_native_messages(recipient_agent_session_id, status);
 
       CREATE TABLE agent_commands (
         actor_key TEXT NOT NULL,

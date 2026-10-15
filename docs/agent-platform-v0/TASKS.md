@@ -114,6 +114,9 @@
       필요하고, 쓰기에는 CSRF와 사람 기기 lease가 필요하다. 테스트 3개.
   - 남음:
     - L2~L6 도구(DS, managed agent, 사람 채널, Workspace, merge 실행). AP-T12와 Phase 3에서 한다.
+  - 2026-10-15 추가: AP-D015 native 메시징 bridge를 구현했다. hook 전용 tool, hook bin, settings builder,
+    TUI 직접 입력 기록이 들어갔다. MCP bin은 광고한 tool만 전달한다. 테스트 5개와 V06c 실제 세션 검증이
+    통과했다.
     - Naru 시작 경로에 연결하기. 기본은 꺼 두고 opt-in으로 켠다.
     - Codex에서 MCP를 주입하는 방식(V08 Codex)
 

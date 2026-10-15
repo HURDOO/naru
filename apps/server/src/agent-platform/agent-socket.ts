@@ -12,7 +12,7 @@ import {
   unlinkOwnedSocket,
 } from "../private-socket.js";
 import { AgentPlatformError, type AgentPlatformCore } from "./core.js";
-import { AGENT_TOOLS } from "./tools.js";
+import { AGENT_TOOLS, HOOK_TOOLS } from "./tools.js";
 
 /**
  * Owner-only UDS through which the per-session MCP bin reaches AgentPlatformCore (AP-D004). The
@@ -127,7 +127,9 @@ export class AgentSocketServer {
     if (!parsed.success) return failure("INVALID", "The request envelope is invalid.");
     const actor = this.#core.authenticateAgent(parsed.data.capability);
     if (actor === null) return failure("DENIED", "The agent capability was not accepted.");
-    const tool = AGENT_TOOLS.find((candidate) => candidate.name === parsed.data.tool);
+    const tool = [...AGENT_TOOLS, ...HOOK_TOOLS].find(
+      (candidate) => candidate.name === parsed.data.tool,
+    );
     if (tool === undefined) return failure("UNKNOWN_TOOL", "No such Naru tool.");
     try {
       return { version: 1, ok: true, result: tool.run(this.#core, actor, parsed.data.arguments) };

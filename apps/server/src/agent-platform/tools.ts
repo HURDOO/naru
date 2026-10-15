@@ -397,6 +397,62 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   ),
 ];
 
+/**
+ * Tools only Naru's own hook bin calls (AP-D015, AP-D002-2). They are not advertised over MCP and
+ * the MCP bin refuses names it does not advertise.
+ */
+export const HOOK_TOOLS: readonly AgentTool[] = [
+  {
+    name: "hook.native_message.authorize",
+    description: "Sender-side check for a native Claude cross-session message.",
+    input: z.strictObject({
+      tool_use_id: z.string().min(1).max(200),
+      to: z.string().min(1).max(200),
+      message: z.string().min(1).max(NARU_AGENT_LIMITS.instructionCharacters),
+      sender_pids: z.array(z.number().int().positive()).max(8),
+    }),
+    run: (core, actor, raw) => {
+      const input = HOOK_TOOLS[0]!.input.parse(raw) as {
+        tool_use_id: string;
+        to: string;
+        message: string;
+        sender_pids: number[];
+      };
+      return core.authorizeNativeMessage(
+        { actor, idempotencyKey: `native:${input.tool_use_id}` },
+        { recipientName: input.to, message: input.message, senderPids: input.sender_pids },
+      );
+    },
+  },
+  {
+    name: "hook.native_message.deliver",
+    description: "Receiver-side check for an arriving cross-session message.",
+    input: z.strictObject({
+      prompt: z
+        .string()
+        .min(1)
+        .max(NARU_AGENT_LIMITS.instructionCharacters * 2),
+    }),
+    run: (core, actor, raw) =>
+      core.deliverNativeMessage(actor, HOOK_TOOLS[1]!.input.parse(raw) as { prompt: string }),
+  },
+  {
+    name: "hook.tui_prompt",
+    description: "A prompt a person typed directly into this managed session's TUI.",
+    input: z.strictObject({
+      prompt_id: z.string().min(1).max(200),
+      prompt: z.string().min(1).max(NARU_AGENT_LIMITS.instructionCharacters),
+    }),
+    run: (core, actor, raw) => {
+      const input = HOOK_TOOLS[2]!.input.parse(raw) as { prompt_id: string; prompt: string };
+      return core.recordSessionTuiPrompt(
+        { actor, idempotencyKey: `tui:${input.prompt_id}` },
+        { verbatim: input.prompt },
+      );
+    },
+  },
+];
+
 function ownProjectOrNull(
   core: AgentPlatformCore,
   actor: Actor & { kind: "agent" },

@@ -16,6 +16,8 @@ const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 const socketPath = process.env[NARU_AGENT_SOCKET_ENV];
 const capability = process.env[NARU_AGENT_CAPABILITY_ENV];
 const tools = mcpToolDefinitions();
+// Only advertised tools are forwarded; hook-only socket tools stay unreachable from MCP.
+const advertised = new Set(tools.map((tool) => tool.name));
 
 interface JsonRpcRequest {
   readonly id?: string | number | null;
@@ -42,8 +44,9 @@ async function callTool(name: unknown, args: unknown) {
   if (socketPath === undefined || capability === undefined) {
     return toolResult({ code: "UNAVAILABLE", message: "This session has no Naru binding." }, true);
   }
-  if (typeof name !== "string")
-    return toolResult({ code: "INVALID", message: "Tool name missing." }, true);
+  if (typeof name !== "string" || !advertised.has(name)) {
+    return toolResult({ code: "UNKNOWN_TOOL", message: "No such Naru tool." }, true);
+  }
   const argumentsObject =
     typeof args === "object" && args !== null && !Array.isArray(args)
       ? (args as Record<string, unknown>)

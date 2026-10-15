@@ -257,7 +257,7 @@
 
 ## AP-D014. 보조 에이전트는 관찰만 하고, 통제가 필요한 일은 새 관리형 세션으로 보낸다
 
-- 상태: proposed (2026-10-15, 재검증 V04b·V05b 근거, 사용자 확인 대기). 확정되면 AP-D009를 대체한다.
+- 상태: accepted (2026-10-15, 사용자 승인). 재검증 V04b·V05b를 근거로 AP-D009의 L3·L4 판단을 대체한다.
 - 근거:
   - Claude는 TUI 안에서 실행 중인 보조 에이전트에 입력할 수 있다(V05b). API 경로로는 할 수 없다(V05).
   - Codex는 TUI에서 보기만 되고, 직접 입력은 Codex가 막아 두었다(V04b).
@@ -277,7 +277,7 @@
       - 다른 런타임이나 model이 필요한 작업
       - 재시작이나 인계를 견뎌야 하는 작업
   - 지침은 강제 수단이 아니다. native 억제를 보안 통제로 주장하지 않는다(AP-D009 유지).
-- 남은 일: 사용자 확인 뒤 accepted로 바꾸고, `skills/naru-orchestration`(AP-T16)에 반영한다.
+- 남은 일: `skills/naru-orchestration`(AP-T16)에 반영한다.
 
 ## AP-D015. Claude끼리의 메시지는 Naru bridge 아래에서 native로 보낸다
 
@@ -292,5 +292,11 @@
   - Naru에 닿지 못하면 보내기와 받기 모두 거부한다(fail-closed).
   - 관리형 세션의 inbound는 `accept`로 둔다. 쉬고 있는 TUI와 runner 세션을 native 메시지가 바로 깨운다.
   - 보조 에이전트 메시징(`recipient_kind: agent`)은 bridge를 거치지 않는다.
-- 남은 일: Core의 bridge endpoint(authorize, deliver)와 hook bin을 구현한다(AP-T11 확장). 원본 지시를
-  정할 수 없을 때의 거부 정책도 정한다.
+- 구현(2026-10-15):
+  - Core의 `authorizeNativeMessage`와 `deliverNativeMessage`
+  - hook-only socket tool, `agent-hook-cli` bin, `naruClaudeHookSettings`
+  - v20 `agent_native_messages`와 channel `native-message`
+  - 관리형 세션의 native 이름은 `naru-<agent session ID 앞 12자>`다.
+  - 원본 지시는 보낸 쪽의 진행 중 Task가 있으면 그 Task의 것을, 없으면 그 에이전트에게 적용되는 최신 사용자
+    지시를 쓴다. 둘 다 없으면 거부한다.
+  - 실제 Claude 세션 3개로 V06c 5단계가 모두 통과했다.

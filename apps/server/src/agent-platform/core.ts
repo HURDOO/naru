@@ -237,6 +237,153 @@ export class AgentPlatformCore {
     });
   }
 
+  /**
+   * AP-D015 sender side: a managed Claude session is about to send a native cross-session message.
+   * Naru allows only managed recipients in scope that no human holds, and records the verbatim
+   * message as a delegation tied to the sender's originating user instruction.
+   */
+  authorizeNativeMessage(
+    context: CommandContext,
+    input: {
+      readonly recipientName: string;
+      readonly message: string;
+      readonly senderPids: readonly number[];
+    },
+  ): Instruction {
+    const sender = this.#authorize(
+      context.actor,
+      "message.send",
+      this.#actorProject(context.actor),
+    );
+    if (sender === null) {
+      throw new AgentPlatformError(
+        "AGENT_ROLE_DENIED",
+        "Only managed agents send native messages.",
+      );
+    }
+    return this.#command(
+      context,
+      "native_message.authorize",
+      input,
+      "instruction",
+      (events) => {
+        const recipient = this.#nativeRecipient(input.recipientName);
+        if (
+          recipient.id === sender.id ||
+          !(
+            recipient.projectId === sender.projectId ||
+            sender.role === "main-orchestrator" ||
+            recipient.role === "main-orchestrator"
+          )
+        ) {
+          throw new AgentPlatformError(
+            "AGENT_SCOPE_DENIED",
+            "The recipient is outside your scope.",
+          );
+        }
+        this.#assertNotHeld(context.actor, recipient.id);
+        const origin = this.#originFor(sender);
+        const instruction = this.#instruction({
+          scope: { kind: "agent", projectId: recipient.projectId, agentSessionId: recipient.id },
+          author: { kind: "agent", agentSessionId: sender.id },
+          channel: "native-message",
+          originUserInstructionId: origin,
+          supersedesId: null,
+          verbatim: input.message,
+        });
+        this.#store.insertNativeMessage({
+          instructionId: instruction.id,
+          senderAgentSessionId: sender.id,
+          recipientAgentSessionId: recipient.id,
+          bodyDigest: nativeBodyDigest(input.message),
+          senderPids: input.senderPids.filter((pid) => Number.isSafeInteger(pid) && pid > 1),
+          createdAt: instruction.createdAt,
+        });
+        events.push(instructionCreated(instruction));
+        return instruction.id;
+      },
+      (id) => this.#requireInstruction(id),
+    );
+  }
+
+  /**
+   * AP-D015 receiver side: a cross-session prompt arrived. It passes only when it matches an
+   * authorized record for this recipient from a sender process Naru recorded; otherwise the hook
+   * blocks it.
+   */
+  deliverNativeMessage(actor: Actor, input: { readonly prompt: string }): Instruction {
+    const recipient = this.#authorize(actor, "state.read", this.#actorProject(actor));
+    if (recipient === null) {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only managed agents receive messages.");
+    }
+    const parsed = parseCrossSessionPrompt(input.prompt);
+    if (parsed === null) {
+      throw new AgentPlatformError("AGENT_INVALID_REFERENCE", "Not a cross-session message.");
+    }
+    const appended: AgentEvent[] = [];
+    const instruction = this.#store.transaction(() => {
+      const match = this.#store
+        .findPendingNativeMessages(recipient.id, nativeBodyDigest(parsed.body))
+        .find((pending) => parsed.pid !== null && pending.senderPids.includes(parsed.pid));
+      if (match === undefined) {
+        throw new AgentPlatformError(
+          "AGENT_INVALID_REFERENCE",
+          "No authorized Naru record matches.",
+        );
+      }
+      this.#store.markNativeMessageDelivered(match.instructionId, this.#timestamp());
+      const delivered = this.#requireInstruction(match.instructionId);
+      appended.push(
+        this.#store.appendEvent({
+          id: this.#newId(),
+          type: "instruction.delivered",
+          projectId: recipient.projectId,
+          actor,
+          subjectId: delivered.id,
+          correlationId: delivered.originUserInstructionId,
+          data: { channel: "native-message", sender: match.senderAgentSessionId },
+          createdAt: this.#timestamp(),
+        }),
+      );
+      return delivered;
+    });
+    this.#emit(appended);
+    return instruction;
+  }
+
+  /**
+   * A prompt a person typed directly into this managed session's TUI (AP-D002-2), reported by the
+   * session's own Naru hook. Recorded as the human's instruction to that agent.
+   */
+  recordSessionTuiPrompt(
+    context: CommandContext,
+    input: { readonly verbatim: string },
+  ): Instruction {
+    const session = this.#authorize(context.actor, "state.read", this.#actorProject(context.actor));
+    if (session === null) {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only a managed session reports its TUI.");
+    }
+    return this.#command(
+      context,
+      "instruction.tui",
+      input,
+      "instruction",
+      (events) => {
+        const instruction = this.#instruction({
+          scope: { kind: "agent", projectId: session.projectId, agentSessionId: session.id },
+          author: { kind: "human" },
+          channel: "tui",
+          originUserInstructionId: null,
+          supersedesId: null,
+          verbatim: input.verbatim,
+        });
+        events.push(instructionCreated(instruction));
+        return instruction.id;
+      },
+      (id) => this.#requireInstruction(id),
+    );
+  }
+
   // Intent contracts and plans -------------------------------------------------------------------
 
   proposeIntentContract(
@@ -1296,6 +1443,45 @@ export class AgentPlatformCore {
     }
   }
 
+  #actorProject(actor: Actor): string | null {
+    return actor.kind === "agent"
+      ? this.#requireAgentSession(actor.agentSessionId).projectId
+      : null;
+  }
+
+  #nativeRecipient(name: string): AgentSession {
+    const prefix = /^naru-([0-9a-f]{12})$/u.exec(name)?.[1];
+    const matches = prefix === undefined ? [] : this.#store.findAgentSessionsByIdPrefix(prefix);
+    const recipient = matches.find((session) => nativeSessionName(session.id) === name);
+    if (recipient === undefined || matches.length !== 1 || recipient.runtime !== "claude") {
+      throw new AgentPlatformError("AGENT_NOT_FOUND", "Not a Naru-managed session.");
+    }
+    if (recipient.status === "stopped" || recipient.status === "failed") {
+      throw new AgentPlatformError("AGENT_INVALID_STATE", "The recipient session has ended.");
+    }
+    return recipient;
+  }
+
+  /** INV-01: the sender's current task, else the latest user instruction in force for it. */
+  #originFor(sender: AgentSession): string {
+    const task = this.#store.findCurrentTaskForAgent(sender.id);
+    if (task !== null) return task.originInstructionId;
+    const latest = this.#store
+      .listApplicableHumanInstructions({
+        projectId: sender.projectId,
+        taskId: null,
+        agentSessionId: sender.id,
+      })
+      .at(-1);
+    if (latest === undefined) {
+      throw new AgentPlatformError(
+        "AGENT_INVALID_REFERENCE",
+        "No user instruction is in force for this agent; a message needs one to cite.",
+      );
+    }
+    return latest.id;
+  }
+
   #requireHuman(actor: Actor): void {
     if (actor.kind !== "human") {
       throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only the user may do this.");
@@ -1403,6 +1589,33 @@ export class AgentPlatformCore {
 }
 
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/** The `--name` Naru gives a managed Claude session; recipients are resolved from it (AP-D015). */
+export function nativeSessionName(agentSessionId: string): string {
+  return `naru-${agentSessionId.replaceAll("-", "").slice(0, 12)}`;
+}
+
+function nativeBodyDigest(text: string): string {
+  return createHash("sha256").update(text.replace(/\s+/gu, " ").trim()).digest("hex");
+}
+
+/** `<cross-session-message from="uds:…/<pid>.sock" …>body</cross-session-message>` (V06, V06b). */
+export function parseCrossSessionPrompt(
+  prompt: string,
+): { readonly pid: number | null; readonly name: string | null; readonly body: string } | null {
+  const match = /^<cross-session-message\s+([^>]*)>([\s\S]*)<\/cross-session-message>\s*$/u.exec(
+    prompt.trim(),
+  );
+  if (match === null) return null;
+  const attributes = match[1]!;
+  const pid = /\bfrom="uds:[^"]*?(\d+)\.sock"/u.exec(attributes)?.[1];
+  const name = /\bfrom-name="([^"]*)"/u.exec(attributes)?.[1];
+  return {
+    pid: pid === undefined ? null : Number(pid),
+    name: name ?? null,
+    body: match[2]!.trim(),
+  };
+}
 
 function capabilityDigest(token: string): string {
   return createHash("sha256").update(token).digest("hex");

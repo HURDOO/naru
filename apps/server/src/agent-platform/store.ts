@@ -447,6 +447,14 @@ export class AgentPlatformStore {
       .all() as string[];
   }
 
+  /** Agent session whose dash-less id starts with `prefix` (native session names, AP-D015). */
+  findAgentSessionsByIdPrefix(prefix: string): AgentSession[] {
+    const rows = this.#database
+      .prepare("SELECT * FROM agent_sessions WHERE replace(id, '-', '') LIKE ? || '%'")
+      .all(prefix) as AgentSessionRow[];
+    return rows.map(agentSessionFromRow);
+  }
+
   updateAgentSession(session: AgentSession): void {
     this.#database
       .prepare(
@@ -578,6 +586,81 @@ export class AgentPlatformStore {
       .prepare("SELECT * FROM agent_artifacts WHERE task_id = ? ORDER BY created_at, rowid")
       .all(taskId) as ArtifactRow[];
     return rows.map(artifactFromRow);
+  }
+
+  // Native messages (AP-D015) -------------------------------------------------------------------
+
+  insertNativeMessage(input: {
+    readonly instructionId: string;
+    readonly senderAgentSessionId: string;
+    readonly recipientAgentSessionId: string;
+    readonly bodyDigest: string;
+    readonly senderPids: readonly number[];
+    readonly createdAt: string;
+  }): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_native_messages (
+           instruction_id, sender_agent_session_id, recipient_agent_session_id, body_digest,
+           sender_pids_json, status, created_at, delivered_at
+         ) VALUES (?, ?, ?, ?, ?, 'authorized', ?, NULL)`,
+      )
+      .run(
+        input.instructionId,
+        input.senderAgentSessionId,
+        input.recipientAgentSessionId,
+        input.bodyDigest,
+        JSON.stringify(input.senderPids),
+        input.createdAt,
+      );
+  }
+
+  /** Oldest authorized, undelivered message to `recipient` with this body digest. */
+  findPendingNativeMessages(
+    recipientAgentSessionId: string,
+    bodyDigest: string,
+  ): { instructionId: string; senderAgentSessionId: string; senderPids: number[] }[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT instruction_id, sender_agent_session_id, sender_pids_json
+         FROM agent_native_messages
+         WHERE recipient_agent_session_id = ? AND body_digest = ? AND status = 'authorized'
+         ORDER BY created_at, rowid`,
+      )
+      .all(recipientAgentSessionId, bodyDigest) as {
+      instruction_id: string;
+      sender_agent_session_id: string;
+      sender_pids_json: string;
+    }[];
+    return rows.map((row) => ({
+      instructionId: row.instruction_id,
+      senderAgentSessionId: row.sender_agent_session_id,
+      senderPids: z.array(z.number().int()).parse(JSON.parse(row.sender_pids_json)),
+    }));
+  }
+
+  markNativeMessageDelivered(instructionId: string, deliveredAt: string): boolean {
+    return (
+      this.#database
+        .prepare(
+          `UPDATE agent_native_messages SET status = 'delivered', delivered_at = ?
+           WHERE instruction_id = ? AND status = 'authorized'`,
+        )
+        .run(deliveredAt, instructionId).changes === 1
+    );
+  }
+
+  /** The latest active task assigned to an agent, used as provenance for its native messages. */
+  findCurrentTaskForAgent(agentSessionId: string): AgentTask | null {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM agent_tasks
+         WHERE assignee_agent_session_id = ? AND status IN ('running', 'ready', 'review', 'blocked')
+         ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, updated_at DESC
+         LIMIT 1`,
+      )
+      .get(agentSessionId) as TaskRow | undefined;
+    return row === undefined ? null : this.#taskFromRow(row);
   }
 
   // Agent capabilities --------------------------------------------------------------------------
