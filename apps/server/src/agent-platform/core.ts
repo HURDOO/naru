@@ -242,7 +242,8 @@ export class AgentPlatformCore {
 
   /**
    * The work addressed to the acting agent (delegations to it or its tasks, by orchestrators or the
-   * user) and the original user instruction each one serves, verbatim (AP-D002, A03).
+   * user; for a project orchestrator also to its project) and the original user instruction each
+   * one serves, verbatim (AP-D002, A03).
    */
   getDelegatedWork(actor: Actor): {
     readonly instructions: Instruction[];
@@ -252,7 +253,12 @@ export class AgentPlatformCore {
       throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only an agent has delegated work.");
     }
     const agent = this.#authorize(actor, "state.read", this.#actorProject(actor))!;
-    const instructions = this.#store.listAddressedInstructions(agent.id, 50);
+    // A project orchestrator owns its project: work sent to the project is addressed to it too.
+    const instructions = this.#store.listAddressedInstructions(
+      agent.id,
+      agent.role === "project-orchestrator" ? agent.projectId : null,
+      50,
+    );
     const originIds = [
       ...new Set(
         instructions
@@ -1381,6 +1387,37 @@ export class AgentPlatformCore {
       openHandoffs: this.#store.listOpenHandoffs(null),
       globalAgents: this.#store.listAgentSessions(null),
     };
+  }
+
+  /**
+   * The user's connected projects with their agent work, for the main orchestrator's global view
+   * (a project-scoped agent is refused). Names only; paths stay with Naru.
+   */
+  listProjects(actor: Actor): {
+    readonly projectId: string;
+    readonly name: string;
+    readonly tasks: number;
+    readonly openHandoffs: number;
+    readonly agents: number;
+    readonly hasOrchestrator: boolean;
+  }[] {
+    this.#authorize(actor, "state.read", null);
+    return this.#store.listProjects().map((project) => {
+      const agents = this.#store.listAgentSessions(project.id);
+      return {
+        projectId: project.id,
+        name: project.name,
+        tasks: this.#store.listTasks(project.id).length,
+        openHandoffs: this.#store.listOpenHandoffs(project.id).length,
+        agents: agents.length,
+        hasOrchestrator: agents.some(
+          (agent) =>
+            agent.role === "project-orchestrator" &&
+            agent.status !== "stopped" &&
+            agent.status !== "failed",
+        ),
+      };
+    });
   }
 
   /** Naru-launched agents Naru still considers alive (restart reconciliation, AP-T10). */

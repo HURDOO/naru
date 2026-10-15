@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it } from "vitest";
+import { AppError } from "../src/errors.js";
 import type { Actor } from "@naru/contracts/naru-agent/v1";
 import { AgentPlatformCore } from "../src/agent-platform/core.js";
 import {
@@ -85,6 +86,47 @@ describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
 });
 
 describe("Agent Platform socket and MCP bin", () => {
+  it("passes Naru's own refusals to the agent by meaning and logs only the error class", async () => {
+    const fixture = await platform();
+    const failures: unknown[] = [];
+    fixture.server.useErrorSink((tool, error) =>
+      failures.push({ tool, type: error instanceof Error ? error.name : typeof error }),
+    );
+    fixture.server.useRuntime({
+      processes: {
+        start: () =>
+          Promise.reject(
+            new AppError("PTY_SPAWN_FAILED", 503, "Host에서 Pane 프로세스를 시작하지 못했습니다."),
+          ),
+        input: () => Promise.reject(new Error("secret argument text")),
+        read: () => Promise.reject(new Error("unused")),
+        stop: () => Promise.reject(new Error("unused")),
+      },
+    });
+    const call = (tool: string, args: Record<string, unknown>) =>
+      callAgentSocket(fixture.server.socketPath, {
+        version: 1,
+        capability: fixture.workerToken,
+        tool,
+        arguments: args,
+      });
+    expect(await call("start_process", { purpose: "dev", command: "pnpm dev" })).toMatchObject({
+      ok: false,
+      code: "AGENT_RUNTIME_UNAVAILABLE",
+      message: "Host에서 Pane 프로세스를 시작하지 못했습니다.",
+    });
+    const unexpected = await call("send_process_input", {
+      process_id: "70000000-0000-4000-8000-000000000001",
+      text: "x",
+    });
+    expect(unexpected).toMatchObject({ ok: false, code: "INTERNAL" });
+    expect(JSON.stringify(unexpected)).not.toContain("secret argument text");
+    expect(failures).toEqual([
+      { tool: "start_process", type: "AppError" },
+      { tool: "send_process_input", type: "Error" },
+    ]);
+  });
+
   it("binds every call to the capability's agent and never trusts argument identity", async () => {
     const fixture = await platform();
     expect(statSync(fixture.server.socketPath).mode & 0o777).toBe(0o600);

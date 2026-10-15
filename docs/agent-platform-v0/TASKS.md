@@ -294,6 +294,23 @@
 ### AP-T18. 인수 테스트 A01~A16
 
 - [-] fake runtime 기반 자동 E2E, 실제 모델 인수, 사용자 Manual Test 절차.
+- 진행(2026-10-15):
+  - fake runtime 인수: `tests/spikes/agent-platform/acceptance-fake.ts`
+    - 빌드한 Naru 서버(운영 진입점), 격리 Host, 실제 git 저장소로 실행한다.
+    - 에이전트는 puppet이다. Naru가 전달하는 turn마다 시나리오가 tool 호출을 정한다. 호출은 에이전트
+      자신의 capability로 한다.
+    - A02, A03, A05, A08, A10, A11, A13, A14, A15와 hold 반환이 PASS다.
+  - 인수 준비 중 찾아 고친 결함:
+    - 작업 역할 wakeup과 위임 원문 읽기(별도 commit)
+    - main orchestrator가 project를 찾을 수 없었다 → `list_projects`
+    - project orchestrator가 main의 project 위임을 읽을 수 없었다 → `get_delegated_work`가 자기 project에
+      온 지시도 돌려준다.
+    - Host 한도 같은 Naru 거절이 에이전트에게 `INTERNAL`로 갔다 → 의미 있는 code로 전달한다.
+    - 예상하지 못한 tool 실패가 어디에도 기록되지 않았다 → `agent.tool.failed`(tool 이름과 오류 종류만)
+    - 실행하지 못한 에이전트가 `starting`·`unknown`에 머물렀다 → `failed`로 바꿔 orchestrator를 깨운다.
+  - `pnpm test:e2e`: 29건 중 27건이 PASS다. 실패 2건(`mobile-output-copy:13`, `terminal-stability:56`)은
+    문서에 기록된 기존 전체 실행 flaky다. 둘 다 재실행에서 통과했다. 기준 commit에서도 같은 spec을 돌려
+    비교했다.
 
 ### AP-T19. 파일럿과 운영 문서
 

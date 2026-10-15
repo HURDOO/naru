@@ -286,6 +286,17 @@ try {
   throw error;
 }
 app.addHook("onClose", closeAgents);
+agentSocket?.useErrorSink((tool, error) =>
+  app.log.warn(
+    {
+      timestamp: new Date().toISOString(),
+      event: "agent.tool.failed",
+      tool,
+      ...safeErrorFields(error),
+    },
+    "agent tool failed",
+  ),
+);
 
 const shutdown = createGracefulShutdownHandler(app);
 

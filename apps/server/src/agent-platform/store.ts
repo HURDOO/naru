@@ -33,6 +33,14 @@ export class AgentPlatformStore {
     return this.#database.transaction(work)();
   }
 
+  /** Connected Naru projects by name (no paths): what a main orchestrator may plan across. */
+  listProjects(): { readonly id: string; readonly name: string }[] {
+    return this.#database.prepare("SELECT id, name FROM projects ORDER BY name, id").all() as {
+      id: string;
+      name: string;
+    }[];
+  }
+
   projectExists(projectId: string): boolean {
     return (
       this.#database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId) !== undefined
@@ -101,8 +109,15 @@ export class AgentPlatformStore {
     return rows.map(instructionFromRow);
   }
 
-  /** Instructions addressed to an agent or its tasks, by anyone, still in force (oldest first). */
-  listAddressedInstructions(agentSessionId: string, limit: number): Instruction[] {
+  /**
+   * Instructions addressed to an agent or its tasks (and, for a project orchestrator, to its
+   * project), by anyone, still in force, oldest first.
+   */
+  listAddressedInstructions(
+    agentSessionId: string,
+    projectId: string | null,
+    limit: number,
+  ): Instruction[] {
     const rows = this.#database
       .prepare(
         `SELECT * FROM (
@@ -112,6 +127,7 @@ export class AgentPlatformStore {
                OR (i.scope_kind = 'task' AND i.task_id IN (
                  SELECT id FROM agent_tasks WHERE assignee_agent_session_id = @agentSessionId
                ))
+               OR (i.scope_kind = 'project' AND i.project_id = @projectId)
              )
              AND NOT EXISTS (
                SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id
@@ -120,7 +136,7 @@ export class AgentPlatformStore {
            LIMIT @limit
          ) ORDER BY created_at, position`,
       )
-      .all({ agentSessionId, limit }) as InstructionRow[];
+      .all({ agentSessionId, projectId, limit }) as InstructionRow[];
     return rows.map(instructionFromRow);
   }
 

@@ -201,6 +201,13 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     (core, actor, input) => core.getProjectState(actor, ownProject(core, actor, input.project_id)),
   ),
   readTool(
+    "list_projects",
+    "Main orchestrator only: the user's connected projects with task, handoff and agent counts and " +
+      "whether a project orchestrator is running.",
+    z.strictObject({}),
+    (core, actor) => core.listProjects(actor),
+  ),
+  readTool(
     "get_applicable_user_instructions",
     "Read the verbatim user instructions in force for you (global, project, task and your own). " +
       "The latest user instruction wins over agent reinterpretations.",
@@ -215,8 +222,9 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   ),
   readTool(
     "get_delegated_work",
-    "Read the work given to you or your tasks (verbatim, by orchestrators or the user) and the " +
-      "original user instruction each one serves. Call it when Naru wakes you.",
+    "Read the work given to you, your tasks or (project orchestrators) your project, verbatim, by " +
+      "orchestrators or the user, and the original user instruction each one serves. Call it when " +
+      "Naru wakes you.",
     z.strictObject({}),
     (core, actor) => core.getDelegatedWork(actor),
   ),

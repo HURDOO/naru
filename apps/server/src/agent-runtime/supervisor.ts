@@ -147,7 +147,13 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
     this.#runtime(agentSessionId, agent.runtimeSessionRef);
     this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "starting" });
-    await this.#launcher.launch(agentSessionId, options);
+    try {
+      await this.#launcher.launch(agentSessionId, options);
+    } catch (error) {
+      // A launch that never started is a failure the orchestrator hears about, not a silent wait.
+      this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "failed" });
+      throw error;
+    }
   }
 
   /**

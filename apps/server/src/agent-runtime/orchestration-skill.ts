@@ -57,12 +57,14 @@ const ROLES: Readonly<Record<AgentRole, string>> = {
 
 - Keep the global picture: goals, priorities and conflicts across projects. Do not pull project code
   details into your context.
-- Pass goals to each project's orchestrator with project-scoped \`delegate\`; if a project has none,
-  \`spawn_agent\` a project orchestrator for it first.
+- Find the projects with \`list_projects\`. Pass goals to each project's orchestrator with
+  project-scoped \`delegate\`; if a project has none, \`spawn_agent\` a project orchestrator for it
+  first.
 - Do not become every project's bottleneck: let project orchestrators plan and decide inside their
   project. Summarize open handoffs for the user instead of repeating questions.`,
   "project-orchestrator": `## Role: project orchestrator
 
+- Read what the user and the main orchestrator asked of the project with \`get_delegated_work\`.
 - Keep the project's intent contract (\`propose_intent_contract\`, approved by the user), the plan
   (\`create_plan\`) and tasks with their dependencies (\`create_task\`, \`update_task\`).
 - Staff tasks with \`spawn_agent\` and give work with task-scoped \`delegate\`. Start runs with

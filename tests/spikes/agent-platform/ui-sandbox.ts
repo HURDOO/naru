@@ -6,32 +6,13 @@
  *
  * Run (Node 24) after `pnpm build`: node --import tsx tests/spikes/agent-platform/ui-sandbox.ts
  */
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, openSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { createServer } from "node:net";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { DurableSessionHostConfigSchema } from "../../../apps/durable-session-host/src/config.js";
-import { startDurableSessionHost } from "../../../apps/durable-session-host/src/host.js";
-import { silentHostLogger } from "../../../apps/durable-session-host/src/logging.js";
-import { createHostFixture } from "../../../apps/durable-session-host/test/support.js";
-import { hashPassword } from "../../../apps/server/src/password.js";
-import { fakeCodexScript } from "../../../apps/server/test/fake-codex.js";
-
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const wsModule = createRequire(join(repositoryRoot, "apps/server/package.json")).resolve("ws");
-const node = process.execPath;
-const fixture = createHostFixture();
-const projectRoot = fixture.config.roots[0]!.path;
+import { join } from "node:path";
+import { startNaruStack } from "./naru-stack.js";
 
 // Stand-in Claude SDK: answers turns; "DEMO" uses the agent's own Naru MCP capability to start a
-// shared process and ask the user for a manual test; "APPROVE" asks for a tool approval.
-const sdkEntry = join(fixture.root, "fake-sdk.mjs");
-writeFileSync(
-  sdkEntry,
-  `import { createConnection } from "node:net";
+// shared process and ask the user for a manual test; "PLAN" proposes an intent contract, a plan and
+// tasks; "APPROVE" asks for a tool approval.
+const SDK = `import { createConnection } from "node:net";
 const SESSION = "11111111-2222-4333-8444-555555555555";
 function naru(options, tool, args) {
   const server = options.mcpServers.naru;
@@ -98,177 +79,19 @@ export function query({ prompt, options }) {
 export async function getSessionMessages() {
   return globalThis.__naruSaid ?? [];
 }
-`,
-  { mode: 0o600 },
-);
-const claude = join(fixture.root, "claude");
-writeFileSync(
-  claude,
-  `#!${node}
-const { spawnSync } = require("node:child_process");
-const args = process.argv.slice(2);
-if (args[0] === "auth") { process.stdout.write('{"loggedIn":true}'); process.exit(0); }
-const resume = args[args.indexOf("--resume") + 1];
-const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
-for (const matcher of settings.hooks.SessionStart ?? []) for (const hook of matcher.hooks) {
-  spawnSync("/bin/sh", ["-c", hook.command], {
-    input: JSON.stringify({ hook_event_name: "SessionStart", session_id: resume, cwd: process.cwd(), source: "resume" }),
-    stdio: ["pipe", "ignore", "ignore"],
-  });
-}
-process.stdout.write("stand-in Claude TUI (resumed)\\r\\n");
-setInterval(() => {}, 1000);
-process.on("SIGTERM", () => process.exit(0));
-`,
-  { mode: 0o700 },
-);
-chmodSync(claude, 0o700);
-const codex = join(fixture.root, "codex");
-writeFileSync(codex, fakeCodexScript(node, wsModule), { mode: 0o700 });
-chmodSync(codex, 0o700);
-const codexLog = join(fixture.root, "fake-codex.log");
-writeFileSync(codexLog, "", { mode: 0o600 });
+`;
 
-const integrationSocket = join(fixture.root, "ci.sock");
-const executablePath = `${dirname(node)}:/usr/bin:/bin`;
-const launcher = (name: string) => [join(repositoryRoot, `apps/server/dist/${name}.js`)];
-const host = await startDurableSessionHost(
-  DurableSessionHostConfigSchema.parse({
-    ...fixture.config,
-    profiles: [
-      {
-        profileId: "shell",
-        executable: "/bin/zsh",
-        args: ["-f"],
-        envPolicyId: "safe-env",
-        resourcePolicyId: "fixture-resource",
-      },
-      {
-        profileId: "claude-code",
-        executable: node,
-        args: launcher("claude-integration-launcher"),
-        envPolicyId: "safe-env",
-        resourcePolicyId: "fixture-resource",
-      },
-      {
-        profileId: "codex-main",
-        executable: node,
-        args: launcher("codex-integration-launcher"),
-        envPolicyId: "safe-env",
-        resourcePolicyId: "fixture-resource",
-      },
-    ],
-    environmentPolicies: [
-      {
-        envPolicyId: "safe-env",
-        inherit: [],
-        values: {
-          PATH: executablePath,
-          HOME: fixture.root,
-          FAKE_CODEX_LOG: codexLog,
-          NARU_CODEX_INTEGRATION_SOCKET: integrationSocket,
-          NARU_CLAUDE_HOOK_RUNNER: node,
-          NARU_CLAUDE_HOOK_ENTRY: join(
-            repositoryRoot,
-            "apps/server/dist/claude-integration-hook-cli.js",
-          ),
-        },
-      },
-    ],
-    resourcePolicies: [
-      {
-        ...fixture.config.resourcePolicies[0],
-        allowedExecutables: [node, "/bin/zsh"],
-        stopTimeoutMs: 5_000,
-      },
-    ],
-    integrationPolicies: [
-      {
-        policyRef: "naru-claude-v0",
-        appId: "fixture-app",
-        integrationKind: "claude",
-        profileIds: ["claude-code"],
-        configKeys: ["policyRef", "bindingId"],
-      },
-      {
-        policyRef: "naru-codex-v0",
-        appId: "fixture-app",
-        integrationKind: "codex",
-        profileIds: ["codex-main"],
-        configKeys: ["policyRef", "bindingId"],
-      },
-    ],
-  }),
-  { logger: silentHostLogger, hostEnvironment: {} },
-);
-
-const port = Number(process.env.SANDBOX_PORT ?? (await freePort()));
-const origin = `http://127.0.0.1:${port}`;
-const password = randomUUID().slice(0, 12);
-const environmentFile = join(fixture.root, "naru.env");
-writeFileSync(
-  environmentFile,
-  Object.entries({
-    NODE_ENV: "production",
-    NARU_AUTH_MODE: "app-managed",
-    NARU_PORT: String(port),
-    NARU_ALLOWED_ORIGINS: origin,
-    NARU_PROJECT_ROOTS: projectRoot,
-    NARU_DATA_DIR: join(fixture.root, "naru-data"),
-    NARU_WEB_DIST: join(repositoryRoot, "apps/web/dist"),
-    NARU_PASSWORD_HASH: await hashPassword(password),
-    NARU_SESSION_SECRET: `${randomUUID()}${randomUUID()}`,
-    NARU_SESSION_OWNER: "durable-host",
-    NARU_DURABLE_SESSION_SOCKET_PATH: fixture.config.socketPath,
-    NARU_DURABLE_SESSION_CREDENTIAL_FILE: fixture.credentialFile,
-    NARU_DURABLE_SESSION_APP_ID: "fixture-app",
-    NARU_DURABLE_SESSION_SUBJECT: "fixture-owner",
-    NARU_DURABLE_SESSION_IDEMPOTENCY_TTL_MS: "30000",
-    NARU_DURABLE_SESSION_PROFILE_IDS: JSON.stringify(["shell", "claude-code", "codex-main"]),
-    NARU_DURABLE_SESSION_ROOTS: JSON.stringify({ projects: projectRoot }),
-    NARU_CODEX_INTEGRATION_SOCKET_PATH: integrationSocket,
-    NARU_CLAUDE_PATH: claude,
-    NARU_CODEX_PATH: codex,
-    NARU_CLAUDE_AGENT_SDK_PATH: sdkEntry,
-    NARU_AGENT_PLATFORM: "1",
-  })
-    .map(([key, value]) => `${key}='${value}'`)
-    .join("\n"),
-  { mode: 0o600 },
-);
-const logFile = join(fixture.root, "naru.log");
-const logDescriptor = openSync(logFile, "a", 0o600);
-const server: ChildProcess = spawn(node, [join(repositoryRoot, "apps/server/dist/index.js")], {
-  cwd: repositoryRoot,
-  env: { PATH: executablePath, HOME: fixture.root, NARU_ENV_FILE: environmentFile },
-  stdio: ["ignore", logDescriptor, logDescriptor],
+const stack = await startNaruStack({
+  sdkSource: SDK,
+  ...(process.env.SANDBOX_PORT === undefined ? {} : { port: Number(process.env.SANDBOX_PORT) }),
 });
-closeSync(logDescriptor);
-for (let attempt = 0; attempt < 100; attempt += 1) {
-  if ((await fetch(`${origin}/healthz`).catch(() => null))?.ok === true) break;
-  await new Promise((done) => setTimeout(done, 200));
-}
 process.stdout.write(
-  `SANDBOX ${origin} password ${password} project ${join(projectRoot, "sample")}\n`,
+  `SANDBOX ${stack.origin} password ${stack.password} project ${join(stack.projectRoot, "sample")}\n`,
 );
 
 const shutdown = async (): Promise<void> => {
-  server.kill("SIGTERM");
-  await new Promise((done) => setTimeout(done, 1_000));
-  await host.close();
-  rmSync(fixture.root, { recursive: true, force: true });
+  await stack.stop();
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
-
-function freePort(): Promise<number> {
-  return new Promise((done, fail) => {
-    const probe = createServer();
-    probe.once("error", fail);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      probe.close(() => done(typeof address === "object" && address !== null ? address.port : 0));
-    });
-  });
-}

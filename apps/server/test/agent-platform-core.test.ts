@@ -98,6 +98,22 @@ describe("Agent Platform core", () => {
     ]);
     expect(work.origins).toMatchObject([{ id: goal, verbatim: "프로젝트 목표" }]);
     expectCode(() => fixture.core.getDelegatedWork(HUMAN), "AGENT_ROLE_DENIED");
+    // The project orchestrator also gets what was sent to its project (the user's goal here).
+    expect(
+      fixture.core.getDelegatedWork(agent(orchestrator)).instructions.map((item) => item.id),
+    ).toContain(goal);
+  });
+
+  it("lists the connected projects for the main orchestrator only, without paths (A02)", () => {
+    const fixture = platform();
+    const { main, orchestrator } = fixture.team();
+    fixture.repository.createProject("/tmp/naru-second-project", "second");
+    const listed = fixture.core.listProjects(agent(main));
+    expect(listed.map((project) => project.name)).toEqual(["agent-project", "second"]);
+    expect(listed[0]).toMatchObject({ hasOrchestrator: true, agents: 3 });
+    expect(listed[1]).toMatchObject({ hasOrchestrator: false, agents: 0, tasks: 0 });
+    expect(JSON.stringify(listed)).not.toContain("/tmp/");
+    expectCode(() => fixture.core.listProjects(agent(orchestrator)), "AGENT_SCOPE_DENIED");
   });
 
   it("keeps the latest human instruction in force and forgets text on request", () => {

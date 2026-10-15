@@ -11,6 +11,8 @@ import {
   requirePrivateRuntimeDirectory,
   unlinkOwnedSocket,
 } from "../private-socket.js";
+import type { AgentPlatformErrorCode } from "@naru/contracts/naru-agent/v1";
+import { AppError } from "../errors.js";
 import { AgentPlatformError, type AgentPlatformCore } from "./core.js";
 import { AGENT_TOOLS, HOOK_TOOLS, type AgentToolRuntime } from "./tools.js";
 
@@ -48,6 +50,7 @@ export type AgentSocketReply =
 export class AgentSocketServer {
   readonly #core: AgentPlatformCore;
   #runtime: AgentToolRuntime | undefined;
+  #errorSink: ((tool: string, error: unknown) => void) | undefined;
   readonly #runtimeDirectory: string;
   readonly #socketPath: string;
   readonly #connections = new Set<Socket>();
@@ -69,6 +72,11 @@ export class AgentSocketServer {
   }
 
   /** Runtime-backed tools become available once managed runtimes are wired (startup order). */
+  /** Where unexpected tool failures are reported (structured log, error class only). */
+  useErrorSink(sink: (tool: string, error: unknown) => void): void {
+    this.#errorSink = sink;
+  }
+
   useRuntime(runtime: AgentToolRuntime): void {
     this.#runtime = runtime;
   }
@@ -158,6 +166,13 @@ export class AgentSocketServer {
           fields: [...new Set(error.issues.map((issue) => issue.path.join(".") || "(root)"))],
         };
       }
+      // Naru's own refusals (Host limits, paths) keep their meaning for the agent.
+      if (error instanceof AppError) {
+        this.#errorSink?.(tool.name, error);
+        return failure(appErrorCode(error.statusCode), error.message);
+      }
+      // The agent gets a generic answer; operators get the tool and error class (no arguments).
+      this.#errorSink?.(tool.name, error);
       return failure("INTERNAL", "Naru could not complete the tool call.");
     }
   }
@@ -221,4 +236,11 @@ export function callAgentSocket(
 
 function failure(code: string, message: string): AgentSocketReply {
   return { version: 1, ok: false, code, message };
+}
+
+function appErrorCode(statusCode: number): AgentPlatformErrorCode {
+  if (statusCode === 403) return "AGENT_SCOPE_DENIED";
+  if (statusCode === 404) return "AGENT_NOT_FOUND";
+  if (statusCode >= 500) return "AGENT_RUNTIME_UNAVAILABLE";
+  return "AGENT_INVALID_STATE";
 }

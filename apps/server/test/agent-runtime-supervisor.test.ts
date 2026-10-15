@@ -223,6 +223,38 @@ describe("managed agent supervisor with a real runner process", () => {
     await third.server.close();
   }, 60_000);
 
+  it("marks an agent failed when its launch never starts, so its orchestrator hears of it", async () => {
+    const repository = new NaruRepository(":memory:");
+    cleanups.push(() => repository.close());
+    const project = repository.createProject("/tmp/naru-launch-failure", "launch");
+    const core = new AgentPlatformCore(repository.agentPlatform);
+    const agent = core.registerAgentSession(
+      { actor: HUMAN, idempotencyKey: "d1000000-0000-4000-8000-000000000001" },
+      {
+        projectId: project.id,
+        role: "worker",
+        runtime: "claude",
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      },
+    ).id;
+    const supervisor = new ManagedAgentSupervisor({
+      core,
+      launcher: {
+        launch: () => Promise.reject(new Error("Host session limit")),
+        stop: () => Promise.resolve(),
+      },
+      channelSocketPath: "/tmp/naru-unused.sock",
+      planFor: () => {
+        throw new Error("unused");
+      },
+    });
+    cleanups.push(() => supervisor.close());
+    await expect(supervisor.launch(agent)).rejects.toThrow("Host session limit");
+    expect(core.getAgentSession(HUMAN, agent).status).toBe("failed");
+  });
+
   it("lets an orchestrator interrupt a worker's turn unless a person holds it", async () => {
     const fixture = setup();
     const naru = await fixture.naru();
