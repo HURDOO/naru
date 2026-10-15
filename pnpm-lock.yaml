@@ -107,6 +107,25 @@ importers:
         specifier: ^8.18.1
         version: 8.18.1
 
+  apps/opencode-gateway:
+    dependencies:
+      '@naru/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@naru/gateway-verifier':
+        specifier: workspace:*
+        version: link:../../packages/gateway-verifier
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+
   apps/server:
     dependencies:
       '@fastify/cookie':

@@ -110,6 +110,21 @@ remote push 승인으로 해석하지 않는다.
   유지된다. settings digest에 필드를 결합해 값 변경은 새 plan과 승인 대상으로 다룬다.
   기존 설치의 설정을 소급 수정하지 않는다.
 
+## WV0-D013. OpenCode는 별도 adapter를 거쳐 기존 Gateway에 등록한다
+
+- 상태: 요청 범위 연동 구현·격리 검증 및 승인된 운영 등록 완료. Provider/실기기 인수는 별도 확인.
+- 결정: 기존 Gateway 계약과 listener를 유지하며 독립 `omo` app을 `/omo/`에 등록한다. 별도
+  OpenCode Gateway adapter v1이 short-lived app assertion의 issuer/audience/owner/Origin/expiry/replay를
+  검증하고 정확한 localhost OpenCode에 내부 비밀번호로 연결한다. Provider 인증은 OpenCode가
+  소유하고 기존 Codex·Claude Code 로그인은 복사하지 않는다.
+- Browser: 공식 pinned OpenCode UI의 router/fetch/protocol/SSE integration point에서 `/omo/`와
+  Gateway CSRF를 연결한다. CSRF는 메모리에만 두고 명시적 Gateway 거부만 재시도한다. Root-relative
+  endpoint를 위해 Gateway 검사를 해제하거나 다른 app route를 재사용하지 않는다.
+- 호환성·migration: 기존 intent/receipt·Gateway v1/v2·Naru/Host contract는 불변이다. 새 adapter v1
+  config와 독립 release/LaunchAgent만 추가하며 registration은 기존 `additionalGatewayApps`의 새
+  `reconfigure` plan과 정확한 digest 승인을 사용한다. Backend/UI version과 executable digest 변경은
+  재빌드·재검증 대상이다. 등록 제거와 job 중지는 별도 승인하고 OpenCode 세션·credential은 보존한다.
+
 ## WV0-D014. Gateway와 Naru의 배포 pin을 독립적으로 유지한다
 
 - 상태: T73 구현·격리 검증 완료(2026-10-10), 운영 미적용.
@@ -137,3 +152,22 @@ remote push 승인으로 해석하지 않는다.
   `maintenanceArtifact`/공개 `maintenanceBuild`는 요청한 검증된 CLI를 승인 digest에 결합한다.
   과거 artifact로 rollback할 때도 새 독립 pin 규칙을 모르는 과거 worker를 실행하지 않는다.
   실패 복구는 실제 영향 service만 이전 설정으로 복원하며 종료 미확인·서명 키 불일치는 우회하지 않는다.
+
+## WV0-D015. OmO 프로젝트 선택은 adapter의 승인 root에서 시작한다
+
+- 상태: 요청 범위 모바일 오류 수정·격리 검증 및 exact plan 승인 후 독립 OmO 운영 적용 완료(2026-10-11).
+- 배경: 공식 UI는 home과 `/`에서 폴더를 검색하지만 adapter는 승인 root 밖 요청을 거부한다.
+  프로젝트가 없어 titlebar `+`가 조용히 종료되고, prefix-aware router의 pathname을 root-relative로
+  분류해 첫 메시지 뒤 홈으로 돌아가는 문제가 있었다. 새 route의 Solid transition 중 context와
+  command memo의 초기값 부재도 확인했다.
+- 결정: adapter 0.1.1은 인증된 owner 전용 `GET /omo/api/_naru/project-roots`로 canonical root와
+  default directory를 version 1/no-store JSON으로 제공한다. UI는 그 범위에서 검색하고 실제 API의
+  realpath·symlink escape 검증을 유지한다. Route classifier만 base-relative pathname을 사용하며
+  browser URL/link와 fetch는 `/omo/` 안에 둔다. 새 context와 command 등록에 동기 초기값을 제공한다.
+  프로젝트 없는 `+`는 승인 폴더 picker를 열며 취소 시 draft를 만들지 않는다. Session layout key와
+  view도 동기 초기값을 제공하고, session subtree는 parent route가 이미 검증한 서버 identity를
+  유지해 unmount 중 소멸한 param을 다시 해석하지 않는다. Parent의 server key 검증은 그대로 유지한다.
+- 호환성·migration: Gateway·Naru·Host와 adapter config v1은 변경하지 않는다. Metadata가 없는
+  이전 adapter와 새 UI를 섞지 않고 같은 독립 immutable release로 update한다. Exact digest 승인
+  뒤 OmO job만 교체하며 OpenCode auth/session data와 이전 release/definition을 보존한다.
+  Gateway registration/config, source admission, receipt와 Naru/Host service는 변경하지 않는다.

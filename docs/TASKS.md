@@ -17,6 +17,54 @@
 PI-00 public baseline은 완료됐다. 각 작업은 public repository의 별도 worktree에서 lane
 ownership과 integration gate를 지킨다.
 
+## 요청 범위 유지보수: OpenCode/OmO Gateway 연동 (2026-10-10)
+
+- 독립 OpenCode/OmO 설치와 공식 pinned UI의 `/omo/` 연동을 준비했다(WV0-D013). 기존 Gateway의
+  signed app assertion·Passkey·CSRF·Origin·source policy를 유지하는 별도 adapter를 구현했다.
+  기존 Codex·Claude Code 인증은 복사하지 않으며 public bind·port forwarding·DNS/TLS 변경은 없다.
+- Node 24에서 adapter/Gateway auth·proxy·source policy 23건, operations 64건, distribution 86건,
+  production build·격리 smoke 1건과 typecheck·변경 파일 lint/format을 통과했다. 실제 OpenCode와
+  공식 UI의 session 생성·SSE, 1440/768/360px·동적 viewport·keyboard focus를 격리 검증했다.
+  Compiled service의 시작·종료·재시작 2회, OmO agent load, unsigned 요청 거부와 executable digest
+  변경 거부도 확인했다.
+- Owner-only immutable release, 로그인 후 자동 실행 LaunchAgent, fresh Gateway reconfigure plan과
+  source admission 후보를 준비했다. 운영 릴리스가 준비 중 변경되어 최신 receipt 기준으로 계획을
+  다시 생성했다. 기존 릴리스를 유지하며 Gateway/Naru만 재시작하고 Host는 재시작하지 않는다.
+- 운영 적용(사용자 승인): 독립 OmO LaunchAgent를 설치·시작하고 기존 admission을 보존한 새 기록을
+  추가했다. 공식 CLI의 independent maintenance handoff로 receipt 33, 승인 digest 일치,
+  maintenance `completed`·recovery `not-needed`, healthy·Doctor 29/29를 확인했다. Gateway/Naru만
+  재시작했고 Host release를 유지했다. OmO agent 24개와 Sisyphus load, adapter/backend unsigned
+  401·내부 password 200 및 HTTPS app의 미인증 401을 확인했다. 로그인 시 자동 실행은 설정했으며
+  실제 Mac 재부팅은 수행하지 않았다.
+- 모델 인수: 사용자의 OpenAI device 승인과 owner-only OAuth 저장을 확인하고 `gpt-6-sol`의 실제
+  합성 응답을 검증했다. Hephaestus가 task tool로 explore(`gpt-6-luna-fast`)·oracle(`gpt-5.6-sol`)을
+  두 background child session에 병렬 위임하고 양쪽 성공 결과를 회수했다. Child 실행 시간 중첩,
+  완료 상태, 최종 합성 결과와 오류 부재를 확인했으며 프로젝트 읽기·수정·web·shell 실행은 금지했다.
+  Claude는 미인증 상태이므로 기본 agent만 Hephaestus로 지정하고 model/agent 인수가 없는 새 요청이
+  OpenAI로 성공하는 것도 검증했다. 기존 global config는 owner-only로 보존하고 OpenCode 자체
+  config reload를 사용했으며 Gateway/Naru/Host는 추가 재시작하지 않았다.
+- 미완료: Claude API 키 연결·Claude 모델 인수, Windows 기기 인수. 내부망 밖 접속은 기존
+  private ingress에 도달하는 승인된 VPN 경로가 필요하며 network/source 정책 변경은 별도 범위다.
+- 모바일 후속(WV0-D015): 프로젝트 picker의 home/root 검색이 승인 경로 제한에 막혀 빈 목록을
+  반환하고, 미선택 프로젝트에서 `+`가 종료되는 문제를 재현했다. Owner-only approved-root metadata와
+  scoped 검색을 추가하고 `/omo` route 분류 및 draft/context/command 초기화를 보완했다.
+  UI/adapter를 함께 새 immutable release로 준비하며 운영 적용은 독립 OmO job만 교체하는 별도
+  exact plan 승인 경계다. 기존 Gateway/Naru/Host는 이 update에서 재시작하지 않는다.
+  프로젝트 없는 `+`는 picker를 열고 취소할 수 있다. Node 24의 adapter/Gateway 인증·source·proxy
+  30건, root/package typecheck, adapter/UI build, 변경 파일 lint/format을 통과했다. 최종 후보 UI에서
+  360px touch의 폴더명·전체 경로 검색, 첫 메시지의 실제 session 생성, reload/SSE reconnect와 두 번째
+  draft/탭 전환을 검증했다. 1440/768/360px·520px 동적 높이의 composer 표시, focus-visible와 캡처,
+  ErrorBoundary/HTTP 오류 부재도 확인했다. 모델 응답은 이 fixture에서만 대체했다. 최종 compiled
+  후보의 시작·종료 2회, OmO load, 미인증·digest 변경 거부를 통과했으며 아직 운영 미적용이다.
+- 모바일 운영 적용(2026-10-11, 사용자 승인): 동일한 exact plan digest로 독립 launchd worker에서
+  OmO job만 교체했다. 첫 점검의 3초 timeout으로 이전 OmO를 복원했으며, 실제 plugin 조회가
+  3.17초에 성공함을 확인해 점검 제한만 늘리고 같은 후보/기준 digest로 재시도했다. 실패·복구 기록은
+  보존했고 최종 `completed`/`not-needed`, 새 OmO PID와 health, agent 24개·Sisyphus load,
+  OpenAI 연결·Hephaestus 기본값, adapter/backend/HTTPS 미인증 401을 확인했다. Naru/Gateway/Host
+  PID와 Gateway 설정·receipt 33은 그대로였고 공식 read-only status healthy·Doctor 29/29를 통과했다.
+  기존 로그인·세션 data와 이전 release/definition을 보존했다. 실제 모바일의 새로고침 후 인수는
+  사용자 확인으로 남긴다.
+
 ## 요청 범위 유지보수: 기본 Codex 모델 강제 지정 제거 (2026-10-10)
 
 - 사용자가 Codex를 시작할 때마다 5.6 Sol로 바뀌는 동작을 제거하도록 요청했다. `codex-main`의
