@@ -227,17 +227,35 @@
     console은 TUI가 아니라 관찰용 console로 표시한다.
 - 역할별 model은 항상 명시한다. Claude는 사용자 settings 없이 실행하면 기본값이 haiku가 된다.
 
-## AP-D012. 새 production 의존성: Claude Agent SDK
+## AP-D012. Claude Agent SDK 공급 방식
 
-- 상태: accepted (2026-10-15, Gate 1). 공식 SDK이고 비공식 경로를 대체하므로 설계 이탈이 아니다.
-  사용자 보고에 명시한다.
-- 결정: `@anthropic-ai/claude-agent-sdk`를 `apps/server`의 의존성으로 추가한다.
-- 이유:
-  - 대화 이력 재구성(`getSessionMessages`, `getSubagentMessages`), 구조화 이벤트, 권한 callback을 제공하는
-    공식 인터페이스다(V03 (c)).
-  - CLI만 쓰면 transcript 파일을 직접 파싱해야 한다. 이는 비공식 경로다.
-- 호환성: SDK와 CLI의 version 짝을 Capability Matrix에 기록한다. 둘 중 하나가 바뀌면 V03과 V05를 다시
-  검증한다.
+- 상태: proposed. **사용자 결정 필요.** 2026-10-15에 accepted로 적었던 것을 정정한다. 라이선스를 확인하기
+  전에 기록한 판단이었다.
+- 배경:
+  - Chat 이력을 공식 경로로 다시 읽는 기능(`getSessionMessages`, `getSubagentMessages`)은 Claude Agent SDK에만
+    있다. CLI에는 대화 이력을 출력하는 명령이 없다(`logs`는 background 세션의 터미널 출력만 보여 준다).
+  - SDK 0.3.296의 라이선스는 "© Anthropic PBC. All rights reserved"이고 Anthropic 약관을 따른다. 오픈소스가
+    아니다. 또한 플랫폼별 CLI 바이너리(약 230MB)를 optional dependency로 설치한다.
+  - Naru는 공개 Apache-2.0 저장소다. standalone 배포물에는 production 의존성이 포함되고,
+    `THIRD_PARTY_NOTICES.md`는 오픈소스 라이선스만 나열한다.
+- 선택지:
+  - A. **CLI만 사용한다.** `claude -p --input-format stream-json --output-format stream-json`(공식 CLI)으로
+    runner를 만든다. 새 의존성은 없다.
+    - Chat은 실시간 이벤트와 runner 메모리의 bounded buffer만 보여 준다.
+    - runner를 재시작하면 이전 대화는 Chat에 다시 나타나지 않는다. TUI resume으로만 볼 수 있다.
+    - Chat 이력이 줄어드는 것이므로 UX 축소다.
+  - B. **SDK를 사용자가 따로 설치하는 runtime 구성요소로 둔다.** 권고안이다.
+    - Claude CLI처럼 사용자가 npm으로 설치한다(optional binary는 제외하고, CLI는 기존 설치를 쓴다).
+    - Naru는 설정된 경로에서 SDK를 동적으로 불러온다. 저장소와 배포물에는 포함하지 않는다.
+    - 업데이트는 기존 `update-agent-clis` 흐름에 추가한다.
+    - Chat 이력을 온전히 보여 줄 수 있다.
+    - 사용자는 이미 Claude Code를 쓰면서 Anthropic 약관에 동의한 상태다.
+  - C. **SDK를 배포물에 포함한다.** 권고하지 않는다. 독점 패키지를 Apache 배포물에 재배포하게 되고,
+    배포물이 약 250MB 커진다.
+- 그동안의 구현: Claude runner는 SDK를 `ClaudeSdkPort` 인터페이스 뒤에서만 쓴다.
+  - 테스트는 fake port를 쓴다.
+  - 실제 인수 검증은 저장소 밖에 설치된 SDK로 한다.
+  - 저장소의 `package.json`과 lockfile은 바꾸지 않는다.
 
 ## AP-D013. Gate 1에서 사용자 확인이 필요한 항목
 
