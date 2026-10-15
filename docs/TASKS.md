@@ -79,6 +79,34 @@ ownership과 integration gate를 지킨다.
 
 ## 대기 작업
 
+### T73. Gateway와 Naru의 독립 배포
+
+- [x] Gateway 단독 코드·추가 앱 등록 변경은 Gateway만 갱신하고, 변경되지 않은 Naru와 Host의
+      실행 프로세스·불변 릴리스·웹 경로·설정·LaunchAgent를 보존한다.
+- 선행 조건: T57 서비스별 release pin, T58 multi-app routing, T60/T61 종료·복구 경계,
+  사용자 작업 시작 승인(2026-10-10).
+- 범위: distribution의 서비스별 payload·설정 비교, Naru/web pin 보존, receipt 호환성,
+  status/doctor·후속 upgrade·reconfigure·rollback 및 실패 복구. 인증·Origin·source policy·
+  capability·generation fencing은 유지하며 운영 실행·remote push는 포함하지 않는다.
+- 완료 조건: Gateway-only upgrade와 추가 앱 reconfigure에서 Naru/Host 무재시작·파일 보존,
+  Naru-only·web-only 변경과 공유 설정·Host 의존성 변경의 필요한 재시작, 변경 없는 후보,
+  기존 receipt 호환·pin 변조 거부, 혼합 release 뒤 후속 배포·rollback·readiness 실패 복구를
+  격리 fixture로 검증한다. 공개 상태와 승인 digest가 실제 component pin을 반영해야 한다.
+- 검증 gate: Node 24의 distribution 전체·관련 Gateway 인증/재접속·단일 controller 검증,
+  operations·production build/격리 smoke, 관련 typecheck·lint·format. 새 결정과 consumer 호환성·
+  migration을 문서화하고 운영 미적용 범위를 완료 보고에 기록한다.
+- 구현·격리 검증 완료(2026-10-10, Node 24.19.0): distribution 97건(T73 신규 11건), Gateway
+  인증·세션·Durable facade/stream 33건, operations 64건, core-flow E2E 8건과 production build·
+  격리 smoke 1건을 통과했다. 전체 typecheck, 변경 파일 lint·format, CLI/maintenance 번들 빌드와
+  두 compiled entrypoint의 명령 누락 거부도 통과했다.
+- Gateway-only upgrade·추가 앱 reconfigure·Gateway-only rollback에서 Naru/Host 파일의 내용·inode·
+  mtime와 웹 receipt를 보존했다. 혼합 pin 뒤 Naru-only 갱신, 변경 없는 runtime/CLI-only 후보,
+  shared Node/Host 의존성 변경, 이전 receipt 호환, 미선언·알 수 없는 pin version 및 보존된 웹·
+  배포 artifact 변조 거부, Gateway readiness 실패 복구와 일시적/지속적 서명 키 불일치를 검증했다.
+- WV0-D014에 독립 pin version 2와 구 CLI의 제한, 최신 요청 CLI로 과거 receipt를 rollback하는
+  migration 경계를 기록했다. 운영 instance의 서비스·설정·receipt, source admission과 remote는
+  변경하지 않았다. 실제 launchd/PID·브라우저 인수는 새 artifact의 별도 승인된 운영 적용에서 수행한다.
+
 ### T71. Claude Pane 작업 재개
 
 - [x] Codex Pane처럼 Claude Pane도 "Claude 작업 재개"와 "새 Claude 시작"을 제공한다. 재개는 마지막

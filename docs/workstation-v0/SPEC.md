@@ -28,6 +28,11 @@ Artifact는 pinned Node.js 24 runtime, Host/Gateway/Naru, CLI, web release, depe
 포함한다. Source commit, lockfile, Node input과 payload digest를 검증하고 install/upgrade/reconfigure/
 rollback마다 fresh plan approval을 요구한다.
 
+T73/WV0-D014 이후 component 의존 payload·설정이 바뀐 서비스만 새 release로 옮기고 재시작한다.
+Gateway-only 변경에서는 Naru의 실행 process·release·웹 경로·설정을 유지한다. Receipt의
+`runtimePinVersion: 2`가 독립 Naru pin을 허용하며, 필드가 없는 receipt는 기존 의미로 계속 읽는다.
+서명 키·Origin·공유 인증 계약 변경은 별도의 consumer 호환성 경계를 유지한다.
+
 ## 제외
 
 - multi-user/RBAC와 concurrent writer

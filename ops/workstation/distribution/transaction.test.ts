@@ -498,7 +498,7 @@ describe("T14 deterministic maintenance transactions", () => {
     await expect(doctorDistribution(intent, runtime)).rejects.toThrow(/manifest/);
   });
 
-  it("reconfigures an additional Gateway app without restarting the Host", async () => {
+  it("reconfigures an additional Gateway app without restarting Host or Naru", async () => {
     const fixture = createPrivateIngressDistributionFixture();
     const runtime = new FakeWorkstationRuntime();
     const options = {
@@ -520,7 +520,7 @@ describe("T14 deterministic maintenance transactions", () => {
     });
     const plan = await planDistribution(candidate, "reconfigure", runtime, options);
     expect(plan.checks.find((check) => check.id === "transaction.reconfigure")?.status).toBe("ok");
-    expect(plan.restartServices).toEqual(["gateway", "naru"]);
+    expect(plan.restartServices).toEqual(["gateway"]);
     const before = runtime.operations.length;
     const result = await executeMaintenanceRequest(
       stageMaintenanceHandoff(plan, plan.planDigest, runtime),
@@ -531,7 +531,7 @@ describe("T14 deterministic maintenance transactions", () => {
     const operations = runtime.operations.slice(before);
     expect(operations).not.toContain(`bootout:${plan.layout.labels.host}`);
     expect(operations).toContain(`bootout:${plan.layout.labels.gateway}`);
-    expect(operations).toContain(`bootout:${plan.layout.labels.naru}`);
+    expect(operations).not.toContain(`bootout:${plan.layout.labels.naru}`);
     const gateway = JSON.parse(readFileSync(plan.layout.files.gatewayConfig, "utf8")) as {
       appRegistrations: readonly { appId: string; routePrefix: string }[];
     };
@@ -640,7 +640,7 @@ describe("T14 deterministic maintenance transactions", () => {
     const gatewayPlan = await planDistribution(gatewayIntent, "upgrade", runtime, {
       probePorts: false,
     });
-    expect(gatewayPlan.restartServices).toEqual(["gateway", "naru"]);
+    expect(gatewayPlan.restartServices).toEqual(["gateway"]);
     const beforeGateway = runtime.operations.length;
     await executeMaintenanceRequest(
       stageMaintenanceHandoff(gatewayPlan, gatewayPlan.planDigest, runtime),
@@ -696,7 +696,7 @@ describe("T14 deterministic maintenance transactions", () => {
     expect(readCurrentReceipt(rollback.layout)?.runtimeReleases).toMatchObject({
       host: { buildId: first.artifact.buildId },
       gateway: { buildId: "fixture-gateway-0002" },
-      naru: { buildId: "fixture-gateway-0002" },
+      naru: { buildId: first.artifact.buildId },
     });
     expect(
       (
@@ -728,6 +728,9 @@ describe("T14 deterministic maintenance transactions", () => {
     if (first === undefined) throw new Error("Fixture install receipt is missing.");
     const artifactRoot = createArtifactFixture(fixture.root, "fixture-web-fail-0002", {
       packagedNodeRuntime: true,
+      fileOverrides: {
+        "web-base/index.html": `${readFileSync(join(fixture.artifactRoot, "web-base/index.html"), "utf8")}<!-- web change -->\n`,
+      },
     });
     const intent = parseInstallationIntent({
       ...fixture.intent,

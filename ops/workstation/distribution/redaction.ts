@@ -21,6 +21,7 @@ export function redactDistributionPlan(plan: DistributionPlan): unknown {
       payloadDigest: plan.artifact.payloadDigest,
     },
     restartServices: plan.restartServices,
+    maintenanceBuild: plan.maintenanceArtifact.buildId,
     runtimeBuilds: {
       host: plan.runtimeReleases.host.buildId,
       gateway: plan.runtimeReleases.gateway.buildId,

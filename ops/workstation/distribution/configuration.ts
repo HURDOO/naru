@@ -67,20 +67,23 @@ export function createRuntimeConfiguration(
   const current = createInstanceConfiguration(intent, artifact, layout);
   if (
     releases.host.manifestDigest === artifact.manifestDigest &&
-    releases.gateway.manifestDigest === artifact.manifestDigest
+    releases.gateway.manifestDigest === artifact.manifestDigest &&
+    releases.naru.manifestDigest === artifact.manifestDigest
   ) {
     return current;
   }
   const hostLayout = createInstanceLayout(intent, releases.host);
   const gatewayLayout = createInstanceLayout(intent, releases.gateway);
+  const naruLayout = createInstanceLayout(intent, releases.naru);
   const host = createInstanceConfiguration(intent, releases.host, hostLayout);
   const gateway = createInstanceConfiguration(intent, releases.gateway, gatewayLayout);
+  const naru = createInstanceConfiguration(intent, releases.naru, naruLayout);
   const baseInstance = { ...current.instance };
   delete baseInstance.localSessionCli;
   return {
     host: host.host,
     gateway: gateway.gateway,
-    naruEnvironment: current.naruEnvironment,
+    naruEnvironment: naru.naruEnvironment,
     instance: {
       ...baseInstance,
       runtimeServices: {
@@ -89,7 +92,7 @@ export function createRuntimeConfiguration(
           buildId: releases.gateway.buildId,
           nodeExecutable: gatewayLayout.runtime.nodeExecutable,
         },
-        naru: { buildId: artifact.buildId, nodeExecutable: layout.runtime.nodeExecutable },
+        naru: { buildId: releases.naru.buildId, nodeExecutable: naruLayout.runtime.nodeExecutable },
       },
       ...(host.localSessionCli === undefined ? {} : { localSessionCli: host.localSessionCli }),
     },
@@ -98,6 +101,7 @@ export function createRuntimeConfiguration(
       ...current.launchAgents,
       host: host.launchAgents.host,
       gateway: gateway.launchAgents.gateway,
+      naru: naru.launchAgents.naru,
     },
   };
 }

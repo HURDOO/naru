@@ -37,10 +37,13 @@ import { parseVerifierKeys, type WorkstationRuntimeController } from "./runtime.
 import {
   readCurrentReceiptForIntent,
   verifyReceiptRuntimeReleases,
+  verifyReceiptWebRelease,
   type DistributionCheck,
   type InstallationReceiptV1,
 } from "./transaction.js";
-import { verifyInstanceWebRelease } from "./web-release.js";
+
+const WEB_IDENTITY_EXPECTATION =
+  "manifest/meta/service-worker digest bound to the current canonical Origin, app base path and Naru runtime pin";
 
 export interface WorkstationDoctorReport {
   readonly version: DistributionDocumentVersion;
@@ -172,22 +175,24 @@ export async function doctorDistribution(
   }
 
   try {
-    const web = verifyInstanceWebRelease(layout.webReleaseRoot);
+    const web = verifyReceiptWebRelease(current);
     checks.push({
       id: "pwa.instance-web-release",
       status:
         web.canonicalBrowserOrigin === layout.browser.origin &&
         (web.appBasePath ?? "/") === layout.appBasePath &&
-        web.basePayloadDigest === current.artifact.payloadDigest
+        web.basePayloadDigest === runtimeReleases.naru.payloadDigest
           ? "ok"
           : "blocked",
-      expected:
-        "manifest/meta/service-worker digest bound to the current canonical Origin and app base path",
+      expected: WEB_IDENTITY_EXPECTATION,
       actual: `${web.canonicalBrowserOrigin}:${web.appBasePath ?? "/"}:${web.serviceWorkerRevision}`,
       owner: "package",
     });
   } catch (error) {
-    checks.push(blockedCheck("pwa.instance-web-release", safeError(error), "package"));
+    checks.push({
+      ...blockedCheck("pwa.instance-web-release", safeError(error), "package"),
+      expected: WEB_IDENTITY_EXPECTATION,
+    });
   }
 
   try {

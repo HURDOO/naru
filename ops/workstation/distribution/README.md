@@ -191,9 +191,21 @@ reconfigure는 바뀐 downstream만 restart하되 Host 설정이 바뀌면 세 r
 upgrade plan은 `restartServices`와 `runtimeBuilds`를 redacted 출력에 포함한다. 검증된 web payload만
 바뀐 upgrade는 Naru만 재시작하며, Host/Gateway는 이전 immutable release와 그 configuration 및
 launchd definition을 유지한다. Host가 실행하는 Codex integration payload는 Host 의존성에 포함한다.
-Gateway가 바뀌면 Gateway·Naru, Host가 바뀌면 세 runtime을 재시작한다. Additive receipt
+T73/WV0-D014 이후 Gateway만 바뀌면 Gateway만, Naru 코드·웹만 바뀌면 Naru만 재시작한다.
+Host 의존 payload·설정이 바뀌면 기존처럼 세 runtime을 재시작한다. Additional Gateway app의
+등록·제거만 수행하는 reconfigure는 Naru 환경이 그대로이므로 Gateway만 재시작한다. Additive receipt
 `runtimeReleases`가 혼합 release pin을 기록하고, 이 필드가 없는 기존 receipt는 단일 artifact pin으로
 읽는다. 이후 plan·doctor·status는 모든 pin을 검증하며, rollback은 대상 receipt의 pin을 복원한다.
+새 receipt의 `runtimePinVersion: 2`에서는 `artifact`가 transaction/maintenance package를,
+`runtimeReleases.naru`와 `webRelease`가 실제 Naru와 웹을 가리킨다. 필드 없는 기존 receipt는 이전
+규칙(Naru pin = artifact)으로 읽으며, 알 수 없는 version이나 선언 없는 독립 pin은 거부한다.
+독립 Naru pin을 만든 뒤에는 T73 이상 CLI로 plan·status·doctor·mutation을 수행한다. 이전 CLI는
+이 receipt의 Naru pin을 거부한다. 첫 승인 mutation 외에 기존 receipt/DB migration은 없다.
+Gateway-only 작업은 기존 NARU_WEB_DIST·web release·service-worker revision을 보존한다.
+Gateway 기동 후 verifier key가 달라졌다면 retained Naru에 자동으로 새 키를 적용하지 않고
+transaction을 실패시킨다. Key rotation은 별도 coordinated plan이 필요하다.
+Rollback도 실제 component/configuration 차이만 재시작하며, `maintenanceBuild`로 공개한 요청 CLI의
+immutable artifact를 worker로 사용해 과거 target의 CLI로 독립 pin 처리를 되돌리지 않는다.
 최초 설치 readiness 실패는 새 runtime과 RunAtLoad plist를 제거하고, 기존 installation의 실패는
 mutable 설정을 복원한 뒤 실제 중지한 서비스만 이전 receipt topology로 다시 시작한다.
 Runtime 교체와 이 복구 경로는 `bootout` 전에 관찰한 exact label의 PID 종료와 label 해제를 bounded

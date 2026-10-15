@@ -15,7 +15,11 @@ import {
   type WorkstationInstallationIntent,
 } from "./model.js";
 import { readPrivateJson } from "./security.js";
-import { readCurrentReceiptForIntent, verifyReceiptRuntimeReleases } from "./transaction.js";
+import {
+  readCurrentReceiptForIntent,
+  verifyReceiptRuntimeReleases,
+  verifyReceiptWebRelease,
+} from "./transaction.js";
 import type { ServiceRuntimeState, WorkstationRuntimeController } from "./runtime.js";
 
 export interface WorkstationStatusReport {
@@ -31,6 +35,7 @@ export interface WorkstationStatusReport {
     readonly operation: string;
     readonly buildId: string;
     readonly planDigest: string;
+    readonly runtimePinVersion?: 2;
     readonly runtimeBuilds: Readonly<Record<"host" | "gateway" | "naru", string>>;
   };
   readonly ingress: unknown;
@@ -65,6 +70,7 @@ export async function statusDistribution(
   if (receipt !== undefined) {
     try {
       verifyReceiptRuntimeReleases(receipt, layout);
+      verifyReceiptWebRelease(receipt);
     } catch {
       artifactHealthy = false;
     }
@@ -109,6 +115,9 @@ export async function statusDistribution(
             operation: receipt.operation,
             buildId: receipt.artifact.buildId,
             planDigest: receipt.planDigest,
+            ...(receipt.runtimePinVersion === undefined
+              ? {}
+              : { runtimePinVersion: receipt.runtimePinVersion }),
             runtimeBuilds: {
               host: receipt.runtimeReleases?.host.buildId ?? receipt.artifact.buildId,
               gateway: receipt.runtimeReleases?.gateway.buildId ?? receipt.artifact.buildId,

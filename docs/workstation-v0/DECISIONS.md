@@ -109,3 +109,31 @@ remote push 승인으로 해석하지 않는다.
 - 호환성·migration: 필드가 없는 기존 intent/receipt와 Naru 환경은 기존 strict-child 의미로
   유지된다. settings digest에 필드를 결합해 값 변경은 새 plan과 승인 대상으로 다룬다.
   기존 설치의 설정을 소급 수정하지 않는다.
+
+## WV0-D014. Gateway와 Naru의 배포 pin을 독립적으로 유지한다
+
+- 상태: T73 구현·격리 검증 완료(2026-10-10), 운영 미적용.
+- 배경: WV0-D007은 모든 upgrade에서 Naru를 새 artifact로 옮기고 웹 release를 다시 렌더했다.
+  Gateway 단독 변경도 Naru의 코드·인증 키·설정과 관계없이 재시작됐다. Gateway는 기존 서명 키와
+  session 저장소를 재사용하므로 이 결합을 런타임 필수 의존성으로 취급하지 않는다.
+- 결정: package는 하나로 유지하되 Host/Gateway/Naru의 검증된 의존 payload와 실제 설정을 각각
+  비교한다. Gateway-only upgrade와 추가 앱 등록 reconfigure는 Gateway만, Naru 코드·웹 변경은
+  Naru만 재시작한다. 변경 없는 component와 그 immutable release·LaunchAgent·환경 파일을 유지한다.
+  Host 의존 payload·설정 변경은 기존처럼 세 runtime을 재시작한다. Origin·app base path 등 Naru
+  환경을 바꾸는 설정은 Naru도 재시작한다. 공유 인증 계약 변경은 별도 versioning·consumer
+  migration 대상이며 기존 assertion·Origin·source·capability 검증을 완화하지 않는다.
+- 웹: Naru pin의 artifact에서 같은 Origin·base path로 렌더한 web release를 유지한다. Gateway만
+  바뀌면 NARU_WEB_DIST와 service-worker revision을 바꾸지 않는다. Gateway 기동 뒤 공개 서명 키가
+  달라졌는데 Naru가 재시작 대상이 아니면 파일을 갱신하지 않고 transaction을 실패시킨다. 승인된
+  coordinated key rotation 또는 verifier reload 구현을 이 작업에 포함하지 않는다.
+- receipt 호환성: intent의 v1/v2와 artifact v1은 불변이다. Receipt의 optional
+  `runtimePinVersion: 2`가 독립 pin 의미를 명시한다. `artifact`는 마지막 transaction의 package와
+  maintenance 설정을, `runtimeReleases`는 실제 component release를 가리킨다. 필드가 없는 기존
+  receipt는 이전 규칙(Naru pin = artifact)으로 읽고 첫 승인 mutation에서 version 2를 기록한다.
+  알 수 없는 pin version과 선언 없이 분리된 Naru pin은 거부한다. 독립 Naru pin이 있는 receipt는
+  이전 CLI의 검증을 통과하지 못하므로 이후 plan·doctor·mutation은 T73 이상 CLI를 사용한다.
+  DB·기존 receipt를 소급 변환하거나 파일·release를 삭제하지 않는다.
+- 복구: rollback도 대상 receipt의 component pin·설정 차이만 재시작하며 웹 pin을 복원한다.
+  `maintenanceArtifact`/공개 `maintenanceBuild`는 요청한 검증된 CLI를 승인 digest에 결합한다.
+  과거 artifact로 rollback할 때도 새 독립 pin 규칙을 모르는 과거 worker를 실행하지 않는다.
+  실패 복구는 실제 영향 service만 이전 설정으로 복원하며 종료 미확인·서명 키 불일치는 우회하지 않는다.

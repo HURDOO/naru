@@ -70,6 +70,7 @@ import {
 } from "./security.js";
 import {
   handoffMaintenanceRequest,
+  parseVerifierKeys,
   RuntimeStopUnconfirmedError,
   startRuntimeTopology,
   stopRuntimeTopology,
@@ -77,7 +78,11 @@ import {
   type ServiceRuntimeState,
   type WorkstationRuntimeController,
 } from "./runtime.js";
-import { renderInstanceWebRelease, type InstanceWebReleaseReceiptV1 } from "./web-release.js";
+import {
+  renderInstanceWebRelease,
+  verifyInstanceWebRelease,
+  type InstanceWebReleaseReceiptV1,
+} from "./web-release.js";
 import { parsePackagedNodeRuntime } from "./node-runtime.js";
 import {
   inspectPrivateIngressPreflight,
@@ -138,6 +143,8 @@ export interface InstallationReceiptV1 {
   readonly artifact: DistributionArtifactSummary;
   /** Absent on older receipts: all three services use `artifact`. */
   readonly runtimeReleases?: RuntimeReleaseSelection;
+  /** Version 2 allows Naru to remain on a release older than the deployment artifact. */
+  readonly runtimePinVersion?: 2;
   readonly intent: WorkstationInstallationIntent;
   readonly privateIngressIntentDigest?: string;
   readonly sourceCommit?: string;
@@ -165,6 +172,8 @@ export interface DistributionPlan {
   readonly sourceTransition?: OperatorSourceTransitionPlan;
   readonly artifact: DistributionArtifactSummary;
   readonly runtimeReleases: RuntimeReleaseSelection;
+  /** The requested CLI executes rollback too; an old target must not downgrade the worker. */
+  readonly maintenanceArtifact: DistributionArtifactSummary;
   readonly restartServices: readonly RuntimeServiceName[];
   readonly layout: WorkstationInstanceLayout;
   readonly currentReceipt?: InstallationReceiptV1;
@@ -282,9 +291,9 @@ export async function planDistribution(
     artifact.summary,
     layout,
     configuration,
+    runtimeReleases.naru,
   );
   const restartServices = changedRuntimeServices(
-    operation,
     currentReceipt,
     configurationDigests,
     runtimeReleases,
@@ -491,16 +500,33 @@ export async function planDistribution(
     privateIngressPreflight?.stateFingerprint,
     listenerStateFingerprint,
   );
-  const actions = createActions(operation, layout, targetIntent, originTransition, restartServices);
+  const naruLayout = createInstanceLayout(targetIntent, runtimeReleases.naru);
+  const currentWeb =
+    currentReceipt === undefined ? undefined : verifyReceiptWebRelease(currentReceipt);
+  const preserveWeb =
+    currentWeb !== undefined &&
+    currentWeb.buildId === runtimeReleases.naru.buildId &&
+    currentWeb.canonicalBrowserOrigin === targetIntent.canonicalBrowserOrigin &&
+    (currentWeb.appBasePath ?? "/") === naruLayout.appBasePath;
+  const actions = createActions(
+    operation,
+    layout,
+    targetIntent,
+    originTransition,
+    restartServices,
+    naruLayout.webReleaseRoot,
+    preserveWeb,
+  );
   const approvalBoundaries = [
     "This plan does not approve launchd install/start; the mutation command requires this exact digest.",
     "Tailscale Serve/listener apply is a separate approved transaction after local readiness.",
     "Owner passkey bootstrap, notification permission, and Codex hook trust stay user-controlled.",
     "Current com.naru.agent/com.naru.maintenance and production data are outside this package boundary.",
-    ...(runtimeReleases.host.manifestDigest !== artifact.summary.manifestDigest ||
-    runtimeReleases.gateway.manifestDigest !== artifact.summary.manifestDigest
+    ...(RUNTIME_SERVICE_NAMES.some(
+      (service) => runtimeReleases[service].manifestDigest !== artifact.summary.manifestDigest,
+    )
       ? [
-          "Unchanged Host/Gateway services stay pinned to their previous verified immutable releases; preserve those releases until a later approved plan promotes them.",
+          "Unchanged runtime services stay pinned to their previous verified immutable releases; preserve those releases until a later approved plan promotes them.",
         ]
       : []),
   ];
@@ -527,6 +553,7 @@ export async function planDistribution(
     ...(privateIngressIntentDigest === undefined ? {} : { privateIngressIntentDigest }),
     ...(sourceTransition === undefined ? {} : { sourceTransition }),
     artifact: artifact.summary,
+    maintenanceArtifact: requestedArtifact.summary,
     runtimeReleases,
     restartServices,
     layout,
@@ -559,6 +586,7 @@ function approvalDigest(core: Omit<DistributionPlan, "planDigest">): string {
     requestedIntent: canonicalIntent(core.targetIntent),
     targetIntent: canonicalIntent(core.targetIntent),
     artifact: { ...core.artifact, root: "<verified-artifact-transport>" },
+    maintenanceArtifact: { ...core.maintenanceArtifact, root: "<verified-maintenance-transport>" },
     runtimeReleases: Object.fromEntries(
       RUNTIME_SERVICE_NAMES.map((service) => {
         const release = core.runtimeReleases[service];
@@ -592,14 +620,15 @@ export function stageMaintenanceHandoff(
   if (plan.status === "blocked") throw new Error("Blocked Workstation plan cannot be handed off.");
   ensureInstanceDirectories(plan.layout, plan.layout.uid);
   refuseUnconsumedMaintenanceRequest(plan.layout);
-  const sourceArtifact = verifyDistributionArtifact(plan.artifact.root);
-  assertApprovedArtifactIdentity(plan.artifact, sourceArtifact.summary);
-  installVerifiedArtifact(sourceArtifact, plan.layout.releaseRoot);
-  const installedArtifact = verifyDistributionArtifact(plan.layout.releaseRoot);
-  assertApprovedArtifactIdentity(plan.artifact, installedArtifact.summary);
+  const sourceArtifact = verifyDistributionArtifact(plan.maintenanceArtifact.root);
+  assertApprovedArtifactIdentity(plan.maintenanceArtifact, sourceArtifact.summary);
+  const stagingLayout = createInstanceLayout(plan.targetIntent, sourceArtifact.summary);
+  installVerifiedArtifact(sourceArtifact, stagingLayout.releaseRoot);
+  const installedArtifact = verifyDistributionArtifact(stagingLayout.releaseRoot);
+  assertApprovedArtifactIdentity(plan.maintenanceArtifact, installedArtifact.summary);
   const maintenanceIntent = parseInstallationIntent({
     ...plan.targetIntent,
-    artifactRoot: plan.layout.releaseRoot,
+    artifactRoot: stagingLayout.releaseRoot,
     nodeExecutable: artifactNodeExecutable(
       installedArtifact.summary,
       plan.targetIntent.nodeExecutable,
@@ -609,7 +638,7 @@ export function stageMaintenanceHandoff(
   if (
     maintenanceLayout.namespace !== plan.layout.namespace ||
     maintenanceLayout.stateRoot !== plan.layout.stateRoot ||
-    maintenanceLayout.releaseRoot !== plan.layout.releaseRoot ||
+    maintenanceLayout.releaseRoot !== stagingLayout.releaseRoot ||
     stableJson(maintenanceLayout.labels) !== stableJson(plan.layout.labels)
   ) {
     throw new Error("Managed maintenance release escaped the approved instance layout.");
@@ -726,13 +755,15 @@ export async function executeMaintenanceRequest(
     inspectNative(plan.layout.runtime.nodeExecutable, plan.layout.releaseRoot);
 
     currentResult = updateStage(plan.layout, currentResult, "render-instance-web-release");
+    const naruRelease = plan.runtimeReleases.naru;
+    const naruLayout = createInstanceLayout(plan.targetIntent, naruRelease);
     const webRelease = renderInstanceWebRelease({
-      baseWebRoot: join(plan.layout.releaseRoot, "web-base"),
-      targetWebRoot: plan.layout.webReleaseRoot,
-      buildId: installedArtifact.summary.buildId,
-      basePayloadDigest: installedArtifact.summary.payloadDigest,
-      browser: plan.layout.browser,
-      appBasePath: plan.layout.appBasePath,
+      baseWebRoot: join(naruLayout.releaseRoot, "web-base"),
+      targetWebRoot: naruLayout.webReleaseRoot,
+      buildId: naruRelease.buildId,
+      basePayloadDigest: naruRelease.payloadDigest,
+      browser: naruLayout.browser,
+      appBasePath: naruLayout.appBasePath,
     });
 
     currentResult = updateStage(plan.layout, currentResult, "write-private-configuration");
@@ -751,6 +782,10 @@ export async function executeMaintenanceRequest(
     currentResult = updateStage(plan.layout, currentResult, "restart-runtime-topology");
     const services = plan.restartServices;
     const activeLayout = plan.layout;
+    const preserveLoadedKeys =
+      plan.currentReceipt !== undefined &&
+      !services.includes("naru") &&
+      plan.targetIntent.externalGateway === undefined;
     if (plan.currentReceipt !== undefined) {
       runtimeRestartStarted = true;
       await stopRuntimeTopology(runtime, activeLayout, [...services].reverse());
@@ -758,7 +793,7 @@ export async function executeMaintenanceRequest(
     await startRuntimeTopology(
       runtime,
       activeLayout,
-      (keys) => writeVerifierKeys(activeLayout, keys),
+      (keys) => writeVerifierKeys(activeLayout, keys, preserveLoadedKeys),
       services,
     );
 
@@ -818,10 +853,13 @@ export async function executeMaintenanceRequest(
           plan.currentReceipt.artifact,
         );
         if (runtimeRestartStarted) {
+          const preserveLoadedKeys =
+            !plan.restartServices.includes("naru") &&
+            plan.currentReceipt.intent.externalGateway === undefined;
           await startRuntimeTopology(
             runtime,
             previousLayout,
-            (keys) => writeVerifierKeys(previousLayout, keys),
+            (keys) => writeVerifierKeys(previousLayout, keys, preserveLoadedKeys),
             plan.restartServices,
           );
         }
@@ -958,6 +996,9 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
     throw new Error("Private ingress receipt source commit is invalid.");
   }
   const artifact = parseArtifactSummary(value.artifact);
+  if (value.runtimePinVersion !== undefined && value.runtimePinVersion !== 2) {
+    throw new Error("Installation receipt runtime pin version is unsupported.");
+  }
   const runtimeReleases =
     value.runtimeReleases === undefined
       ? undefined
@@ -983,6 +1024,7 @@ export function parseInstallationReceipt(value: unknown): InstallationReceiptV1 
     appliedAt: value.appliedAt,
     artifact,
     ...(runtimeReleases === undefined ? {} : { runtimeReleases }),
+    ...(value.runtimePinVersion === 2 ? { runtimePinVersion: 2 as const } : {}),
     intent,
     ...(isPrivateIngressInstallationIntent(intent)
       ? { privateIngressIntentDigest: value.privateIngressIntentDigest as string }
@@ -1002,6 +1044,7 @@ function configurationDigest(
   artifact: DistributionArtifactSummary,
   layout: WorkstationInstanceLayout,
   configuration: GeneratedInstanceConfiguration,
+  naruArtifact: DistributionArtifactSummary = artifact,
 ): DistributionConfigurationDigests {
   return {
     settings: digestJson({
@@ -1027,8 +1070,8 @@ function configurationDigest(
     gateway: digestJson(configuration.gateway),
     naruEnvironment: digestJson(configuration.naruEnvironment),
     webIdentity: digestJson({
-      buildId: artifact.buildId,
-      payloadDigest: artifact.payloadDigest,
+      buildId: naruArtifact.buildId,
+      payloadDigest: naruArtifact.payloadDigest,
       origin: intent.canonicalBrowserOrigin,
       appBasePath: layout.appBasePath,
     }),
@@ -1184,6 +1227,8 @@ function createActions(
   intent: WorkstationInstallationIntent,
   transition: OriginTransition,
   restartServices: readonly RuntimeServiceName[],
+  webReleaseRoot: string,
+  preserveWeb: boolean,
 ): readonly DistributionAction[] {
   return [
     {
@@ -1204,8 +1249,8 @@ function createActions(
     {
       id: "web.render",
       phase: "filesystem",
-      mutation: "package",
-      target: layout.webReleaseRoot,
+      mutation: preserveWeb ? "none" : "package",
+      target: webReleaseRoot,
       rollback: "preserve old/new browser state and restore the previous web release receipt",
     },
     {
@@ -1296,37 +1341,29 @@ function serviceStateMap(
 }
 
 function changedRuntimeServices(
-  operation: DistributionOperation,
   current: InstallationReceiptV1 | undefined,
   configurationDigests: DistributionConfigurationDigests,
   runtimeReleases: RuntimeReleaseSelection,
 ): readonly RuntimeServiceName[] {
-  if (current === undefined || operation === "rollback") return [...RUNTIME_SERVICE_NAMES];
-  if (operation === "upgrade") {
-    const previous = receiptRuntimeReleases(current);
-    if (previous.host.manifestDigest !== runtimeReleases.host.manifestDigest) {
-      return [...RUNTIME_SERVICE_NAMES];
-    }
-    if (previous.gateway.manifestDigest !== runtimeReleases.gateway.manifestDigest) {
-      return ["gateway", "naru"];
-    }
-    // Every upgrade renders a new immutable web release and changes NARU_WEB_DIST.
-    return ["naru"];
-  }
+  if (current === undefined) return [...RUNTIME_SERVICE_NAMES];
+  const previous = receiptRuntimeReleases(current);
   const services = new Set<RuntimeServiceName>();
   if (
+    previous.host.manifestDigest !== runtimeReleases.host.manifestDigest ||
     current.configurationDigests.host !== configurationDigests.host ||
     current.configurationDigests.launchAgents.host !== configurationDigests.launchAgents.host
   ) {
     services.add("host");
   }
   if (
+    previous.gateway.manifestDigest !== runtimeReleases.gateway.manifestDigest ||
     current.configurationDigests.gateway !== configurationDigests.gateway ||
     current.configurationDigests.launchAgents.gateway !== configurationDigests.launchAgents.gateway
   ) {
     services.add("gateway");
   }
   if (
+    previous.naru.manifestDigest !== runtimeReleases.naru.manifestDigest ||
     current.configurationDigests.naruEnvironment !== configurationDigests.naruEnvironment ||
     current.configurationDigests.webIdentity !== configurationDigests.webIdentity ||
     current.configurationDigests.launchAgents.naru !== configurationDigests.launchAgents.naru
@@ -1334,7 +1371,6 @@ function changedRuntimeServices(
     services.add("naru");
   }
   if (services.has("host")) return [...RUNTIME_SERVICE_NAMES];
-  if (services.has("gateway")) services.add("naru");
   return RUNTIME_SERVICE_NAMES.filter((service) => services.has(service));
 }
 
@@ -1358,6 +1394,7 @@ function selectRuntimeReleases(
   const previous = verifyReceiptRuntimeReleases(current, layout);
   const previousHost = verifyDistributionArtifact(previous.host.root);
   const previousGateway = verifyDistributionArtifact(previous.gateway.root);
+  const previousNaru = verifyDistributionArtifact(previous.naru.root);
   const hostChanged =
     stableJson(previous.host.features) !== stableJson(candidate.summary.features) ||
     artifactFilesChanged(previousHost.manifest, candidate.manifest, [
@@ -1378,10 +1415,16 @@ function selectRuntimeReleases(
     "runtime/node/",
     "components/gateway/",
   ]);
+  const naruChanged =
+    artifactFilesChanged(previousNaru.manifest, candidate.manifest, [
+      "runtime/node/",
+      "components/naru/",
+      "web-base/",
+    ]) || artifactHasUnclassifiedChanges(previousNaru.manifest, candidate.manifest);
   return {
     host: hostChanged ? candidate.summary : previous.host,
     gateway: hostChanged || gatewayChanged ? candidate.summary : previous.gateway,
-    naru: candidate.summary,
+    naru: hostChanged || naruChanged ? candidate.summary : previous.naru,
   };
 }
 
@@ -1495,18 +1538,45 @@ export function verifyReceiptRuntimeReleases(
   layout: WorkstationInstanceLayout,
 ): RuntimeReleaseSelection {
   const releases = receiptRuntimeReleases(receipt);
+  if (receipt.artifact.root !== join(layout.directories.releases, receipt.artifact.buildId)) {
+    throw new Error("Receipt deployment artifact escaped the managed immutable release directory.");
+  }
+  const deployment = verifyDistributionArtifact(receipt.artifact.root).summary;
+  assertApprovedArtifactIdentity(receipt.artifact, deployment);
+  const verifiedByRoot = new Map([[deployment.root, deployment]]);
   for (const service of RUNTIME_SERVICE_NAMES) {
     const pinned = releases[service];
     if (pinned.root !== join(layout.directories.releases, pinned.buildId)) {
       throw new Error("Runtime release pin escaped the managed immutable release directory.");
     }
-    const verified = verifyDistributionArtifact(pinned.root);
-    assertApprovedArtifactIdentity(pinned, verified.summary);
+    const verified =
+      verifiedByRoot.get(pinned.root) ?? verifyDistributionArtifact(pinned.root).summary;
+    verifiedByRoot.set(pinned.root, verified);
+    assertApprovedArtifactIdentity(pinned, verified);
   }
-  if (releases.naru.manifestDigest !== receipt.artifact.manifestDigest) {
+  if (
+    receipt.runtimePinVersion !== 2 &&
+    releases.naru.manifestDigest !== receipt.artifact.manifestDigest
+  ) {
     throw new Error("Naru runtime release pin does not match the ownership receipt artifact.");
   }
   return releases;
+}
+
+export function verifyReceiptWebRelease(
+  receipt: InstallationReceiptV1,
+): InstanceWebReleaseReceiptV1 {
+  const naru = receiptRuntimeReleases(receipt).naru;
+  const layout = createInstanceLayout(receipt.intent, naru);
+  const web = verifyInstanceWebRelease(layout.webReleaseRoot);
+  if (
+    web.buildId !== naru.buildId ||
+    web.basePayloadDigest !== naru.payloadDigest ||
+    stableJson(web) !== stableJson(receipt.webRelease)
+  ) {
+    throw new Error("Instance web release does not match the receipt Naru runtime pin.");
+  }
+  return web;
 }
 
 function writeGeneratedConfiguration(
@@ -1545,7 +1615,27 @@ function writeGeneratedConfiguration(
   }
 }
 
-function writeVerifierKeys(layout: WorkstationInstanceLayout, keys: GatewayVerifierKeySetV1): void {
+function writeVerifierKeys(
+  layout: WorkstationInstanceLayout,
+  keys: GatewayVerifierKeySetV1,
+  preserveLoadedKeys = false,
+): void {
+  if (preserveLoadedKeys) {
+    const previous = parseVerifierKeys(
+      readPrivateJson(layout.files.gatewayVerifierKeys, layout.uid),
+    );
+    const normalized = (value: GatewayVerifierKeySetV1) =>
+      stableJson({
+        ...value,
+        keys: [...value.keys].sort((left, right) => left.keyId.localeCompare(right.keyId)),
+      });
+    if (normalized(previous) !== normalized(keys)) {
+      throw new Error(
+        "Gateway verifier keys changed while Naru was retained; coordinated key rotation is required.",
+      );
+    }
+    return;
+  }
   atomicWritePrivateFile(layout.files.gatewayVerifierKeys, `${stableJson(keys)}\n`, layout.uid, {
     replace: true,
   });
@@ -1569,9 +1659,9 @@ function writeInstallationReceipt(
       ];
     }),
   ) as unknown as RuntimeReleaseSelection;
-  const mixedRuntime =
-    runtimeReleases.host.manifestDigest !== artifact.manifestDigest ||
-    runtimeReleases.gateway.manifestDigest !== artifact.manifestDigest;
+  const mixedRuntime = RUNTIME_SERVICE_NAMES.some(
+    (service) => runtimeReleases[service].manifestDigest !== artifact.manifestDigest,
+  );
   const receipt: InstallationReceiptV1 = {
     version: plan.targetIntent.version,
     taskId: distributionDocumentTaskId(plan.targetIntent),
@@ -1587,6 +1677,7 @@ function writeInstallationReceipt(
     ...(current === undefined ? {} : { supersedesReceiptId: current.receiptId }),
     appliedAt: now.toISOString(),
     artifact: installedArtifact,
+    runtimePinVersion: 2,
     ...(mixedRuntime ? { runtimeReleases } : {}),
     intent: {
       ...plan.targetIntent,

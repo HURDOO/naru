@@ -33,6 +33,12 @@ immutable release의 실행 설정과 launchd definition을 유지한다. Additi
 기존 installation은 세 서비스가 receipt의 단일 artifact를 사용한 것으로 해석한다. Doctor는
 혼합 pin의 각 artifact와 실제 설정 파일을 검증하며, 실패 복구는 영향을 받은 서비스만 되돌린다.
 
+WV0-D014/T73은 Naru pin도 독립적으로 유지한다. Gateway payload나 추가 앱 등록만 바뀌면
+Gateway만 재시작하고 Naru 환경·LaunchAgent·웹 release는 기존 pin에서 재생성/검증해 그대로 보존한다.
+Receipt `artifact`는 transaction/maintenance package이고 `runtimePinVersion: 2`의 component pin은
+그와 달라도 된다. Web 검증은 transaction package가 아니라 실제 Naru pin에 결합한다. Rollback은
+요청한 최신 CLI artifact를 worker로 사용하며 대상 receipt의 차이가 있는 서비스만 복원한다.
+
 Runtime 교체와 실패 복구는 같은 launchd label을 즉시 재사용하지 않는다. 중지 전에 관찰한 exact
 label의 PID가 종료되고 label이 해제된 두 조건을 bounded wait로 확인한 뒤 새 plist를 bootstrap한다.
 확인할 수 없거나 timeout이면 다음 bootstrap을 거부한다. Host·Gateway·Naru는 `RunAtLoad=true`이므로
