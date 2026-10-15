@@ -37,6 +37,7 @@
   - 격리 fixture와 실제 SDK·Claude TUI 인수 모두 PASS다.
   - 이 검증에서 Node realpath·socket stat 결함을 찾아 고쳤다. 운영에도 영향이 있을 수 있다.
 - AP-T13 Codex 어댑터: [validation/codex-adapter.md](validation/codex-adapter.md)
+- AP-T18 인수 A01~A16: [ACCEPTANCE.md](ACCEPTANCE.md). 사용자 절차는 [MANUAL_TESTS.md](MANUAL_TESTS.md)다.
 - AP-T17 웹 화면과 secure input UI: [validation/web-ui.md](validation/web-ui.md)
   - 격리 sandbox(가짜 runtime)에서 1440px, 768px, 360px, 키보드·focus를 확인했다.
   - secure input 값은 실제 shell 프롬프트에만 갔고, sandbox의 기록·로그 어디에도 없었다.

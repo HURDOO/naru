@@ -295,7 +295,12 @@
 
 ### AP-T18. 인수 테스트 A01~A16
 
-- [-] fake runtime 기반 자동 E2E, 실제 모델 인수, 사용자 Manual Test 절차.
+- [x] fake runtime 기반 자동 E2E, 실제 모델 인수, 사용자 Manual Test 절차.
+- 결과: [ACCEPTANCE.md](ACCEPTANCE.md)
+  - 14개 PASS, 2개 PARTIAL(A01 운영 instance 확인, A09 실제 SSH·ansible)
+  - 사용자 절차: [MANUAL_TESTS.md](MANUAL_TESTS.md)
+  - 실제 모델(Claude, 사용자 로그인): A02, A04, A08 PASS. A02·A08 run에서는 도구 승인 요청이 한 건도
+    없었다. Naru 도구는 묻지 않는다(AP-D017).
 - 진행(2026-10-15):
   - fake runtime 인수: `tests/spikes/agent-platform/acceptance-fake.ts`
     - 빌드한 Naru 서버(운영 진입점), 격리 Host, 실제 git 저장소로 실행한다.
