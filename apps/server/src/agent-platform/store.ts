@@ -695,6 +695,35 @@ export class AgentPlatformStore {
       .run(revokedAt, agentSessionId).changes;
   }
 
+  // Runtime launches -----------------------------------------------------------------------------
+
+  /** One live launch token per agent session; replacing it invalidates the previous runner. */
+  replaceRuntimeLaunch(agentSessionId: string, tokenDigest: string, createdAt: string): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_runtime_launches (agent_session_id, token_digest, created_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(agent_session_id) DO UPDATE SET token_digest = excluded.token_digest,
+           created_at = excluded.created_at`,
+      )
+      .run(agentSessionId, tokenDigest, createdAt);
+  }
+
+  findRuntimeLaunch(tokenDigest: string): string | null {
+    return (
+      (this.#database
+        .prepare("SELECT agent_session_id FROM agent_runtime_launches WHERE token_digest = ?")
+        .pluck()
+        .get(tokenDigest) as string | undefined) ?? null
+    );
+  }
+
+  deleteRuntimeLaunch(agentSessionId: string): void {
+    this.#database
+      .prepare("DELETE FROM agent_runtime_launches WHERE agent_session_id = ?")
+      .run(agentSessionId);
+  }
+
   // Events and idempotency -----------------------------------------------------------------------
 
   appendEvent(event: Omit<AgentEvent, "seq">): AgentEvent {

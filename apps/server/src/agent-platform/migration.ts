@@ -212,6 +212,12 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
       CREATE INDEX agent_native_messages_pending
         ON agent_native_messages(recipient_agent_session_id, status);
 
+      CREATE TABLE agent_runtime_launches (
+        agent_session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        token_digest TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE agent_commands (
         actor_key TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,

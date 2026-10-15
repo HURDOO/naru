@@ -916,6 +916,80 @@ export class AgentPlatformCore {
     return token;
   }
 
+  /**
+   * The runner's channel token (separate from the agent capability so the agent's own tools never
+   * hold it). Only its digest is stored, so a runner can re-authenticate after a Naru restart.
+   */
+  issueRuntimeLaunchToken(actor: Actor, agentSessionId: string): string {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Agents cannot launch runtimes.");
+    }
+    const token = randomBytes(32).toString("base64url");
+    this.#store.transaction(() => {
+      this.#requireAgentSession(agentSessionId);
+      this.#store.replaceRuntimeLaunch(agentSessionId, capabilityDigest(token), this.#timestamp());
+    });
+    return token;
+  }
+
+  authenticateRuntime(token: string): string | null {
+    if (!CAPABILITY_PATTERN.test(token)) return null;
+    return this.#store.findRuntimeLaunch(capabilityDigest(token));
+  }
+
+  endRuntimeLaunch(actor: Actor, agentSessionId: string): void {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Agents cannot end runtimes.");
+    }
+    this.#store.deleteRuntimeLaunch(agentSessionId);
+  }
+
+  /** Runtime-reported state (system actor): conversation identity and liveness, no content. */
+  updateAgentRuntimeState(
+    actor: Actor,
+    input: {
+      readonly agentSessionId: string;
+      readonly runtimeSessionRef?: string;
+      readonly status?: AgentSession["status"];
+    },
+  ): AgentSession {
+    if (actor.kind !== "system") {
+      throw new AgentPlatformError(
+        "AGENT_ROLE_DENIED",
+        "Only Naru's runtime supervisor reports state.",
+      );
+    }
+    const appended: AgentEvent[] = [];
+    const updated = this.#store.transaction(() => {
+      const session = this.#requireAgentSession(input.agentSessionId);
+      const next: AgentSession = {
+        ...session,
+        runtimeSessionRef: input.runtimeSessionRef ?? session.runtimeSessionRef,
+        status: input.status ?? session.status,
+        updatedAt: this.#timestamp(),
+      };
+      if (next.runtimeSessionRef === session.runtimeSessionRef && next.status === session.status) {
+        return session;
+      }
+      this.#store.updateAgentSession(next);
+      appended.push(
+        this.#store.appendEvent({
+          id: this.#newId(),
+          type: "agent_session.updated",
+          projectId: session.projectId,
+          actor,
+          subjectId: session.id,
+          correlationId: null,
+          data: { status: next.status, previousStatus: session.status },
+          createdAt: next.updatedAt,
+        }),
+      );
+      return next;
+    });
+    this.#emit(appended);
+    return updated;
+  }
+
   revokeAgentCapabilities(actor: Actor, agentSessionId: string): number {
     if (actor.kind === "agent") {
       throw new AgentPlatformError("AGENT_ROLE_DENIED", "Agents cannot revoke capabilities.");

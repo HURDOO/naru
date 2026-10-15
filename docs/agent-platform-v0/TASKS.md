@@ -143,8 +143,17 @@
       테스트 4개.
     - 실제 SDK 0.3.296과 CLI 2.1.296 인수(`tests/spikes/agent-platform/claude-runner-sdk.ts`)가 모두
       통과했다: Naru MCP 호출, tool·파일 승인, 생성 중 interrupt, 이력, 같은 대화 resume.
+    - runner 프로세스(`claude-agent-runner`)와 runtime 채널을 만들었다.
+      - 실행 token은 agent capability와 분리했고, DB에는 digest만 둔다.
+      - runner는 재접속하고, 미확인 이벤트를 bounded로 재전송한다.
+      - PTY에는 원문 없는 관찰 console만 출력한다.
+    - `ManagedAgentSupervisor`
+      - writer gate를 강제하고, Core 상태를 반영하고, 승인과 이력을 다루고, wakeup invoker 역할을 한다.
+      - 사람 hold는 Core에서 복원한다.
+    - 통합 테스트(실제 runner 프로세스와 fake SDK): Naru 재시작 중 끝난 turn의 결과 전달, 재시작 후 사람
+      writer 유지.
   - 남음:
-    - runner 프로세스와 Naru 채널, `AgentRuntimeAdapter` 연결(writer gate, wakeups)
+    - Naru 시작 경로와 browser API 연결(Chat 전송, interrupt, 승인, 이력, 개입)
     - Host PTY 실행 통합
     - TUI 전환(stop 후 resume)
 

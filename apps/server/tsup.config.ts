@@ -13,6 +13,7 @@ export default defineConfig({
     "src/codex-integration-launcher.ts",
     "src/agent-mcp-cli.ts",
     "src/agent-hook-cli.ts",
+    "src/claude-agent-runner.ts",
   ],
   format: ["esm"],
   platform: "node",
