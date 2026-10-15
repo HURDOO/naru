@@ -185,11 +185,19 @@ export class CodexIntegrationServer {
       }
       if (parsed.data.type === "launch") {
         const plan = this.integration.launch(parsed.data.bootstrap);
+        const environment =
+          plan.environment === undefined
+            ? undefined
+            : LaunchEnvironmentSchema.parse(plan.environment);
         return {
           version: 1,
           ok: true,
           type: "launch",
-          plan: { executable: plan.executable, args: [...plan.args] },
+          plan: {
+            executable: plan.executable,
+            args: [...plan.args],
+            ...(environment === undefined ? {} : { environment }),
+          },
         };
       }
       if (parsed.data.type === "interaction") {

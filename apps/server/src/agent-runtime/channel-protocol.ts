@@ -24,6 +24,8 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
     type: z.literal("user-prompt"),
     source: z.literal("tui"),
     text: z.string().max(64_000),
+    /** Lets Naru record a redelivered prompt once (idempotency key). */
+    promptId: z.string().uuid().optional(),
   }),
   z.strictObject({
     type: z.literal("approval-requested"),
@@ -59,7 +61,7 @@ export const RunnerMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("history"),
     requestId: Id,
     items: z.array(z.unknown()).max(200),
-    nextCursor: z.string().max(64).nullable(),
+    nextCursor: z.string().max(1_024).nullable(),
   }),
   z.strictObject({ type: z.literal("error"), requestId: Id.nullable(), code: z.string().max(80) }),
 ]);
@@ -80,10 +82,26 @@ export const RunnerPlanSchema = z.strictObject({
 });
 export type RunnerPlan = z.infer<typeof RunnerPlanSchema>;
 
+/**
+ * A managed Codex session's plan (AP-T13). The Codex relay in the Pane is its runner: it starts or
+ * resumes the conversation thread with Naru's MCP server and the role guidance, then attaches the
+ * real TUI to it.
+ */
+export const CodexRunnerPlanSchema = z.strictObject({
+  runtime: z.literal("codex"),
+  resumeRef: Id.nullable(),
+  model: z.string().min(1).max(200),
+  mcpServers: z.record(z.string().regex(/^[a-z_]{1,40}$/), z.unknown()),
+  instructions: z.string().max(64_000),
+});
+export type CodexRunnerPlan = z.infer<typeof CodexRunnerPlanSchema>;
+export type AnyRunnerPlan = RunnerPlan | CodexRunnerPlan;
+export const AnyRunnerPlanSchema = z.union([RunnerPlanSchema, CodexRunnerPlanSchema]);
+
 export const NaruMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("plan"),
-    plan: RunnerPlanSchema,
+    plan: AnyRunnerPlanSchema,
     ackedSeq: z.number().int().min(0),
   }),
   z.strictObject({ type: z.literal("ack"), seq: z.number().int().min(0) }),
@@ -97,10 +115,16 @@ export const NaruMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("history"),
     requestId: Id,
-    cursor: z.string().max(64).nullable(),
+    cursor: z.string().max(1_024).nullable(),
   }),
   z.strictObject({ type: z.literal("stop") }),
   z.strictObject({ type: z.literal("rejected"), code: z.string().max(80) }),
+  /** Live runtimes (Codex) gate their own TUI by Naru's current conversation writer. */
+  z.strictObject({
+    type: z.literal("writer"),
+    writer: z.enum(["orchestrator", "gui", "tui", "none"]),
+    generation: z.number().int().positive(),
+  }),
 ]);
 export type NaruMessage = z.infer<typeof NaruMessageSchema>;
 

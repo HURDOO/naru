@@ -37,7 +37,11 @@ export interface AgentToolRuntime {
   readonly agents?: {
     spawn(
       context: CommandContext,
-      input: { readonly projectId: string; readonly role: AgentSession["role"] },
+      input: {
+        readonly projectId: string;
+        readonly role: AgentSession["role"];
+        readonly runtime: "claude" | "codex";
+      },
     ): Promise<AgentSession>;
   };
 }
@@ -512,11 +516,16 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     z.strictObject({
       project_id: Id.optional(),
       role: z.enum(["project-orchestrator", "worker", "reviewer", "specialist"]),
+      runtime: z
+        .enum(["claude", "codex"])
+        .default("claude")
+        .describe("Which coding agent runs it; pick what the work and the user ask for."),
     }),
     (core, context, input, runtime) =>
       requireRuntime(runtime, "agents").spawn(context, {
         projectId: ownProject(core, context.actor, input.project_id),
         role: input.role,
+        runtime: input.runtime,
       }),
   ),
 ];

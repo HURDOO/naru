@@ -35,6 +35,7 @@ async function launch(): Promise<void> {
   };
   delete environment[DURABLE_SESSION_INTEGRATION_BOOTSTRAP_ENV];
 
+  const managed = reply.plan.environment;
   const exitCode = await runCodexInteractionRelay({
     executable: reply.plan.executable,
     args: reply.plan.args,
@@ -42,6 +43,10 @@ async function launch(): Promise<void> {
     bootstrap,
     integrationSocketPath: socketPath,
     cwd: process.cwd(),
+    // The runner channel token stays in the relay; Codex and its tools never see it.
+    ...(managed === undefined
+      ? {}
+      : { managed: { socketPath: managed.NARU_RUNTIME_SOCKET, token: managed.NARU_RUNTIME_TOKEN } }),
   });
   process.exitCode = exitCode;
 }

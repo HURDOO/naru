@@ -513,13 +513,13 @@ export const CreateManagedAgentRequestSchema = z.union([
   z.strictObject({
     projectId: Id,
     role: z.enum(["project-orchestrator", "worker", "reviewer", "specialist"]),
-    runtime: z.literal("claude"),
+    runtime: z.enum(["claude", "codex"]),
     idempotencyKey: IdempotencyKeySchema,
   }),
   z.strictObject({
     role: z.literal("main-orchestrator"),
     hostProjectId: Id,
-    runtime: z.literal("claude"),
+    runtime: z.enum(["claude", "codex"]),
     idempotencyKey: IdempotencyKeySchema,
   }),
 ]);
@@ -565,12 +565,12 @@ export const AgentApprovalResponseRequestSchema = z.strictObject({
   generation: WriterGeneration,
 });
 export const AgentHistoryQuerySchema = z.strictObject({
-  cursor: z.string().min(1).max(64).optional(),
+  cursor: z.string().min(1).max(1_024).optional(),
 });
 /** Re-read from the runtime's own history API; Naru does not store transcripts (AP-D002). */
 export const AgentHistoryPageSchema = z.strictObject({
   items: z.array(z.unknown()).max(200),
-  nextCursor: z.string().max(64).nullable(),
+  nextCursor: z.string().max(1_024).nullable(),
 });
 
 export const AgentEventsQuerySchema = z.strictObject({

@@ -259,7 +259,7 @@ export function registerAgentPlatformRoutes(
     const { id } = IdParamsSchema.parse(request.params);
     EmptyBodySchema.parse(request.body);
     const agent = core.getAgentSession(HUMAN, id);
-    if (agent.runtime !== "claude" || agent.native) {
+    if ((agent.runtime !== "claude" && agent.runtime !== "codex") || agent.native) {
       throw new AgentPlatformError("AGENT_RUNTIME_UNAVAILABLE", "This agent has no Naru runtime.");
     }
     await runtimeCall(() => runtime.launch(id));
@@ -336,7 +336,11 @@ export function registerAgentPlatformRoutes(
 
 /** Launched by Naru in a Pane; other sessions only carry the Core hold. */
 function isManaged(agent: AgentSession): boolean {
-  return agent.runtime === "claude" && !agent.native && agent.paneId !== null;
+  return (
+    (agent.runtime === "claude" || agent.runtime === "codex") &&
+    !agent.native &&
+    agent.paneId !== null
+  );
 }
 
 /** Runtime refusals become the agent error contract the browser already understands. */

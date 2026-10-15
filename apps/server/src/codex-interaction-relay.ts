@@ -12,6 +12,8 @@ import {
 import { CodexInteractionGuardian } from "./codex-interaction-guardian.js";
 import { CodexInteractionState } from "./codex-interaction-state.js";
 import { requestCodexIntegration } from "./integrations/codex/client.js";
+import { CodexAppServerClient } from "./agent-runtime/codex/app-server-client.js";
+import { CodexManagedSession } from "./agent-runtime/codex/managed-session.js";
 import type { CodexInteractionSnapshot } from "./integrations/codex/events.js";
 
 const SOCKET_LIMIT_BYTES = 100;
@@ -34,6 +36,11 @@ export interface CodexInteractionRelayOptions {
   /** Internal harness entry; production uses this bundled launcher. */
   readonly guardianEntry?: string;
   readonly guardianExecArgv?: readonly string[];
+  /**
+   * A Naru-managed Codex agent (AP-T13): the relay reaches Naru over the private runtime channel,
+   * owns the conversation thread and fences the TUI by Naru's writer. Absent for user Panes.
+   */
+  readonly managed?: { readonly socketPath: string; readonly token: string };
 }
 
 /** Host-owned PTY wrapper. Only metadata snapshots leave this process. */
@@ -60,6 +67,7 @@ export async function runCodexInteractionRelay(
   let fatal: (() => void) | null = null;
   let endpoint: CodexAppServerEndpoint | null = null;
   let failureCode = "NARU_CODEX_RELAY_FAILED";
+  let managed: CodexManagedSession | null = null;
   let reportedFailure = false;
   const reportFailure = (): void => {
     if (reportedFailure) return;
@@ -125,6 +133,16 @@ export async function runCodexInteractionRelay(
         throw new Error("Relay destination is closed.");
       const encoded = rawDataBuffer(data).toString("utf8");
       const parsed: unknown = JSON.parse(encoded);
+      if (fromClient && managed !== null) {
+        // INV-05: in a managed session only the current writer changes the conversation.
+        const decision = managed.filterClientFrame(parsed as Record<string, unknown>);
+        if (!decision.forward) {
+          if (decision.reply !== null && source.readyState === WebSocket.OPEN) {
+            source.send(JSON.stringify(decision.reply));
+          }
+          return;
+        }
+      }
       if (fromClient) state.observeClient(parsed, channel);
       else state.observeServer(parsed, channel);
       if (destination.bufferedAmount + Buffer.byteLength(encoded) > MAX_BUFFERED_BYTES) {
@@ -297,6 +315,33 @@ export async function runCodexInteractionRelay(
     );
     endpoint = await waitForSocket(appSocket, () => stopped);
     if (stopped) throw new Error("Codex app server stopped.");
+    let tuiArgs = remoteTuiArguments(options.args);
+    if (options.managed !== undefined) {
+      const appEndpoint = endpoint;
+      const session = new CodexManagedSession({
+        socketPath: options.managed.socketPath,
+        token: options.managed.token,
+        connect: () => CodexAppServerClient.connect(appEndpoint),
+        onStop: onSigterm,
+        console: (line) =>
+          process.stdout.write(`[naru ${new Date().toISOString().slice(11, 19)}] ${line}\r\n`),
+      });
+      managed = session;
+      process.stdout.write("[naru] waiting for Naru to start this agent's conversation\r\n");
+      const threadId = await Promise.race([
+        session.start(),
+        new Promise<null>((resolve) => {
+          const check = setInterval(() => {
+            if (!stopped) return;
+            clearInterval(check);
+            resolve(null);
+          }, 100);
+        }),
+      ]);
+      if (threadId === null) return 0;
+      // The TUI joins the conversation Naru started; it never starts another one by itself.
+      tuiArgs = [...withoutResume(tuiArgs), "resume", threadId];
+    }
     state.start();
     retryTimer = setInterval(() => {
       if (inFlight) sendAgain = true;
@@ -305,12 +350,17 @@ export async function runCodexInteractionRelay(
     await guardian.start(
       "tui",
       options.executable,
-      ["--remote", url(relaySocket), ...remoteTuiArguments(options.args)],
+      ["--remote", url(relaySocket), ...tuiArgs],
       options.cwd,
       childEnvironment,
     );
-    return await tuiExit;
+    const exitCode = await tuiExit;
+    await managed?.finish(exitCode === 0 ? "stopped" : "crashed");
+    managed = null;
+    return exitCode;
   } catch (error) {
+    await managed?.finish("crashed");
+    managed = null;
     if (error instanceof CodexEndpointError) failureCode = error.message;
     else if (error instanceof Error && error.message === "NARU_CODEX_APP_SERVER_TIMEOUT")
       failureCode = error.message;
@@ -348,6 +398,12 @@ export function appServerArguments(args: readonly string[], appServerUrl: string
     }
   }
   return [...overrides, "app-server", "--listen", appServerUrl];
+}
+
+/** A managed TUI resumes Naru's thread; drop any resume the profile arguments carried. */
+function withoutResume(args: readonly string[]): string[] {
+  const index = args.indexOf("resume");
+  return index === -1 ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
 }
 
 /** The remote TUI cannot carry permission overrides through /resume. */

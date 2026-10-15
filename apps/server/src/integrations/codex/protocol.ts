@@ -48,6 +48,7 @@ export const LaunchEnvironmentSchema = z.strictObject({
   NARU_RUNTIME_SOCKET: z.string().min(1).max(4_096),
   NARU_RUNTIME_TOKEN: z.string().min(32).max(128),
 });
+/** Additive: older launchers ignore `environment`; only managed agent Panes get it. */
 const ClaudeLaunchPlanSchema = LaunchPlanSchema.extend({
   environment: LaunchEnvironmentSchema.optional(),
 });
@@ -57,7 +58,7 @@ export const CodexIntegrationReplySchema = z.union([
     version: z.literal(1),
     ok: z.literal(true),
     type: z.literal("launch"),
-    plan: LaunchPlanSchema,
+    plan: ClaudeLaunchPlanSchema,
   }),
   z.strictObject({
     version: z.literal(1),

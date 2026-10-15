@@ -29,7 +29,12 @@ export type AgentRuntimeEvent =
       readonly outcome: "completed" | "interrupted" | "failed";
     }
   /** A prompt a person submitted directly in the TUI (AP-D002-2); text is recorded by the core. */
-  | { readonly type: "user-prompt"; readonly source: "tui"; readonly text: string }
+  | {
+      readonly type: "user-prompt";
+      readonly source: "tui";
+      readonly text: string;
+      readonly promptId?: string;
+    }
   | {
       readonly type: "approval-requested";
       readonly requestId: string;

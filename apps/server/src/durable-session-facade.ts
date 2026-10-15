@@ -18,7 +18,7 @@ import type { NaruRepository, PaneSessionLink, PaneSessionOperation } from "./da
 import { AppError } from "./errors.js";
 import type { NaruCodexIntegrationPort } from "./integrations/codex/port.js";
 import type { NaruClaudeIntegrationPort } from "./integrations/claude/port.js";
-import { CLAUDE_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
+import { CLAUDE_AGENT_LAUNCH_PROFILE, CODEX_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
 import type {
   NaruSessionFacade,
   SessionActivityListener,
@@ -1042,11 +1042,14 @@ function requireOperationKey(link: PaneSessionLink, operation: PaneSessionOperat
 }
 
 /**
- * A managed Claude agent Pane runs under the Host's `claude-code` profile and integration policy;
- * Naru decides what the launcher starts (runner or TUI), so Host configuration is unchanged.
+ * Managed agent Panes run under the Host's existing profiles and integration policies (Claude under
+ * `claude-code`, Codex under `codex-main`); Naru decides what the launcher starts, so Host
+ * configuration is unchanged.
  */
 function hostProfileId(launchProfile: string): string {
-  return launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE ? "claude-code" : launchProfile;
+  if (launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE) return "claude-code";
+  if (launchProfile === CODEX_AGENT_LAUNCH_PROFILE) return "codex-main";
+  return launchProfile;
 }
 
 function requireSessionId(link: PaneSessionLink): string {

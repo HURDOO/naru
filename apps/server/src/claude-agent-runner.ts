@@ -49,6 +49,11 @@ const channel = new RunnerChannelClient({
 async function handle(message: NaruMessage): Promise<void> {
   switch (message.type) {
     case "plan":
+      if ("runtime" in message.plan) {
+        console_("plan for another runtime");
+        await shutdown(1);
+        return;
+      }
       if (runner === null && !starting) await start(message.plan);
       return;
     case "send":
@@ -84,6 +89,8 @@ async function handle(message: NaruMessage): Promise<void> {
       await shutdown(message.type === "stop" ? 0 : 1);
       return;
     case "ack":
+    case "writer":
+      // Naru gates Claude's writers itself (stop-resume); the runner has no TUI to fence.
       return;
   }
 }

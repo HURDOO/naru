@@ -8,7 +8,7 @@ import { z } from "zod";
 import { readPrivateCredentialFile } from "@naru/durable-session-client/node";
 import type { NaruRepository, PaneActivityChange, PaneContext } from "../../database.js";
 import type { DurableHostConfig } from "../../durable-session-host-client.js";
-import type { PaneLaunchResolver } from "../../launch-profiles.js";
+import { CODEX_AGENT_LAUNCH_PROFILE, type PaneLaunchResolver } from "../../launch-profiles.js";
 import type {
   CodexHookEvent,
   CodexIntegrationEventV1,
@@ -45,6 +45,8 @@ interface CodexRuntimeState extends VerifiedCodexRuntime {
 export interface CodexLaunchPlan {
   readonly executable: string;
   readonly args: readonly string[];
+  /** Managed Codex agents only: the relay's private runtime channel (never Codex's own env). */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 export interface NaruCodexIntegrationPort {
@@ -122,7 +124,13 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
           ? "semantic-resume"
           : "new",
     });
-    return { executable: command.file, args: [...command.args] };
+    return {
+      executable: command.file,
+      args: [...command.args],
+      ...(command.launcherEnvironment === undefined
+        ? {}
+        : { environment: { ...command.launcherEnvironment } }),
+    };
   }
 
   acceptHook(bootstrap: string, event: CodexHookEvent): boolean {
@@ -438,5 +446,7 @@ export class NaruCodexIntegration implements NaruCodexIntegrationPort {
 
 function requireCodexProfile(profileId: string): "codex-main" | "codex-quick" {
   if (profileId === "codex-main" || profileId === "codex-quick") return profileId;
+  // A Naru-managed Codex agent runs under the Host's codex-main profile (AP-T13).
+  if (profileId === CODEX_AGENT_LAUNCH_PROFILE) return "codex-main";
   throw new Error("Codex integration profile is unavailable.");
 }

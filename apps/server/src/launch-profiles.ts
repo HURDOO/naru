@@ -38,6 +38,8 @@ const CODEX_PROFILES: Readonly<Record<CodexLaunchProfile, CodexProfileDefinition
 
 /** Pane profile of a Naru-managed Claude agent (AP-T14). Not creatable through the Pane API. */
 export const CLAUDE_AGENT_LAUNCH_PROFILE = "claude-agent";
+/** Pane profile of a Naru-managed Codex agent (AP-T13). Not creatable through the Pane API. */
+export const CODEX_AGENT_LAUNCH_PROFILE = "codex-agent";
 
 export interface PaneLaunchCommand {
   readonly file: string;
@@ -54,6 +56,19 @@ export interface PaneLaunchResolver {
   resolve(context: PaneContext): PaneLaunchCommand;
   /** Checks that a launch could succeed without issuing anything single-use. */
   preflight?(context: PaneContext): void;
+}
+
+/** Resolves `codex-agent` Panes; owned by the managed agent runtime (AP-T13). */
+export interface CodexAgentPaneLaunchResolver {
+  preflight(context: PaneContext): void;
+  resolve(
+    context: PaneContext,
+    base: {
+      readonly codexExecutable: string;
+      readonly environment: Record<string, string>;
+      readonly profileArgs: readonly string[];
+    },
+  ): PaneLaunchCommand;
 }
 
 /** Resolves `claude-agent` Panes; owned by the managed agent runtime. */
@@ -87,6 +102,7 @@ export interface LaunchProfileRegistryOptions {
   readonly commandRunner?: CommandRunner;
   readonly now?: () => number;
   readonly agentPanes?: AgentPaneLaunchResolver;
+  readonly codexAgentPanes?: CodexAgentPaneLaunchResolver;
 }
 
 export class LaunchProfileRegistry implements PaneLaunchResolver {
@@ -98,6 +114,7 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
   readonly #commandRunner: CommandRunner;
   readonly #now: () => number;
   readonly #agentPanes: AgentPaneLaunchResolver | undefined;
+  readonly #codexAgentPanes: CodexAgentPaneLaunchResolver | undefined;
   #codexCheckedAt = 0;
 
   constructor(options: LaunchProfileRegistryOptions = {}) {
@@ -109,12 +126,19 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
     this.#commandRunner = options.commandRunner ?? runCommand;
     this.#now = options.now ?? Date.now;
     this.#agentPanes = options.agentPanes;
+    this.#codexAgentPanes = options.codexAgentPanes;
   }
 
   preflight(context: PaneContext): void {
     if (context.pane.kind === "claude" && context.pane.launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE) {
       this.#requireAgentPanes().preflight(context);
       this.#authenticatedClaude(context, childEnvironment(this.#environment));
+      return;
+    }
+    if (context.pane.kind === "codex" && context.pane.launchProfile === CODEX_AGENT_LAUNCH_PROFILE) {
+      this.#requireCodexAgentPanes().preflight(context);
+      const executable = resolveCodexExecutable(this.#codexExecutable, this.#environment);
+      this.#ensureCodexAvailable(executable, context.projectPath, childEnvironment(this.#environment));
       return;
     }
     this.resolve(context);
@@ -151,6 +175,16 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
     if (context.pane.kind !== "codex") {
       throw new AppError("REQUEST_INVALID", 400, "읽기 전용 Pane은 프로세스를 실행하지 않습니다.");
     }
+    if (context.pane.launchProfile === CODEX_AGENT_LAUNCH_PROFILE) {
+      const codexAgentPanes = this.#requireCodexAgentPanes();
+      const codexExecutable = resolveCodexExecutable(this.#codexExecutable, this.#environment);
+      this.#ensureCodexAvailable(codexExecutable, context.projectPath, environment);
+      return codexAgentPanes.resolve(context, {
+        codexExecutable,
+        environment,
+        profileArgs: codexArguments(CODEX_PROFILES["codex-main"], null, this.#codexSessionHookCommand),
+      });
+    }
 
     const profile = codexProfile(context.pane.launchProfile);
     const executable = resolveCodexExecutable(this.#codexExecutable, this.#environment);
@@ -180,6 +214,17 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
       );
     }
     return executable;
+  }
+
+  #requireCodexAgentPanes(): CodexAgentPaneLaunchResolver {
+    if (this.#codexAgentPanes === undefined) {
+      throw new AppError(
+        "AGENT_RUNTIME_UNAVAILABLE",
+        503,
+        "관리형 Codex 에이전트 실행 환경이 설정되지 않았습니다.",
+      );
+    }
+    return this.#codexAgentPanes;
   }
 
   #requireAgentPanes(): AgentPaneLaunchResolver {

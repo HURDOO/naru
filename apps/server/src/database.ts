@@ -41,7 +41,7 @@ import { AppError } from "./errors.js";
 import { createPreMigrationBackupIfNeeded } from "./database-backup.js";
 import { AGENT_PLATFORM_MIGRATION } from "./agent-platform/migration.js";
 import { AgentPlatformStore } from "./agent-platform/store.js";
-import { CLAUDE_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
+import { CLAUDE_AGENT_LAUNCH_PROFILE, CODEX_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
 
 interface ProjectRow {
   id: string;
@@ -1497,11 +1497,12 @@ export class NaruRepository {
         if (projectId === undefined || this.getProject(projectId) === undefined) {
           throw new AppError("AGENT_INVALID_STATE", 409, "에이전트를 둘 프로젝트가 필요합니다.");
         }
+        const codex = agent.runtime === "codex";
         return this.#insertCollapsedPane(
           projectId,
-          "claude",
+          codex ? "codex" : "claude",
           title,
-          CLAUDE_AGENT_LAUNCH_PROFILE,
+          codex ? CODEX_AGENT_LAUNCH_PROFILE : CLAUDE_AGENT_LAUNCH_PROFILE,
           (paneId, now) => this.agentPlatform.bindAgentPane(agentSessionId, paneId, now),
         );
       })

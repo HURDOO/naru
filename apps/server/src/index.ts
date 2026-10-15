@@ -22,6 +22,8 @@ import { AgentPlatformCore } from "./agent-platform/core.js";
 import { AgentSocketServer } from "./agent-platform/agent-socket.js";
 import { OrchestratorWakeups } from "./agent-platform/wakeups.js";
 import { ClaudeAgentPanes } from "./agent-runtime/claude/agent-panes.js";
+import { CodexAgentPanes } from "./agent-runtime/codex/agent-panes.js";
+import { RuntimeLaunchers } from "./agent-runtime/agent-launchers.js";
 import {
   RuntimeChannelServer,
   runtimeChannelSocketPath,
@@ -76,6 +78,26 @@ const agentPanes =
         },
       })
     : undefined;
+// Managed Codex agents reuse the Codex Pane relay (AP-T13); the CLI is checked at launch.
+const codexAgentPanes =
+  agentPlatform !== undefined &&
+  agentSocket !== undefined &&
+  sessionRuntime.owner === "durable-host"
+    ? new CodexAgentPanes({
+        config: {
+          node: agentProcessEntries(config.environment === "production").node,
+          entries: { mcp: agentProcessEntries(config.environment === "production").entries.mcp },
+          agentSocketPath: agentSocket.socketPath,
+        },
+        core: agentPlatform,
+        repository,
+        sessions: () => supervisor,
+        runnerEnvironment: (agentSessionId) => {
+          if (managedAgents === undefined) throw new Error("Managed agents are not running.");
+          return managedAgents.runnerEnvironment(agentSessionId);
+        },
+      })
+    : undefined;
 if (sessionRuntime.owner === "durable-host") {
   const launchProfiles = new LaunchProfileRegistry({
     ...(config.codexExecutable === undefined ? {} : { codexExecutable: config.codexExecutable }),
@@ -83,6 +105,7 @@ if (sessionRuntime.owner === "durable-host") {
     codexSessionHookCommand: CODEX_SESSION_HOOK_COMMAND,
     claudeActivityHookCommand: CLAUDE_ACTIVITY_HOOK_COMMAND,
     ...(agentPanes === undefined ? {} : { agentPanes }),
+    ...(codexAgentPanes === undefined ? {} : { codexAgentPanes }),
   });
   const codexIntegration = new NaruCodexIntegration(repository, sessionRuntime, launchProfiles);
   const claudeIntegration =
@@ -141,12 +164,16 @@ if (sessionRuntime.owner === "durable-host") {
 }
 let runtimeChannel: RuntimeChannelServer | undefined;
 let wakeups: OrchestratorWakeups | undefined;
-if (agentPlatform !== undefined && agentPanes !== undefined) {
+if (agentPlatform !== undefined && (agentPanes !== undefined || codexAgentPanes !== undefined)) {
+  const launchers = new RuntimeLaunchers(agentPlatform, {
+    ...(agentPanes === undefined ? {} : { claude: agentPanes }),
+    ...(codexAgentPanes === undefined ? {} : { codex: codexAgentPanes }),
+  });
   managedAgents = new ManagedAgentSupervisor({
     core: agentPlatform,
-    launcher: agentPanes,
+    launcher: launchers,
     channelSocketPath: runtimeChannelSocketPath(config.dataDir),
-    planFor: (agent) => agentPanes.plan(agent),
+    planFor: (agent) => launchers.plan(agent),
   });
   runtimeChannel = new RuntimeChannelServer(config.dataDir, managedAgents);
   wakeups = new OrchestratorWakeups(agentPlatform, managedAgents);

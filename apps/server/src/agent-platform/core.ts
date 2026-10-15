@@ -908,13 +908,17 @@ export class AgentPlatformCore {
    */
   spawnAgentSession(
     context: CommandContext,
-    input: { readonly projectId: string; readonly role: AgentRole },
+    input: {
+      readonly projectId: string;
+      readonly role: AgentRole;
+      readonly runtime?: "claude" | "codex";
+    },
   ): AgentSession {
     const agent = this.#authorize(context.actor, "agent.spawn", input.projectId);
     return this.registerAgentSession(context, {
       projectId: input.projectId,
       role: input.role,
-      runtime: "claude",
+      runtime: input.runtime ?? "claude",
       native: false,
       observation: "transcript",
       conversationWriter: "orchestrator",

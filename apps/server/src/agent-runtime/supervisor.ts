@@ -14,8 +14,8 @@ import type { HistoryPage } from "./adapter.js";
 import {
   NARU_RUNTIME_SOCKET_ENV,
   NARU_RUNTIME_TOKEN_ENV,
+  type AnyRunnerPlan,
   type RunnerMessage,
-  type RunnerPlan,
 } from "./channel-protocol.js";
 import type { RunnerConnection, RuntimeChannelHandlers } from "./runtime-channel-server.js";
 import {
@@ -93,7 +93,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   readonly #core: AgentPlatformCore;
   readonly #launcher: RunnerLauncher;
   readonly #channelSocketPath: string;
-  readonly #planFor: (agent: AgentSession) => RunnerPlan;
+  readonly #planFor: (agent: AgentSession) => AnyRunnerPlan;
   readonly #runtimes = new Map<string, ManagedRuntime>();
   #wakeups: OrchestratorWakeups | null = null;
 
@@ -103,7 +103,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     /** Where runners reach Naru (`RuntimeChannelServer.socketPath`). */
     readonly channelSocketPath: string;
     /** Built when a fresh runner asks for it, so it always resumes the recorded conversation. */
-    readonly planFor: (agent: AgentSession) => RunnerPlan;
+    readonly planFor: (agent: AgentSession) => AnyRunnerPlan;
   }) {
     this.#core = options.core;
     this.#launcher = options.launcher;
@@ -118,7 +118,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   /** An agent's `spawn_agent` (or a person): record the session, then start it once. */
   async spawn(
     context: CommandContext,
-    input: { readonly projectId: string; readonly role: AgentSession["role"] },
+    input: {
+      readonly projectId: string;
+      readonly role: AgentSession["role"];
+      readonly runtime?: "claude" | "codex";
+    },
   ): Promise<AgentSession> {
     const replayed = this.#core.commandRecorded(context.actor, context.idempotencyKey);
     const agent = this.#core.spawnAgentSession(context, input);
@@ -292,7 +296,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       runtime.approvals.clear();
       runtime.children.clear();
       runtime.gate = { ...runtime.gate, turnActive: false };
-      let plan: RunnerPlan;
+      let plan: AnyRunnerPlan;
       try {
         plan = this.#planFor(this.#core.getAgentSession(SYSTEM, connection.agentSessionId));
       } catch {
@@ -300,6 +304,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         return;
       }
       connection.send({ type: "plan", plan, ackedSeq: runtime.lastSeq });
+      this.#announceWriter(runtime);
       return;
     }
     // Reattached after a Naru restart: adopt the runner's live state.
@@ -308,6 +313,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     }
     if (hello.busy) runtime.gate = { ...runtime.gate, turnActive: true };
     connection.send({ type: "ack", seq: runtime.lastSeq });
+    // A live runtime (Codex) fences its own TUI by the writer Naru remembers.
+    this.#announceWriter(runtime);
     this.#trackOrchestrator(connection.agentSessionId);
     this.#core.updateAgentRuntimeState(SYSTEM, {
       agentSessionId: connection.agentSessionId,
@@ -429,6 +436,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         runtime.children.delete(event.childRef);
         return;
       case "user-prompt":
+        // A person typed into the runtime's own TUI: their instruction, recorded verbatim (AP-D002).
+        this.#core.recordTuiPrompt(
+          { actor: SYSTEM, idempotencyKey: event.promptId ?? randomUUID() },
+          { agentSessionId, verbatim: event.text },
+        );
         return;
     }
   }
@@ -457,6 +469,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         void this.#startBackend(agentSessionId, runtime, effect.writer);
         return;
       case "writer-changed":
+        this.#announceWriter(runtime);
         this.#core.updateAgentRuntimeState(SYSTEM, {
           agentSessionId,
           conversationWriter: effect.writer,
@@ -544,7 +557,11 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         lastSeq: 0,
         // The gate lives in memory; the form and human hold persisted in Core survive Naru
         // restarts (AP-D005). Claude's runner and TUI are separate processes (AP-D011).
-        gate: initialWriterGate("stop-resume", this.#initialWriter(agentSessionId), runtimeSessionRef),
+        gate: initialWriterGate(
+          this.#strategy(agentSessionId),
+          this.#initialWriter(agentSessionId),
+          runtimeSessionRef,
+        ),
         approvals: new Map(),
         children: new Map(),
         history: new Map(),
@@ -557,11 +574,30 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     return runtime;
   }
 
+  #announceWriter(runtime: ManagedRuntime): void {
+    runtime.connection?.send({
+      type: "writer",
+      writer: runtime.gate.writer,
+      generation: runtime.gate.generation,
+    });
+  }
+
   /** Orchestrators are woken by Naru events once their conversation is reachable (AP-T16). */
   #trackOrchestrator(agentSessionId: string): void {
     const role = this.#core.getAgentSession(SYSTEM, agentSessionId).role;
     if (role === "main-orchestrator" || role === "project-orchestrator") {
       this.#wakeups?.register(agentSessionId);
+    }
+  }
+
+  /** Codex shares one thread between Chat and the TUI (live); Claude's forms are separate processes. */
+  #strategy(agentSessionId: string): "live" | "stop-resume" {
+    try {
+      return this.#core.getAgentSession(SYSTEM, agentSessionId).runtime === "codex"
+        ? "live"
+        : "stop-resume";
+    } catch {
+      return "stop-resume";
     }
   }
 
@@ -588,7 +624,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     } catch {
       agent = null;
     }
-    if (agent?.runtime !== "claude" || agent.paneId === null) {
+    if ((agent?.runtime !== "claude" && agent?.runtime !== "codex") || agent.paneId === null) {
       throw new SupervisorError("RUNTIME_NOT_CONNECTED", "No runtime is managed for this agent.");
     }
     return this.#runtime(agentSessionId, agent.runtimeSessionRef);
