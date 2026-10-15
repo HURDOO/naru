@@ -126,7 +126,9 @@
 
 ### AP-T13. Codex 어댑터
 
-- [ ] app-server 기반 Chat channel, GUI↔TUI 전환(V01, V02 결과 방식), native child 추적.
+- [-] app-server 기반 Chat channel, GUI↔TUI 전환(V01, V02 결과 방식), native child 추적.
+- 2026-10-15: 사용자가 실행하는 Sol/Astra worker에게 배정했다. branch `feature/ap-t13-codex-adapter`, 과제
+  `assignments/codex-adapter/ASSIGNMENT.md`.
 
 ### AP-T14. Claude 어댑터
 
