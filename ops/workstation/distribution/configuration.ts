@@ -330,6 +330,12 @@ export function createInstanceConfiguration(
     NARU_DEFAULT_AGENT_PANE_KIND: intent.defaultAgentPaneKind ?? "codex",
     NARU_CODEX_PATH: intent.codexExecutable,
     ...(intent.claudeExecutable === undefined ? {} : { NARU_CLAUDE_PATH: intent.claudeExecutable }),
+    ...(intent.agentPlatform === undefined
+      ? {}
+      : {
+          NARU_AGENT_PLATFORM: "1",
+          NARU_CLAUDE_AGENT_SDK_PATH: intent.agentPlatform.claudeAgentSdkPath,
+        }),
     NARU_GATEWAY_INSTANCE_ID: intent.externalGateway?.instanceId ?? layout.namespace,
     NARU_GATEWAY_APP_ID: intent.externalGateway?.appId ?? layout.gatewayAppId,
     NARU_GATEWAY_OWNER_SUBJECT: intent.externalGateway?.ownerSubject ?? layout.ownerSubject,

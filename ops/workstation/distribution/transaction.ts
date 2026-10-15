@@ -63,6 +63,7 @@ import {
   assertNoSymlinkComponents,
   assertPrivateFile,
   ensureInstanceDirectories,
+  inspectClaudeAgentSdk,
   inspectManagedInstancePaths,
   inspectNativeRuntime,
   inspectTargetEnvironment,
@@ -374,6 +375,27 @@ export async function planDistribution(
         actual: safeError(error),
         owner: "user",
         remediation: "Bind the exact existing Gateway verifier file and create a new plan.",
+      });
+    }
+  }
+  if (targetIntent.agentPlatform !== undefined) {
+    try {
+      inspectClaudeAgentSdk(targetIntent.agentPlatform.claudeAgentSdkPath, layout.uid);
+      checks.push({
+        id: "agent-platform.claude-sdk",
+        status: "ok",
+        expected: "user-installed Claude Agent SDK entry, a regular file only its owner can change",
+        actual: "verified",
+        owner: "user",
+      });
+    } catch (error) {
+      checks.push({
+        id: "agent-platform.claude-sdk",
+        status: "blocked",
+        expected: "user-installed Claude Agent SDK entry, a regular file only its owner can change",
+        actual: safeError(error),
+        owner: "user",
+        remediation: "Install the Claude Agent SDK and bind its canonical sdk.mjs path.",
       });
     }
   }
@@ -1054,6 +1076,7 @@ function configurationDigest(
       additionalGatewayApps: intent.additionalGatewayApps ?? [],
       externalGateway: intent.externalGateway ?? null,
       defaultAgentPaneKind: intent.defaultAgentPaneKind ?? "codex",
+      ...(intent.agentPlatform === undefined ? {} : { agentPlatform: intent.agentPlatform }),
       allowedProjectRoots: intent.allowedProjectRoots,
       exactProjectRoots: intent.exactProjectRoots ?? [],
       nodeExecutable: layout.runtime.nodeExecutable,
@@ -1191,6 +1214,7 @@ function nonRuntimeSettings(intent: WorkstationInstallationIntent): unknown {
     additionalGatewayApps: intent.additionalGatewayApps ?? [],
     externalGateway: intent.externalGateway ?? null,
     defaultAgentPaneKind: intent.defaultAgentPaneKind ?? "codex",
+    ...(intent.agentPlatform === undefined ? {} : { agentPlatform: intent.agentPlatform }),
     allowedProjectRoots: intent.allowedProjectRoots,
     exactProjectRoots: intent.exactProjectRoots ?? [],
     shellExecutable: intent.shellExecutable,

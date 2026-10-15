@@ -46,6 +46,8 @@ interface WorkstationInstallationIntentCommon {
   /** Optional binding for an independently hosted Naru behind another Workstation Gateway. */
   readonly externalGateway?: ExternalGatewayBinding;
   readonly defaultAgentPaneKind?: "codex" | "claude";
+  /** Opt-in Naru Agent Platform; absent means off, as in every existing installation. */
+  readonly agentPlatform?: AgentPlatformSettings;
   readonly allowedProjectRoots: readonly string[];
   /** Opt-in exact Project roots; other roots remain strict parents. */
   readonly exactProjectRoots?: readonly string[];
@@ -61,6 +63,11 @@ export interface AdditionalGatewayApp {
   readonly appId: string;
   readonly routePrefix: string;
   readonly upstreamPort: number;
+}
+
+export interface AgentPlatformSettings {
+  /** The user-installed Claude Agent SDK entry (`sdk.mjs`); Naru never bundles it (AP-D012). */
+  readonly claudeAgentSdkPath: string;
 }
 
 export interface ExternalGatewayBinding {
@@ -220,6 +227,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     "additionalGatewayApps",
     "externalGateway",
     "defaultAgentPaneKind",
+    "agentPlatform",
     "allowedProjectRoots",
     "exactProjectRoots",
     "nodeExecutable",
@@ -266,6 +274,10 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
   if (defaultAgentPaneKind === "claude" && claudeExecutable === undefined) {
     throw new Error("Claude default Pane requires a configured Claude executable.");
   }
+  const agentPlatform = parseAgentPlatform(value.agentPlatform);
+  if (agentPlatform !== undefined && claudeExecutable === undefined) {
+    throw new Error("Agent Platform requires a configured Claude executable.");
+  }
   if (
     externalGateway !== undefined &&
     (value.version !== DISTRIBUTION_SCHEMA_VERSION ||
@@ -293,6 +305,7 @@ export function parseInstallationIntent(value: unknown): WorkstationInstallation
     ...(additionalGatewayApps === undefined ? {} : { additionalGatewayApps }),
     ...(externalGateway === undefined ? {} : { externalGateway }),
     ...(defaultAgentPaneKind === undefined ? {} : { defaultAgentPaneKind }),
+    ...(agentPlatform === undefined ? {} : { agentPlatform }),
     allowedProjectRoots,
     ...(exactProjectRoots === undefined ? {} : { exactProjectRoots }),
     nodeExecutable,
@@ -707,6 +720,15 @@ function parseDefaultAgentPaneKind(value: unknown): "codex" | "claude" | undefin
     throw new Error("Default agent Pane kind is invalid.");
   }
   return value;
+}
+
+function parseAgentPlatform(value: unknown): AgentPlatformSettings | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Agent Platform settings must be an object.");
+  assertExactKeys(value, ["claudeAgentSdkPath"]);
+  return {
+    claudeAgentSdkPath: requireAbsolutePath(value.claudeAgentSdkPath, "Claude Agent SDK entry"),
+  };
 }
 
 function parseExternalGatewayBinding(value: unknown): ExternalGatewayBinding | undefined {

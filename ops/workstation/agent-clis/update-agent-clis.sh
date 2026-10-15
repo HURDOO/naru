@@ -1,28 +1,33 @@
 #!/bin/bash
-# Update the npm-global Codex and Claude Code CLIs that shells and Naru Panes share.
+# Update the npm-global Codex and Claude Code CLIs that shells and Naru Panes share, and
+# the Claude Agent SDK that Naru's Agent Platform loads (AP-D012) once it is installed.
 # Naru launches the exact package-owned executables below, so an in-place npm update
 # reaches a Pane the next time it is restarted (Ctrl+C, then resume).
 set -euo pipefail
 
 CODEX_PACKAGE="@openai/codex"
 CLAUDE_PACKAGE="@anthropic-ai/claude-code"
+SDK_PACKAGE="@anthropic-ai/claude-agent-sdk"
 
 usage() {
   cat <<'EOF'
-Usage: update-agent-clis.sh [--check] [--ssh-daemon]
+Usage: update-agent-clis.sh [--check] [--ssh-daemon] [--agent-sdk]
 
   --check       Report installed/latest versions and PATH resolution only.
   --ssh-daemon  Also update the Codex SSH app-server daemon package.
                 This restarts the daemon and disconnects SSH Codex sessions.
+  --agent-sdk   Install the Claude Agent SDK too. Once installed it is always updated.
 EOF
 }
 
 check_only=0
 ssh_daemon=0
+agent_sdk=0
 for argument in "$@"; do
   case "$argument" in
     --check) check_only=1 ;;
     --ssh-daemon) ssh_daemon=1 ;;
+    --agent-sdk) agent_sdk=1 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $argument" >&2; usage >&2; exit 2 ;;
   esac
@@ -36,6 +41,8 @@ npm_bin="$(command -v npm)" || fail "npm is not on PATH"
 npm_root="$(cd "$("$npm_bin" root -g)" && pwd -P)"
 codex_dir="$npm_root/$CODEX_PACKAGE"
 claude_dir="$npm_root/$CLAUDE_PACKAGE"
+sdk_dir="$npm_root/$SDK_PACKAGE"
+[ -d "$sdk_dir" ] && agent_sdk=1
 
 installed_version() {
   [ -f "$1/package.json" ] || { echo "-"; return; }
@@ -79,6 +86,9 @@ report() {
   echo "npm root: $npm_root"
   echo "  $CODEX_PACKAGE: installed $(installed_version "$codex_dir"), latest $("$npm_bin" view "$CODEX_PACKAGE" version)"
   echo "  $CLAUDE_PACKAGE: installed $(installed_version "$claude_dir"), latest $("$npm_bin" view "$CLAUDE_PACKAGE" version)"
+  if [ "$agent_sdk" -eq 1 ]; then
+    echo "  $SDK_PACKAGE: installed $(installed_version "$sdk_dir"), latest $("$npm_bin" view "$SDK_PACKAGE" version)"
+  fi
   report_path codex "$codex_dir"
   report_path claude "$claude_dir"
   local codex_path daemon
@@ -110,6 +120,15 @@ claude_path="$(claude_executable)"
 echo "Naru executables:"
 echo "  codex:  $codex_path ($("$codex_path" --version | tail -1))"
 echo "  claude: $claude_path ($("$claude_path" --version | head -1))"
+
+if [ "$agent_sdk" -eq 1 ]; then
+  # Naru gives the SDK the Claude Code executable above, so the SDK's own platform binary
+  # (an optional dependency of about 230 MB) is not installed. The SDK needs no install scripts.
+  echo "Updating $SDK_PACKAGE..."
+  "$npm_bin" install -g --omit=optional --ignore-scripts "$SDK_PACKAGE@latest"
+  [ -f "$sdk_dir/sdk.mjs" ] || fail "Claude Agent SDK entry is missing at $sdk_dir/sdk.mjs"
+  echo "  agent sdk: $sdk_dir/sdk.mjs ($(installed_version "$sdk_dir"))"
+fi
 
 if [ "$ssh_daemon" -eq 1 ]; then
   echo "Updating the Codex SSH app-server daemon (SSH Codex sessions will disconnect)..."

@@ -227,6 +227,26 @@ export function inspectExecutable(path: string, expectedUid?: number): Executabl
   return { path: canonical, ownerUid: metadata.uid, mode: metadata.mode & 0o777 };
 }
 
+/**
+ * The Claude Agent SDK that the Agent Platform loads into managed agents (AP-D012): a canonical
+ * regular file owned by the target user or root that no one else can change.
+ */
+export function inspectClaudeAgentSdk(path: string, expectedUid: number): void {
+  if (!isAbsolute(path)) throw new Error("Claude Agent SDK path must be absolute.");
+  assertNoSymlinkComponents(path);
+  const canonical = realpathSync(path);
+  if (canonical !== resolve(path)) throw new Error("Claude Agent SDK path must be canonical.");
+  const metadata = statSync(canonical);
+  if (!metadata.isFile()) throw new Error("Claude Agent SDK path must be a regular file.");
+  if (metadata.uid !== expectedUid && metadata.uid !== 0) {
+    throw new Error("Claude Agent SDK must be owned by the target user or root.");
+  }
+  if ((metadata.mode & 0o022) !== 0) {
+    throw new Error("Claude Agent SDK must not be writable by group or others.");
+  }
+  accessSync(canonical, constants.R_OK);
+}
+
 export function ensureInstanceDirectories(
   layout: WorkstationInstanceLayout,
   expectedUid: number,

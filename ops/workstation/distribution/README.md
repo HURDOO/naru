@@ -110,6 +110,13 @@ credential, socket, data와 receipt는 독립이며 v1 `ingress.kind: "none"`의
 검증한다. 이 mode에서도 독립 instance의 내부 loopback Gateway job은 distribution lifecycle을
 위해 생성되지만 외부 browser route나 Passkey bootstrap에는 사용하지 않는다.
 
+Naru Agent Platform은 opt-in이다. `workstation intent --claude-agent-sdk <sdk.mjs>`가 intent에 선택적
+`agentPlatform.claudeAgentSdkPath`를 넣고, Naru 환경에 `NARU_AGENT_PLATFORM=1`과
+`NARU_CLAUDE_AGENT_SDK_PATH`를 렌더한다(WV0-D016). `--claude`가 필요하다. 필드가 없는 intent와 기존
+receipt는 지금처럼 꺼진 상태이며 설정 digest도 바뀌지 않는다. 계획은 SDK 엔트리가 canonical regular
+file이고 사용자나 root 소유이며 group·others가 쓸 수 없는지 확인한다(`agent-platform.claude-sdk`).
+SDK 설치는 `ops/workstation/agent-clis/update-agent-clis.sh --agent-sdk`로 사용자가 한다.
+
 특정 Project 자체를 허용할 때는 그 canonical 경로를 `--project-root`에 열거하고
 `--exact-project-root`에도 지정한다. 선택적 `exactProjectRoots`는 이미 열거된 root만 받을 수
 있으며 다른 root의 strict-child 정책은 그대로 유지한다. 상위 projects 디렉터리 전체를

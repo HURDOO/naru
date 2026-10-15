@@ -251,4 +251,47 @@ describe("T14 Workstation CLI auth command", () => {
       stderr.mockRestore();
     }
   });
+
+  it("turns the Agent Platform on in an intent that names the Claude Agent SDK", async () => {
+    const fixture = createDistributionFixture({ packagedNodeRuntime: true });
+    const sdk = join(fixture.root, "claude-agent-sdk", "sdk.mjs");
+    let output = "";
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      output += String(chunk);
+      return true;
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const intent = (extra: readonly string[]) =>
+      runDistributionCli([
+        "intent",
+        "--slug",
+        "naru-next",
+        "--artifact",
+        fixture.artifactRoot,
+        "--origin",
+        "https://naru.example.test",
+        "--project-root",
+        fixture.projectRoot,
+        "--shell",
+        "/bin/zsh",
+        "--codex",
+        fixture.codexExecutable,
+        ...extra,
+        "--json",
+      ]);
+    try {
+      expect(await intent(["--claude", fixture.codexExecutable, "--claude-agent-sdk", sdk])).toBe(
+        0,
+      );
+      expect(JSON.parse(output)).toMatchObject({ agentPlatform: { claudeAgentSdkPath: sdk } });
+      output = "";
+      expect(await intent([])).toBe(0);
+      expect(JSON.parse(output)).not.toHaveProperty("agentPlatform");
+      // Managed Claude agents need the Claude CLI too.
+      expect(await intent(["--claude-agent-sdk", sdk])).toBe(2);
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
 });

@@ -171,3 +171,22 @@ remote push 승인으로 해석하지 않는다.
   이전 adapter와 새 UI를 섞지 않고 같은 독립 immutable release로 update한다. Exact digest 승인
   뒤 OmO job만 교체하며 OpenCode auth/session data와 이전 release/definition을 보존한다.
   Gateway registration/config, source admission, receipt와 Naru/Host service는 변경하지 않는다.
+
+## WV0-D016. Naru Agent Platform은 intent의 opt-in 필드로 켠다
+
+- 상태: 구현·격리 검증(2026-10-16), 운영 미적용. Agent Platform 테스트 앱 배포를 위한 변경이다
+  (`docs/agent-platform-v0` AP-D012, AP-T19).
+- 배경: Agent Platform은 Naru 환경 변수 `NARU_AGENT_PLATFORM=1`과 사용자가 설치한 Claude Agent SDK
+  경로로 켠다. distribution은 Naru 환경을 intent에서만 렌더하므로, 이 값들을 넣을 경로가 없었다.
+- 결정:
+  - intent에 선택적 `agentPlatform: { claudeAgentSdkPath }`를 더한다. 있으면 Naru 환경에
+    `NARU_AGENT_PLATFORM=1`과 `NARU_CLAUDE_AGENT_SDK_PATH`를 넣는다. `claudeExecutable`이 없으면 거부한다.
+  - CLI: `workstation intent --claude-agent-sdk <path>`.
+  - plan check `agent-platform.claude-sdk`: canonical regular file, 대상 사용자나 root 소유, group·others
+    쓰기 불가. 실패하면 blocked다.
+  - Host 설정은 바꾸지 않는다. 관리형 에이전트는 기존 `claude-code`·`codex-main` profile과 이미 허용된
+    실행 파일(release Node, Claude Code)로 실행된다.
+- 호환성·migration: 필드가 없으면 Naru 환경과 설정 digest가 이전과 같다. 기존 receipt와 intent는 그대로
+  읽는다. 이 필드를 아는 CLI(이 변경 이후 artifact)로만 plan·mutation한다. 켜는 것은 Naru 환경 변경이므로
+  WV0-D014에 따라 Naru만 재시작한다. DB에는 Agent Platform v20 migration이 첫 시작 때 자동 backup 뒤
+  적용된다(운영 DB에서는 data migration 승인 경계).

@@ -53,6 +53,7 @@ interface IntentOptions {
   readonly appBasePath?: string;
   readonly externalGatewayFile?: string;
   readonly defaultAgentPaneKind?: "codex" | "claude";
+  readonly claudeAgentSdkPath?: string;
   readonly vapidSubject?: string;
   readonly privateIngressFile?: string;
   readonly ingressKind: IngressKind;
@@ -167,6 +168,7 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
   let appBasePath: string | undefined;
   let externalGatewayFile: string | undefined;
   let defaultAgentPaneKind: "codex" | "claude" | undefined;
+  let claudeAgentSdkPath: string | undefined;
   let vapidSubject: string | undefined;
   let privateIngressFile: string | undefined;
   let ingressOptionProvided = false;
@@ -248,6 +250,9 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         }
         defaultAgentPaneKind = singleValue(defaultAgentPaneKind, value, argument);
         break;
+      case "--claude-agent-sdk":
+        claudeAgentSdkPath = singleValue(claudeAgentSdkPath, resolve(value), argument);
+        break;
       case "--vapid-subject":
         vapidSubject = singleValue(vapidSubject, value, argument);
         break;
@@ -315,6 +320,7 @@ export function parseDistributionArguments(arguments_: readonly string[]): Parse
         ...(appBasePath === undefined ? {} : { appBasePath }),
         ...(externalGatewayFile === undefined ? {} : { externalGatewayFile }),
         ...(defaultAgentPaneKind === undefined ? {} : { defaultAgentPaneKind }),
+        ...(claudeAgentSdkPath === undefined ? {} : { claudeAgentSdkPath }),
         ...(vapidSubject === undefined ? {} : { vapidSubject }),
         ...(privateIngressFile === undefined ? {} : { privateIngressFile }),
         ingressKind,
@@ -395,6 +401,10 @@ function createIntent(options: IntentOptions): WorkstationInstallationIntent {
     ...(options.defaultAgentPaneKind === undefined
       ? {}
       : { defaultAgentPaneKind: options.defaultAgentPaneKind }),
+    // The Agent Platform is opt-in; its Claude agents use the SDK the user installed (AP-D012).
+    ...(options.claudeAgentSdkPath === undefined
+      ? {}
+      : { agentPlatform: { claudeAgentSdkPath: options.claudeAgentSdkPath } }),
     canonicalBrowserOrigin: privateIngress?.browserOrigin ?? options.canonicalBrowserOrigin,
     allowedProjectRoots: options.projectRoots,
     ...(options.exactProjectRoots.length === 0
@@ -455,6 +465,7 @@ function usage(): string {
     "          --shell <shell> --codex <codex> [--claude <claude>] [--node <legacy-external-node24>]",
     "          [--app-base-path <route>] [--default-agent-pane-kind <codex|claude>]",
     "          [--external-gateway <owner-only-binding.json>] (isolated v1 app only)",
+    "          [--claude-agent-sdk <sdk.mjs>] (turns on the Agent Platform; needs --claude)",
     "          [--installation-id <uuid>] [--vapid-subject <https-or-mailto>]",
     "          [--ingress-kind <none|tailscale-serve|wireguard-direct|trusted-lan>]",
     "          [--ingress-profile <id>]",

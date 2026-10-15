@@ -76,6 +76,55 @@ describe("T14 distribution identity and configuration", () => {
     );
     expect(generated.gateway.appRegistrations).toHaveLength(1);
   });
+  it("turns the Agent Platform on only when the intent names the user's Claude Agent SDK", () => {
+    const fixture = createDistributionFixture();
+    const artifact = verifyDistributionArtifact(fixture.artifactRoot);
+    const off = parseInstallationIntent({
+      ...fixture.intent,
+      claudeExecutable: fixture.codexExecutable,
+    });
+    const offEnvironment = createInstanceConfiguration(
+      off,
+      artifact.summary,
+      createInstanceLayout(off, artifact.summary),
+    ).naruEnvironment;
+    expect(offEnvironment).not.toHaveProperty("NARU_AGENT_PLATFORM");
+    expect(offEnvironment).not.toHaveProperty("NARU_CLAUDE_AGENT_SDK_PATH");
+
+    const sdk = `${fixture.root}/claude-agent-sdk/sdk.mjs`;
+    const on = parseInstallationIntent({
+      ...fixture.intent,
+      claudeExecutable: fixture.codexExecutable,
+      agentPlatform: { claudeAgentSdkPath: sdk },
+    });
+    const generated = createInstanceConfiguration(
+      on,
+      artifact.summary,
+      createInstanceLayout(on, artifact.summary),
+    );
+    expect(generated.naruEnvironment).toMatchObject({
+      NARU_AGENT_PLATFORM: "1",
+      NARU_CLAUDE_AGENT_SDK_PATH: sdk,
+    });
+
+    expect(() =>
+      parseInstallationIntent({ ...fixture.intent, agentPlatform: { claudeAgentSdkPath: sdk } }),
+    ).toThrow("Agent Platform requires a configured Claude executable.");
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        claudeExecutable: fixture.codexExecutable,
+        agentPlatform: { claudeAgentSdkPath: "sdk.mjs" },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseInstallationIntent({
+        ...fixture.intent,
+        claudeExecutable: fixture.codexExecutable,
+        agentPlatform: { claudeAgentSdkPath: sdk, extra: true },
+      }),
+    ).toThrow();
+  });
   it("binds an isolated Claude app to another Gateway while retaining its own Host", () => {
     const fixture = createDistributionFixture();
     const binding = {

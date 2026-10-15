@@ -85,6 +85,29 @@ describe("T14 deterministic maintenance transactions", () => {
       missing.checks.find((check) => check.id === "artifact.claude-host-entrypoints")?.status,
     ).toBe("blocked");
   });
+  it("blocks the Agent Platform until the user's Claude Agent SDK is a safe regular file", async () => {
+    const fixture = createDistributionFixture({ claudeEntrypoints: true });
+    const sdkDirectory = join(fixture.root, "claude-agent-sdk");
+    mkdirSync(sdkDirectory, { recursive: true });
+    const sdk = join(sdkDirectory, "sdk.mjs");
+    const intent = parseInstallationIntent({
+      ...fixture.intent,
+      claudeExecutable: fixture.codexExecutable,
+      agentPlatform: { claudeAgentSdkPath: sdk },
+    });
+    const runtime = new FakeWorkstationRuntime();
+    const status = async () =>
+      (await planDistribution(intent, "install", runtime, { probePorts: false })).checks.find(
+        (check) => check.id === "agent-platform.claude-sdk",
+      )?.status;
+
+    expect(await status()).toBe("blocked");
+    writeFileSync(sdk, "export function query() {}\n", { mode: 0o644 });
+    chmodSync(sdk, 0o644);
+    expect(await status()).toBe("ok");
+    chmodSync(sdk, 0o666);
+    expect(await status()).toBe("blocked");
+  });
   it("installs the packaged Node runtime and normalizes the receipt to its immutable release path", async () => {
     const fixture = createDistributionFixture({ packagedNodeRuntime: true });
     const runtime = new FakeWorkstationRuntime();

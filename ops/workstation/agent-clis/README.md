@@ -5,6 +5,8 @@ Naru Pane, 로컬 셸과 ssh 셸은 같은 npm 전역 Codex·Claude Code 설치�
 
 - Codex: `<npm root>/@openai/codex/node_modules/@openai/codex-<platform>/vendor/<target>/bin/codex`
 - Claude Code: `<npm root>/@anthropic-ai/claude-code/bin/claude.exe`
+- Claude Agent SDK(Agent Platform을 켤 때만): `<npm root>/@anthropic-ai/claude-agent-sdk/sdk.mjs`.
+  intent의 `agentPlatform.claudeAgentSdkPath`(`workstation intent --claude-agent-sdk`)에 넣는다.
 
 distribution은 symlink가 포함된 실행 경로를 거부하고, Naru는 Pane을 시작할 때마다 경로만 확인한다.
 그래서 npm이 같은 경로의 파일을 교체하면 Naru 재설정이나 Host 재시작 없이 다음 Pane 시작부터 새 버전을
@@ -15,7 +17,12 @@ distribution은 symlink가 포함된 실행 경로를 거부하고, Naru는 Pane
 ```sh
 ops/workstation/agent-clis/update-agent-clis.sh --check   # 버전과 PATH 해석만 확인
 ops/workstation/agent-clis/update-agent-clis.sh           # 두 CLI를 최신으로 설치
+ops/workstation/agent-clis/update-agent-clis.sh --agent-sdk  # Claude Agent SDK도 설치(처음 한 번)
 ```
+
+Claude Agent SDK는 사용자가 설치한다(AP-D012). 설치된 뒤에는 옵션 없이 실행해도 함께 갱신한다. SDK의
+platform binary(optional dependency, 약 230MB)는 설치하지 않는다. Naru가 SDK에 위 Claude Code 실행
+파일을 넘기기 때문이다. SDK 갱신은 다음에 시작하는 관리형 에이전트부터 적용된다.
 
 갱신할 Pane에서 Ctrl+C로 CLI를 종료한 뒤 "Codex 작업 재개" 또는 "Claude 작업 재개"로 같은 대화를
 다시 연다. 실행 중인 다른 Pane은 기존 버전으로 계속 동작한다. Claude Code 자체 자동 업데이트는 사용자
