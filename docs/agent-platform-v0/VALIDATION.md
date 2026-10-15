@@ -31,6 +31,62 @@
 | V13 | Gateway 사용자 인증과 agent 인증                          | 이 branch                                                                                        | PARTIAL (분석)                                                                                                                                            |
 | V14 | 기존 Hook, 세션, 워크플로 migration                       | 이 branch                                                                                        | PARTIAL (분석)                                                                                                                                            |
 
+## 재검증 V04b, V05b, V06b (2026-10-15)
+
+### V04b. Codex `/subagents`와 Naru relay
+
+- **증상(사용자 보고)**: Naru Codex Pane에서 `/subagents`로 보조 에이전트를 고르면
+  `NARU_CODEX_RELAY_FAILED`가 나고 Codex가 중지된다.
+- **원인**
+  - 보조 에이전트를 고르면 TUI가 자식 thread를 `thread/resume`한다.
+  - relay의 상태 추적기(`codex-interaction-state.ts`)는 `parentThreadId`가 있는 thread를 신원 위반으로
+    보고 예외를 던졌다. 이 예외가 relay를 종료시켰다.
+- **재현**: 수정 전 relay에서 실제 codex-cli 0.162.1의 자식 thread 응답과 PTY 안의 실제 TUI로 같은
+  증상을 재현했다(`tests/spikes/codex-runtime/relay-subagents.ts`, `subagent-view.ts`).
+- **수정(`d7f3061`)**: 자식 thread는 사용자 thread를 바꾸지 않는 보기로 취급한다. Pane은 사용자 thread에
+  계속 바인딩된다. 단위 회귀 테스트를 추가했다.
+- **수정 후 실제 TUI 결과**
+  - 보조 에이전트 화면이 열리고 relay가 유지된다.
+  - 보조 에이전트 화면에서 Codex가 "This sub-agent is controlled by its parent. Direct input is disabled."를
+    표시한다.
+  - 주 에이전트로 돌아오면 입력이 정상으로 들어간다.
+- **판정**: Codex native subagent의 관찰(L2)은 TUI에서 가능하다. 직접 입력(L3)은 Codex가 설계상 막아
+  두었다. 수정은 기존 Codex Pane의 회귀 수정이므로 main 반영과 운영 배포 대상이다(배포는 승인 필요).
+
+### V05b. Claude TUI에서 실행 중인 보조 에이전트에 입력
+
+- **경로**: 빈 프롬프트에서 ↓를 두 번 누르면 프롬프트 아래 에이전트 목록(`⏺ main`, `◯ general-purpose`)에
+  들어간다. ↓로 보조 에이전트를 고르고 Enter를 누르면 화면이 그 에이전트로 바뀌고 입력칸이
+  `Message @general-purpose…`가 된다.
+- **결과**
+  - 입력은 "queued"로 표시된다. 보조 에이전트가 진행 중인 tool을 마친 뒤 user 메시지로 받는다.
+  - 공식 SDK `getSubagentMessages`로 전달을 확인했다. 보조 에이전트의 최종 보고(SubagentHandback)에도
+    지시한 marker가 들어갔다.
+  - **TUI 경로의 L3는 PASS**다. 이전 V05의 L3 FAIL은 stream-json과 SDK client 경로에만 해당한다.
+- **주의**
+  - `UserPromptSubmit` hook payload에는 그 입력이 어느 에이전트로 갔는지 나타내는 필드가 없다.
+  - Claude Code는 프롬프트 제안 같은 내부용 보조 에이전트도 `SubagentStart`/`SubagentStop`으로 알린다.
+    Naru는 이것을 `agent_type`으로 걸러 표시해야 한다.
+  - 프롬프트에서 ←를 누르면 계정 전체의 세션 대시보드가 열린다. 사용자의 다른 세션도 보이므로 자동화에서
+    쓰지 않는다. 이번 검증 중 이 화면에서 검증용 세션 1개가 잘못 생겼고, 즉시 중지하고 삭제했다.
+
+### V06b. Naru bridge 아래의 Claude native 메시징
+
+- **구성**: 보내는 쪽 `PreToolUse(SendMessage)` hook과 받는 쪽 `UserPromptSubmit` hook이 세션별
+  capability로 Naru bridge(시험용 stub)에 묻는다(`tests/spikes/claude-messaging/v06b-bridge.ts`).
+- **실제 세션 3개로 한 결과**
+
+  | 시나리오                          | 결과                                                                                                                                                               |
+  | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | 관리 대상 → 관리 대상             | 허가와 기록을 거쳐 전달되고, 받는 쪽이 지시를 수행했다. 기록된 보낸 쪽은 bridge가 capability로 결정했다. 받는 쪽 `origin.verifiedPeerPid`도 보낸 쪽 PID와 일치했다 |
+  | 관리 대상 → 관리 대상이 아닌 세션 | 보내는 쪽에서 거부됐다(`not a Naru-managed session`). 기록은 남지 않았다                                                                                           |
+  | hook 없는 세션 → 관리 대상        | 메시지는 도착했지만 받는 쪽 hook이 허가 기록이 없어 막았다. 받는 쪽은 지시를 수행하지 않았다                                                                       |
+  | 받는 쪽이 사람 hold 중            | 보내는 쪽에서 `AGENT_HELD_BY_HUMAN`으로 거부됐다                                                                                                                   |
+  | bridge 중단                       | 보내는 쪽에서 fail-closed로 거부됐다. 받는 쪽은 아무것도 받지 않았다                                                                                               |
+
+- **판정: PASS.** native 메시징을 Naru 정책(관리 대상 제한, 신원과 원문 기록, hold, fail-closed) 아래에서
+  쓸 수 있다.
+
 ## V01, V02, V04, V08, V11 요약 (상세: [validation/codex-runtime.md](validation/codex-runtime.md))
 
 - **A안 채택 근거**

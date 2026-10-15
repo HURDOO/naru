@@ -71,7 +71,7 @@
 - 완료(2026-10-15):
   - VALIDATION.md를 통합했다.
   - Capability Matrix(`apps/server/src/agent-runtime/capabilities.ts`)를 확정했다.
-  - AP-D002, D004, D005, D009~D011을 accepted로 바꿨다. AP-D012(SDK 공급)는 라이선스 때문에 사용자 결정 대기다. ARCHITECTURE.md §6을 작성했다.
+  - AP-D002, D004, D005, D009~D011을 accepted로 바꿨다. AP-D012(SDK 공급)는 사용자 결정 B(사용자가 따로 설치)로 확정했다. ARCHITECTURE.md §6을 작성했다.
   - 사용자 확인 항목은 AP-D013에 기본값과 함께 모았다.
   - 남은 NOT TESTED 항목은 구현 Task로 넘긴다: Codex↔Claude 실제 왕복은 AP-T13·T14, 실제 SSH는 A09다.
 

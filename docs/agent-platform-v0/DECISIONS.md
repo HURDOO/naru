@@ -229,33 +229,15 @@
 
 ## AP-D012. Claude Agent SDK 공급 방식
 
-- 상태: proposed. **사용자 결정 필요.** 2026-10-15에 accepted로 적었던 것을 정정한다. 라이선스를 확인하기
-  전에 기록한 판단이었다.
-- 배경:
-  - Chat 이력을 공식 경로로 다시 읽는 기능(`getSessionMessages`, `getSubagentMessages`)은 Claude Agent SDK에만
-    있다. CLI에는 대화 이력을 출력하는 명령이 없다(`logs`는 background 세션의 터미널 출력만 보여 준다).
-  - SDK 0.3.296의 라이선스는 "© Anthropic PBC. All rights reserved"이고 Anthropic 약관을 따른다. 오픈소스가
-    아니다. 또한 플랫폼별 CLI 바이너리(약 230MB)를 optional dependency로 설치한다.
-  - Naru는 공개 Apache-2.0 저장소다. standalone 배포물에는 production 의존성이 포함되고,
-    `THIRD_PARTY_NOTICES.md`는 오픈소스 라이선스만 나열한다.
-- 선택지:
-  - A. **CLI만 사용한다.** `claude -p --input-format stream-json --output-format stream-json`(공식 CLI)으로
-    runner를 만든다. 새 의존성은 없다.
-    - Chat은 실시간 이벤트와 runner 메모리의 bounded buffer만 보여 준다.
-    - runner를 재시작하면 이전 대화는 Chat에 다시 나타나지 않는다. TUI resume으로만 볼 수 있다.
-    - Chat 이력이 줄어드는 것이므로 UX 축소다.
-  - B. **SDK를 사용자가 따로 설치하는 runtime 구성요소로 둔다.** 권고안이다.
-    - Claude CLI처럼 사용자가 npm으로 설치한다(optional binary는 제외하고, CLI는 기존 설치를 쓴다).
-    - Naru는 설정된 경로에서 SDK를 동적으로 불러온다. 저장소와 배포물에는 포함하지 않는다.
-    - 업데이트는 기존 `update-agent-clis` 흐름에 추가한다.
-    - Chat 이력을 온전히 보여 줄 수 있다.
-    - 사용자는 이미 Claude Code를 쓰면서 Anthropic 약관에 동의한 상태다.
-  - C. **SDK를 배포물에 포함한다.** 권고하지 않는다. 독점 패키지를 Apache 배포물에 재배포하게 되고,
-    배포물이 약 250MB 커진다.
-- 그동안의 구현: Claude runner는 SDK를 `ClaudeSdkPort` 인터페이스 뒤에서만 쓴다.
-  - 테스트는 fake port를 쓴다.
-  - 실제 인수 검증은 저장소 밖에 설치된 SDK로 한다.
-  - 저장소의 `package.json`과 lockfile은 바꾸지 않는다.
+- 상태: accepted (2026-10-15, 사용자 결정 B)
+- 결정:
+  - Claude Agent SDK는 사용자가 Claude CLI처럼 따로 설치하는 runtime 구성요소로 둔다.
+  - Naru는 설정된 경로에서 SDK를 동적으로 불러오고, `ClaudeSdkPort` 뒤에서만 쓴다.
+  - 저장소, lockfile, 배포물에는 포함하지 않는다. optional platform binary는 설치하지 않고 기존 CLI를
+    `pathToClaudeCodeExecutable`로 쓴다.
+  - 업데이트는 `update-agent-clis` 흐름에 추가한다.
+- 배경: SDK는 독점 라이선스이고 약 230MB 바이너리가 딸려 있다. Chat 이력을 공식 경로로 다시 읽는 기능은
+  SDK에만 있다. A(CLI만)와 C(포함)는 채택하지 않았다.
 
 ## AP-D013. Gate 1에서 사용자 확인이 필요한 항목
 
@@ -272,3 +254,43 @@
 - 4. 관리형 Claude 세션이 사용자 global settings와 hook을 불러올지(V03).
   - 기본값: 불러오지 않는다. `--setting-sources project,local`과 Naru 설정만 주입한다.
 - 공지: agent 신원은 같은 OS 사용자 권한 아래의 책임 추적 수단이며 격리 장치가 아니다(V13).
+
+## AP-D014. 보조 에이전트는 관찰만 하고, 통제가 필요한 일은 새 관리형 세션으로 보낸다
+
+- 상태: proposed (2026-10-15, 재검증 V04b·V05b 근거, 사용자 확인 대기). 확정되면 AP-D009를 대체한다.
+- 근거:
+  - Claude는 TUI 안에서 실행 중인 보조 에이전트에 입력할 수 있다(V05b). API 경로로는 할 수 없다(V05).
+  - Codex는 TUI에서 보기만 되고, 직접 입력은 Codex가 막아 두었다(V04b).
+  - OmO는 API로 직접 입력이 되지만, 끝난 child를 10분 뒤 삭제한다(V12).
+- 결정안:
+  - Naru는 보조 에이전트를 부모 에이전트 아래에 **관찰 전용**으로 표시한다(L1 lifecycle, L2 transcript).
+    Naru Chat에서 보조 에이전트에게 입력하는 기능은 만들지 않는다. 사람의 개입이 꼭 필요하면 각
+    런타임의 TUI를 그대로 쓴다(Claude만 가능). 그래서 Claude 관리형 세션을 TUI 모드로 강제하지 않는다.
+  - 보조 에이전트가 한 일은 부모 에이전트의 책임으로 기록한다. Naru provenance의 단위는 관리형 세션이다.
+  - Skill 지침:
+    - 보조 에이전트는 한 Task 안의 짧고 읽기 위주인 하위 작업에 쓴다. 예: 조사, 분석, 초안, 테스트 실행.
+    - 다음 경우에는 Naru `delegate`로 새 관리형 세션을 띄운다:
+      - 자기 완료 조건이나 review가 필요한 별도 작업
+      - 오래 걸리는 작업
+      - 공유 코드, branch, worktree를 바꾸는 작업
+      - 사람의 결정, 터미널 입력, 수동 테스트가 필요한 작업
+      - 다른 런타임이나 model이 필요한 작업
+      - 재시작이나 인계를 견뎌야 하는 작업
+  - 지침은 강제 수단이 아니다. native 억제를 보안 통제로 주장하지 않는다(AP-D009 유지).
+- 남은 일: 사용자 확인 뒤 accepted로 바꾸고, `skills/naru-orchestration`(AP-T16)에 반영한다.
+
+## AP-D015. Claude끼리의 메시지는 Naru bridge 아래에서 native로 보낸다
+
+- 상태: accepted (2026-10-15, 사용자 방향 승인과 V06b PASS). AP-D010의 "managed 세션에서는 native
+  cross-session 차단"을 대체한다. Codex↔Claude 같은 런타임 간 통신은 계속 Naru MCP로 한다.
+- 결정: Naru가 띄우는 관리형 Claude 세션에는 세션별 capability를 가진 bridge hook을 넣는다.
+  - 보내는 쪽 `PreToolUse(SendMessage)`: 받는 쪽이 관리형 세션인지, hold 중이 아닌지 Naru가 확인한다.
+    허가하면 원문, 보낸 쪽, 받는 쪽, 원본 지시를 위임 기록으로 남긴다. 원본 지시는 보낸 쪽이 맡은 Task에서
+    정한다.
+  - 받는 쪽 `UserPromptSubmit`: 허가 기록과 보낸 쪽 PID(`uds` 소켓, `verifiedPeerPid`)가 맞을 때만
+    통과시키고, 전달을 기록한다.
+  - Naru에 닿지 못하면 보내기와 받기 모두 거부한다(fail-closed).
+  - 관리형 세션의 inbound는 `accept`로 둔다. 쉬고 있는 TUI와 runner 세션을 native 메시지가 바로 깨운다.
+  - 보조 에이전트 메시징(`recipient_kind: agent`)은 bridge를 거치지 않는다.
+- 남은 일: Core의 bridge endpoint(authorize, deliver)와 hook bin을 구현한다(AP-T11 확장). 원본 지시를
+  정할 수 없을 때의 거부 정책도 정한다.
