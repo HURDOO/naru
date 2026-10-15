@@ -437,3 +437,35 @@ export const AgentOverviewSchema = z.strictObject({
   globalAgents: z.array(AgentSessionSchema),
 });
 export type AgentOverview = z.infer<typeof AgentOverviewSchema>;
+
+// Runtime capabilities (SOURCE_SPEC §7.3) --------------------------------------------------------
+
+export const NativeSubagentTraceSchema = z.enum([
+  "none",
+  "lifecycle",
+  "transcript",
+  "interactive",
+  "pty",
+]);
+
+/**
+ * What the installed runtime version itself was proven to support (docs/agent-platform-v0/
+ * VALIDATION.md). Unproven capabilities stay false/none. Whether Naru has enabled a capability
+ * (adapter, write gate) is tracked separately; e.g. no runtime has a natively safe GUI/TUI switch.
+ */
+export const RuntimeCapabilitiesSchema = z.strictObject({
+  runtime: AgentRuntimeSchema,
+  versions: z.record(z.string().max(64), z.string().max(64)),
+  structuredChat: z.boolean(),
+  realTui: z.boolean(),
+  liveTuiAttach: z.boolean(),
+  safeGuiTuiTransition: z.boolean(),
+  nativeSubagentTrace: NativeSubagentTraceSchema,
+  nativeCrossSessionMessaging: z.boolean(),
+  externalApprovalControl: z.boolean(),
+  canBridgeToDurableSession: z.boolean(),
+  /** Short human-readable limits shown next to the capability in the UI. */
+  limits: z.array(z.string().max(300)).max(16),
+  evidence: z.array(z.string().max(200)).max(16),
+});
+export type RuntimeCapabilities = z.infer<typeof RuntimeCapabilitiesSchema>;
