@@ -33,6 +33,8 @@ import type { DurableSessionErrorCode, SessionView } from "@naru/contracts/durab
 import { migrateLayout, removePane, splitPane, validateLayout } from "@naru/domain";
 import { AppError } from "./errors.js";
 import { createPreMigrationBackupIfNeeded } from "./database-backup.js";
+import { AGENT_PLATFORM_MIGRATION } from "./agent-platform/migration.js";
+import { AgentPlatformStore } from "./agent-platform/store.js";
 
 interface ProjectRow {
   id: string;
@@ -734,6 +736,7 @@ export const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
       `);
     },
   },
+  AGENT_PLATFORM_MIGRATION,
 ];
 
 export function runDatabaseMigrations(
@@ -776,6 +779,8 @@ export function runDatabaseMigrations(
 export class NaruRepository {
   readonly #database: Database.Database;
   readonly #defaultAgentPaneKind: "codex" | "claude";
+  /** Agent Platform tables share this connection and its transactions (AP-T09). */
+  readonly agentPlatform: AgentPlatformStore;
 
   constructor(filename: string, options: NaruRepositoryOptions = {}) {
     this.#defaultAgentPaneKind = options.defaultAgentPaneKind ?? "codex";
@@ -793,6 +798,7 @@ export class NaruRepository {
       );
     }
     this.#migrate();
+    this.agentPlatform = new AgentPlatformStore(this.#database);
     if ((options.sessionOwner ?? "legacy") === "legacy") this.#markOrphanedPanesServerStopped();
   }
 

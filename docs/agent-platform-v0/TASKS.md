@@ -71,9 +71,16 @@
 
 ### AP-T09. 계약과 저장소
 
-- [ ] `naru-agent/v1` contract(additive)와 DB migration: instruction, intent contract, plan, agent task,
-      run, agent session, handoff, event, artifact, shared process, session holder. 기존 migration 전
-      backup 계약을 따른다.
+- [-] `naru-agent/v1` contract(additive)와 DB migration: instruction, intent contract, plan, agent task,
+  run, agent session, handoff, event, artifact, shared process, session holder. 기존 migration 전
+  backup 계약을 따른다.
+- 진행(2026-10-15):
+  - 완료: contract, v20 migration(`apps/server/src/agent-platform/migration.ts`), store, 정책 Core,
+    단위 테스트 11개(`apps/server/test/agent-platform-core.test.ts`). 테스트 범위는 원본 지시 연결,
+    역할과 scope, 사람 hold, idempotency, revision과 cycle, merge gate, 재시작 뒤 `unknown`,
+    이벤트 순서와 cursor, project 삭제, v19→v20 backup 뒤 migration이다.
+  - 남음: terminal Session 바인딩, SharedProcess, holder는 AP-T12와 함께 추가한다. browser HTTP
+    API와 MCP 노출은 AP-T11이다.
 
 ### AP-T10. Event Store와 reconciler
 
