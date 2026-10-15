@@ -351,3 +351,30 @@
   - Naru 신원으로 `--no-ff` merge commit을 만든다.
   - worktree 위치를 설정으로 지정한다.
   - merge 뒤 push한다. 사용자 승인 없이는 하지 않는다.
+
+## AP-D017. orchestrator가 대화를 쓰는 동안의 도구 승인
+
+- 상태: proposed (2026-10-15). 아래 기본값으로 구현했다. 사용자가 바꾸면 새 결정으로 반영한다.
+- 배경:
+  - 관리형 에이전트의 도구 승인 요청은 대화 writer만 답할 수 있었다.
+  - orchestrator는 승인에 답하는 도구가 없다. 그래서 orchestrator가 writer일 때(자율 진행)는 첫 명령이나
+    편집 요청에서 에이전트가 멈췄다. AP-T18 실제 모델 인수를 준비하다가 확인했다.
+- 결정(기본값):
+  - Naru MCP 도구는 사람의 승인을 묻지 않는다. Core가 역할, scope, hold를 이미 판단한다.
+    - Claude: 주입 settings의 `permissions.allow`에 `mcp__naru`를 넣는다.
+    - Codex: relay가 `naru` 서버의 MCP 사용 확인에 직접 답한다.
+  - 작업자와 전문가는 작업 디렉터리 안의 파일 편집을 묻지 않는다(Claude `acceptEdits`).
+    - orchestrator와 리뷰어는 기본 모드다.
+    - 범위는 Claude가 정한 작업 디렉터리다. main 반영은 리뷰와 merge gate가 지킨다(AP-D016).
+  - 그 밖의 요청(명령 실행, 권한 확대 등)은 사람이 정한다.
+    - 요청에는 무엇을 하려는지(도구와 명령 또는 경로, 300자)가 붙는다. 화면에만 보이고 저장하지 않는다.
+    - 사람은 대화를 넘겨받지 않아도 Agent Panel과 Inbox에서 답한다(기기 lease 필요). TUI에서 먼저 답하면
+      두 번째 답은 무시된다.
+    - project의 `.claude/settings*.json` 권한 규칙(사용자가 관리)은 그대로 적용된다. 자주 쓰는 명령은
+      거기서 미리 허용할 수 있다.
+- 하지 않은 것:
+  - 승인 대기 Web Push(Handoff push와 같은 방식으로 추가할 수 있다)
+  - Codex의 sandbox·approval policy 변경. Codex는 profile의 기존 설정을 따른다.
+- 대안:
+  - 명령도 project 단위로 자동 허용한다(사용자가 project별로 켬).
+  - 모든 편집을 묻는다(자율성은 낮아진다).

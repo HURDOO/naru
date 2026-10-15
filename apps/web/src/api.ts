@@ -66,6 +66,13 @@ export interface AgentProjectView {
   readonly agents: AgentSession[];
   readonly instructions: Instruction[];
   readonly processes: SharedProcess[];
+  /** What managed agents wait for the person to allow (AP-D017). */
+  readonly pendingApprovals: {
+    readonly agentSessionId: string;
+    readonly requestId: string;
+    readonly kind: string;
+    readonly summary?: string;
+  }[];
 }
 
 function key(): string {
@@ -517,15 +524,15 @@ export class NaruApi {
     return this.#agentWrite(`/api/agent/agents/${agentSessionId}/interrupt`, { generation });
   }
 
+  /** The person answers an approval whoever writes the conversation (AP-D017). */
   respondAgentApproval(
     agentSessionId: string,
     requestId: string,
     decision: "approve" | "deny",
-    generation: number,
   ): Promise<AgentRuntimeState> {
     return this.#agentWrite(
       `/api/agent/agents/${agentSessionId}/approvals/${encodeURIComponent(requestId)}`,
-      { decision, generation },
+      { decision },
     );
   }
 

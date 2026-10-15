@@ -230,13 +230,17 @@ export class ClaudeRunner {
 
   #requestApproval(
     toolName: string,
-    _input: Record<string, unknown>,
+    input: Record<string, unknown>,
   ): Promise<ClaudePermissionResult> {
-    void _input;
     const requestId = randomUUID();
     return new Promise((resolve) => {
       this.#approvals.set(requestId, { resolve });
-      this.#emit({ type: "approval-requested", requestId, kind: approvalKind(toolName) });
+      this.#emit({
+        type: "approval-requested",
+        requestId,
+        kind: approvalKind(toolName),
+        summary: approvalSummary(toolName, input),
+      });
     });
   }
 
@@ -249,6 +253,22 @@ export class ClaudeRunner {
       }
     }
   }
+}
+
+/** What the person is asked to allow: the tool and its command or path, shortened (AP-D017). */
+export function approvalSummary(toolName: string, input: Record<string, unknown>): string {
+  const detail =
+    typeof input.command === "string"
+      ? input.command
+      : typeof input.file_path === "string"
+        ? input.file_path
+        : typeof input.notebook_path === "string"
+          ? input.notebook_path
+          : typeof input.url === "string"
+            ? input.url
+            : "";
+  const text = detail === "" ? toolName : `${toolName}: ${detail}`;
+  return text.length > 300 ? `${text.slice(0, 299)}…` : text;
 }
 
 function approvalKind(toolName: string): "command" | "file" | "tool" | "permission" {

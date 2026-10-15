@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntimeEvent } from "../src/agent-runtime/adapter.js";
-import { ClaudeRunner, type ClaudeRunnerPlan } from "../src/agent-runtime/claude/runner.js";
+import {
+  approvalSummary,
+  ClaudeRunner,
+  type ClaudeRunnerPlan,
+} from "../src/agent-runtime/claude/runner.js";
 import type {
   ClaudeCanUseTool,
   ClaudeSdkMessage,
@@ -99,6 +103,17 @@ async function until(
   throw new Error("event not observed");
 }
 
+describe("approvalSummary", () => {
+  it("names the tool with its command or path, shortened", () => {
+    expect(approvalSummary("Bash", { command: "pnpm test" })).toBe("Bash: pnpm test");
+    expect(approvalSummary("Write", { file_path: "src/a.ts", content: "x" })).toBe(
+      "Write: src/a.ts",
+    );
+    expect(approvalSummary("WebSearch", { query: "q" })).toBe("WebSearch");
+    expect(approvalSummary("Bash", { command: "x".repeat(400) })).toHaveLength(300);
+  });
+});
+
 describe("Claude SDK runner", () => {
   it("passes the Naru launch plan to the SDK and reports turns without transcript content", async () => {
     const { port, calls } = fakeSdk();
@@ -155,7 +170,9 @@ describe("Claude SDK runner", () => {
     runner.sendTurn("APPROVE this");
     await until(events, (event) => event.type === "approval-requested");
     const request = events.find((event) => event.type === "approval-requested");
+    // The person sees what is asked (AP-D017), shortened; nothing is stored.
     expect(request).toMatchObject({ kind: "command" });
+    expect((request as { summary?: string }).summary).toMatch(/^Bash/u);
     expect(runner.busy).toBe(true);
     expect(runner.respondApproval((request as { requestId: string }).requestId, "approve")).toBe(
       true,

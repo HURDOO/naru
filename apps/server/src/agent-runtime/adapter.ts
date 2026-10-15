@@ -39,6 +39,8 @@ export type AgentRuntimeEvent =
       readonly type: "approval-requested";
       readonly requestId: string;
       readonly kind: "command" | "file" | "tool" | "permission" | "question";
+      /** What is asked (tool and command or path), shown to the person; never stored. */
+      readonly summary?: string;
     }
   | { readonly type: "approval-resolved"; readonly requestId: string }
   | {

@@ -5009,6 +5009,21 @@ html[data-naru-display-mode="standalone"] .loading-screen {
   font-size: 13px;
 }
 
+.agent-approval-text {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 240px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.agent-approval-text code {
+  color: var(--muted);
+  font-family: D2Coding, ui-monospace, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .agent-hint {
   margin: 0;
   color: var(--subtle);

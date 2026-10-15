@@ -31,6 +31,8 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
     type: z.literal("approval-requested"),
     requestId: Id,
     kind: z.enum(["command", "file", "tool", "permission", "question"]),
+    /** What is asked (tool and command or path), shown to the person; never stored (AP-D017). */
+    summary: z.string().max(300).optional(),
   }),
   z.strictObject({ type: z.literal("approval-resolved"), requestId: Id }),
   z.strictObject({

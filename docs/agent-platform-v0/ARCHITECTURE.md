@@ -206,6 +206,14 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
   - service worker는 `naru:handoff:<id>` tag로 한 번만 보여 준다. 열면 `naruHandoff` 또는
     `NARU_PUSH_HANDOFF`로 앱이 그 Inbox 항목을 연다.
 
+### 6.5.2 도구 승인 (AP-D017)
+
+- runner와 Codex relay는 승인 요청에 요약(도구와 명령 또는 경로)을 붙여 보낸다. supervisor는 이 요약을
+  메모리에만 둔다. runtime 상태와 project 응답의 `pendingApprovals`로 화면에 보인다.
+- `POST /approvals/:requestId`는 사람이 답하는 경로다(`respondApprovalAsPerson`). 대화 writer와
+  무관하게 기기 lease만 요구한다. `generation`은 이전 client를 위해 받기만 하고 쓰지 않는다.
+- Naru MCP 도구는 Claude settings의 `mcp__naru` 허용과 Codex relay의 자동 응답으로 묻지 않는다.
+
 ### 6.6 웹 화면 (AP-T17)
 
 - 작업공간 옆의 `에이전트` 탭이다. 사람 기기 lease가 있어야 바꿀 수 있다(AP-D005 첫 계층). 읽기는

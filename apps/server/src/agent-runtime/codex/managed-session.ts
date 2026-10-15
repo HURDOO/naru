@@ -368,10 +368,23 @@ export class CodexManagedSession {
 
   #serverRequest(id: JsonRpcId, method: string, params: unknown): void {
     const kind = APPROVAL_KINDS[method];
-    if (kind === undefined || asRecord(params)?.threadId !== this.#threadId) return;
+    const record = asRecord(params);
+    if (kind === undefined || record?.threadId !== this.#threadId) return;
     const key = String(id);
     this.#pendingApprovals.set(key, { id, method });
-    this.#emit({ type: "approval-requested", requestId: key, kind });
+    // Naru's own MCP tools are already checked by Core (role, scope, hold): Naru answers their use
+    // prompt itself, once, so an autonomous agent does not wait for a person (AP-D017).
+    if (method === "mcpServer/elicitation/request" && record.serverName === "naru") {
+      this.#answered.add(key);
+      this.#rpc?.respond(id, approvalResult(method, "approve"));
+      return;
+    }
+    this.#emit({
+      type: "approval-requested",
+      requestId: key,
+      kind,
+      summary: codexApprovalSummary(method, record),
+    });
   }
 
   #emit(event: AgentRuntimeEvent): void {
@@ -384,6 +397,26 @@ function deny(frame: JsonRpcFrame, message: string): TuiFrameDecision {
     forward: false,
     reply: frame.id === undefined ? null : { id: frame.id, error: { code: -32001, message } },
   };
+}
+
+/** What the person is asked to allow (AP-D017): the command, or what kind of change, shortened. */
+function codexApprovalSummary(method: string, params: Record<string, unknown>): string {
+  const command = Array.isArray(params.command)
+    ? params.command.filter((part): part is string => typeof part === "string").join(" ")
+    : typeof params.command === "string"
+      ? params.command
+      : "";
+  const reason = typeof params.reason === "string" ? params.reason : "";
+  const server = typeof params.serverName === "string" ? params.serverName : "";
+  const text =
+    command !== ""
+      ? `명령: ${command}`
+      : method === "mcpServer/elicitation/request"
+        ? `MCP ${server}`
+        : reason !== ""
+          ? reason
+          : method;
+  return text.length > 300 ? `${text.slice(0, 299)}…` : text;
 }
 
 function approvalResult(method: string, decision: "approve" | "deny"): unknown {

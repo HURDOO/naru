@@ -82,9 +82,18 @@ if (args.includes("app-server")) {
           if (text.includes("APPROVE")) {
             const id = "approval-" + ++nextRequest;
             const answered = new Promise((resolve) => pendingRequests.set(id, resolve));
-            broadcast({ id, method: "item/commandExecution/requestApproval", params: { threadId: p.threadId, turnId: turn, itemId: "cmd" } });
+            broadcast({ id, method: "item/commandExecution/requestApproval", params: { threadId: p.threadId, turnId: turn, itemId: "cmd", command: "pnpm test" } });
             const result = await answered;
             log({ event: "approval", decision: result?.decision });
+            broadcast({ method: "serverRequest/resolved", params: { threadId: p.threadId, requestId: id } });
+          }
+          if (text.includes("NARUTOOL")) {
+            // Codex asks before an MCP tool call; Naru answers for its own server (AP-D017).
+            const id = "elicitation-" + ++nextRequest;
+            const answered = new Promise((resolve) => pendingRequests.set(id, resolve));
+            broadcast({ id, method: "mcpServer/elicitation/request", params: { threadId: p.threadId, turnId: turn, serverName: "naru", mode: "form", _meta: null, message: "Allow get_project_state?", requestedSchema: { type: "object", properties: {} } } });
+            const result = await answered;
+            log({ event: "elicitation", action: result?.action });
             broadcast({ method: "serverRequest/resolved", params: { threadId: p.threadId, requestId: id } });
           }
           if (text.includes("SLOW")) {

@@ -78,7 +78,8 @@ interface ManagedRuntime {
   connection: RunnerConnection | null;
   lastSeq: number;
   gate: WriterGateState;
-  readonly approvals: Map<string, string>;
+  /** requestId → kind and, when the runtime gave one, what is asked (AP-D017). */
+  readonly approvals: Map<string, { readonly kind: string; readonly summary?: string }>;
   /** Native subagents by runtime ref → start time (observation only). */
   readonly children: Map<string, string>;
   readonly history: Map<string, (page: HistoryPage | null) => void>;
@@ -259,10 +260,16 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     return this.runtimeState(agentSessionId);
   }
 
-  pendingApprovals(agentSessionId: string): { requestId: string; kind: string }[] {
-    return [...(this.#runtimes.get(agentSessionId)?.approvals ?? new Map<string, string>())].map(
-      ([requestId, kind]) => ({ requestId, kind }),
-    );
+  pendingApprovals(
+    agentSessionId: string,
+  ): { requestId: string; kind: string; summary?: string }[] {
+    const approvals = this.#runtimes.get(agentSessionId)?.approvals;
+    if (approvals === undefined) return [];
+    return [...approvals].map(([requestId, approval]) => ({
+      requestId,
+      kind: approval.kind,
+      ...(approval.summary === undefined ? {} : { summary: approval.summary }),
+    }));
   }
 
   respondApproval(
@@ -276,6 +283,23 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     if (!authorizeWrite(runtime.gate, writer, generation, "approval-response")) {
       throw new SupervisorError("WRITER_REQUIRED", "Another writer owns this conversation.");
     }
+    if (!runtime.approvals.has(requestId)) {
+      throw new SupervisorError("APPROVAL_UNKNOWN", "The approval is no longer pending.");
+    }
+    runtime.connection!.send({ type: "approval", requestId, decision });
+  }
+
+  /**
+   * The person answers a pending approval from Naru (AP-D017) whoever writes the conversation: an
+   * orchestrator cannot answer approvals, so without this an autonomous agent would wait forever.
+   * The runtime ignores a second answer (a person in the TUI may have answered first).
+   */
+  respondApprovalAsPerson(
+    agentSessionId: string,
+    requestId: string,
+    decision: "approve" | "deny",
+  ): void {
+    const runtime = this.#connected(agentSessionId);
     if (!runtime.approvals.has(requestId)) {
       throw new SupervisorError("APPROVAL_UNKNOWN", "The approval is no longer pending.");
     }
@@ -346,7 +370,9 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     }
     // Reattached after a Naru restart: adopt the runner's live state.
     for (const requestId of hello.pendingApprovals) {
-      if (!runtime.approvals.has(requestId)) runtime.approvals.set(requestId, "permission");
+      if (!runtime.approvals.has(requestId)) {
+        runtime.approvals.set(requestId, { kind: "permission" });
+      }
     }
     if (hello.busy) runtime.gate = { ...runtime.gate, turnActive: true };
     connection.send({ type: "ack", seq: runtime.lastSeq });
@@ -477,7 +503,10 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         if (runtime.gate.phase === "active") this.#wakeups?.turnCompleted(agentSessionId);
         return;
       case "approval-requested":
-        runtime.approvals.set(event.requestId, event.kind);
+        runtime.approvals.set(event.requestId, {
+          kind: event.kind,
+          ...(event.summary === undefined ? {} : { summary: event.summary }),
+        });
         return;
       case "approval-resolved":
         runtime.approvals.delete(event.requestId);

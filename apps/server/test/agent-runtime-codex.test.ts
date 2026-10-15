@@ -287,12 +287,25 @@ describe("managed Codex agent in a DurableSession Host PTY (AP-T13)", () => {
     );
     expect(env.codexEvents().some((event) => event.event === "approval")).toBe(false);
     const [approval] = supervisor.pendingApprovals(worker);
+    expect(approval?.summary).toBe("명령: pnpm test");
     supervisor.respondApproval(worker, approval!.requestId, "approve", "gui", gui.generation);
     await until(() => supervisor.pendingApprovals(worker).length === 0, "approval resolved");
     expect(env.codexEvents().filter((event) => event.event === "approval")).toEqual([
       { event: "approval", decision: "accept" },
     ]);
     await until(() => agent().status === "idle", "approved turn ended");
+
+    // Naru answers Codex's prompt for its own MCP server; the person is not asked (AP-D017).
+    supervisor.sendTurn(worker, "call a NARUTOOL", "gui", gui.generation);
+    await until(
+      () => env.codexEvents().some((event) => event.event === "elicitation"),
+      "MCP prompt answered",
+    );
+    expect(env.codexEvents().filter((event) => event.event === "elicitation")).toEqual([
+      { event: "elicitation", action: "accept" },
+    ]);
+    expect(supervisor.pendingApprovals(worker)).toEqual([]);
+    await until(() => agent().status === "idle", "tool turn ended");
 
     // Interrupt after the lifecycle reports the turn; a native subagent is observed only.
     supervisor.sendTurn(worker, "SLOW work", "gui", gui.generation);

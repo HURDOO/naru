@@ -7,7 +7,8 @@ import { NARU_AGENT_HOOK_MODE_ENV } from "../../agent-hook-cli-env.js";
 /**
  * `--settings` for a Naru-managed Claude session (AP-D015). The capability goes into the hook
  * command itself, never into the Claude process environment its Bash tool can read. Inbound native
- * messages are accepted so they wake the session; the hook decides which ones may pass.
+ * messages are accepted so they wake the session; the hook decides which ones may pass. Naru's own
+ * MCP tools need no person's approval: Core already decides role, scope and holds (AP-D017).
  */
 export function naruClaudeHookSettings(options: {
   readonly runner: string;
@@ -28,6 +29,7 @@ export function naruClaudeHookSettings(options: {
   const handler = { type: "command", command, timeout: 10 };
   return {
     crossSessionInbound: "accept",
+    permissions: { allow: ["mcp__naru"] },
     hooks: {
       PreToolUse: [{ matcher: "SendMessage", hooks: [handler] }],
       UserPromptSubmit: [{ hooks: [handler] }],

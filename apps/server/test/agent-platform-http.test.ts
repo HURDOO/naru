@@ -476,16 +476,13 @@ describe("Agent Platform managed runtime API", () => {
     expect((await post(`/api/agent/agents/${agent.id}/turns`, turn)).statusCode).toBe(202);
     expect((await post(`/api/agent/agents/${agent.id}/turns`, turn)).statusCode).toBe(202);
     expect(runtime.turns).toEqual([turn.text]);
-    const stale = await post(`/api/agent/agents/${agent.id}/approvals/request-1`, {
+    // The person answers approvals whoever writes (AP-D017); an old generation is ignored.
+    await post(`/api/agent/agents/${agent.id}/approvals/request-1`, {
       decision: "approve",
       generation: 1,
     });
-    expect(stale.json()).toMatchObject({ code: "AGENT_WRITER_REQUIRED" });
-    await post(`/api/agent/agents/${agent.id}/approvals/request-1`, {
-      decision: "approve",
-      generation: 2,
-    });
-    expect(runtime.approvals).toEqual(["request-1:approve"]);
+    await post(`/api/agent/agents/${agent.id}/approvals/request-2`, { decision: "deny" });
+    expect(runtime.approvals).toEqual(["request-1:approve", "request-2:deny"]);
 
     const history = await fixture.app.inject({
       method: "GET",
@@ -576,6 +573,9 @@ class FakeRuntime implements AgentRuntimeControl {
     generation: number,
   ): void {
     this.assertWriter(id, writer, generation);
+    this.approvals.push(`${requestId}:${decision}`);
+  }
+  respondApprovalAsPerson(_id: string, requestId: string, decision: "approve" | "deny"): void {
     this.approvals.push(`${requestId}:${decision}`);
   }
   readHistory(): Promise<{ items: unknown[]; nextCursor: string | null }> {

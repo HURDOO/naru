@@ -53,6 +53,12 @@ export interface AgentRuntimeControl {
     writer: WriterKind,
     generation: number,
   ): void;
+  /** The person answers whoever writes the conversation (AP-D017). */
+  respondApprovalAsPerson(
+    agentSessionId: string,
+    requestId: string,
+    decision: "approve" | "deny",
+  ): void;
   readHistory(agentSessionId: string, cursor: string | null): Promise<HistoryPage>;
   switchWriter(agentSessionId: string, to: WriterKind, interrupt: boolean): Promise<unknown>;
 }
@@ -90,6 +96,18 @@ export function registerAgentPlatformRoutes(
     guards.requireUnsafeRequest(request);
     guards.requireSurfaceController(request);
   };
+  const pendingApprovals = (agents: readonly AgentSession[]) =>
+    runtime === undefined
+      ? []
+      : agents.filter(isManaged).flatMap((agent) => {
+          try {
+            return runtime
+              .runtimeState(agent.id)
+              .pendingApprovals.map((approval) => ({ agentSessionId: agent.id, ...approval }));
+          } catch {
+            return []; // not running: nothing can be waiting
+          }
+        });
 
   app.get("/api/agent/overview", (request) => {
     guards.requireSession(request);
@@ -99,10 +117,13 @@ export function registerAgentPlatformRoutes(
   app.get("/api/agent/projects/:id", (request) => {
     guards.requireSession(request);
     const { id } = IdParamsSchema.parse(request.params);
+    const agents = core.listAgentSessions(HUMAN, id);
     return {
       ...core.getProjectState(HUMAN, id),
       pendingIntentContract: core.getPendingIntentContract(HUMAN, id),
-      agents: core.listAgentSessions(HUMAN, id),
+      agents,
+      // What managed agents wait for the person to allow, for the Inbox (AP-D017).
+      pendingApprovals: pendingApprovals(agents),
       instructions: core.getApplicableInstructions(HUMAN, { projectId: id }),
       processes: core.listSharedProcesses(HUMAN, id),
     };
@@ -339,9 +360,7 @@ export function registerAgentPlatformRoutes(
     const { id, requestId } = ApprovalParamsSchema.parse(request.params);
     const input = AgentApprovalResponseRequestSchema.parse(request.body);
     core.getAgentSession(HUMAN, id);
-    runtimeCall(() =>
-      runtime.respondApproval(id, requestId, input.decision, "gui", input.generation),
-    );
+    runtimeCall(() => runtime.respondApprovalAsPerson(id, requestId, input.decision));
     return runtimeCall(() => runtime.runtimeState(id));
   });
 }

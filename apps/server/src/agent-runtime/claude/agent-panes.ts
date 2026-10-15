@@ -212,7 +212,10 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
       }),
       mcpServers: this.#mcpServers(capability),
       instructions: roleInstructions(agent),
-      permissionMode: "default",
+      // Working roles edit inside their working directory without asking; commands still ask the
+      // person (AP-D017). Orchestrators and reviewers do not edit code.
+      permissionMode:
+        agent.role === "worker" || agent.role === "specialist" ? "acceptEdits" : "default",
       environment: {},
     };
   }

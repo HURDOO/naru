@@ -561,7 +561,14 @@ export const AgentRuntimeStateSchema = z.strictObject({
   turnActive: z.boolean(),
   launchMode: AgentLaunchModeSchema,
   pendingApprovals: z
-    .array(z.strictObject({ requestId: z.string().min(1).max(200), kind: z.string().max(40) }))
+    .array(
+      z.strictObject({
+        requestId: z.string().min(1).max(200),
+        kind: z.string().max(40),
+        /** What is asked (tool and command or path); from the runtime, never stored (AP-D017). */
+        summary: z.string().max(300).optional(),
+      }),
+    )
     .max(64),
   /** Native subagents running now: observed only (L1/L2, AP-D014), never controlled from Naru. */
   children: z
@@ -577,9 +584,13 @@ export const AgentTurnRequestSchema = z.strictObject({
   idempotencyKey: IdempotencyKeySchema,
 });
 export const AgentInterruptRequestSchema = z.strictObject({ generation: WriterGeneration });
+/**
+ * The person answers an approval (AP-D017). Since 2026-10-15 this works whoever writes the
+ * conversation; `generation` is accepted for older clients and ignored.
+ */
 export const AgentApprovalResponseRequestSchema = z.strictObject({
   decision: z.enum(["approve", "deny"]),
-  generation: WriterGeneration,
+  generation: WriterGeneration.optional(),
 });
 export const AgentHistoryQuerySchema = z.strictObject({
   cursor: z.string().min(1).max(1_024).optional(),

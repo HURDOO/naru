@@ -53,6 +53,8 @@ const EVENT_FIRST_PAGE = 300;
 const EVENT_PAGE = 500;
 const EVENT_WINDOW = 1_000;
 const ACTIVITY_ITEMS = 40;
+/** Inbox rows for approvals open the agent that waits (AP-D017). */
+const APPROVAL_PREFIX = "approval:";
 
 interface AgentViewProps {
   readonly api: NaruApi;
@@ -166,6 +168,7 @@ export function AgentView({
   const selectTask = (id: string) => setSelection({ kind: "task", id });
   const selectHandoff = (id: string) => setSelection({ kind: "handoff", id });
   const projectName = projects.find((project) => project.id === projectId)?.name ?? "프로젝트";
+  const inboxCount = (view?.openHandoffs.length ?? 0) + (view?.pendingApprovals.length ?? 0);
   const allAgents = useMemo(
     () => [...(view?.agents ?? []), ...(overview?.globalAgents ?? [])],
     [view, overview],
@@ -257,16 +260,31 @@ export function AgentView({
             }
           />
           <AgentListSection
-            title={`Inbox${view !== null && view.openHandoffs.length > 0 ? ` (${view.openHandoffs.length})` : ""}`}
+            title={`Inbox${inboxCount > 0 ? ` (${inboxCount})` : ""}`}
             empty="답할 질문이 없습니다."
-            items={(view?.openHandoffs ?? []).map((handoff) => ({
-              id: handoff.id,
-              label: handoffKindLabel(handoff.kind),
-              detail: handoff.payload.reason,
-              tone: "attention",
-            }))}
+            items={[
+              ...(view?.openHandoffs ?? []).map((handoff) => ({
+                id: handoff.id,
+                label: handoffKindLabel(handoff.kind),
+                detail: handoff.payload.reason,
+                tone: "attention",
+              })),
+              ...(view?.pendingApprovals ?? []).map((approval) => {
+                const owner = allAgents.find((agent) => agent.id === approval.agentSessionId);
+                return {
+                  id: `${APPROVAL_PREFIX}${approval.agentSessionId}`,
+                  label: `${approvalKindLabel(approval.kind)} 승인 · ${owner === undefined ? "에이전트" : agentTitle(owner)}`,
+                  detail: approval.summary ?? "에이전트가 허락을 기다립니다.",
+                  tone: "attention",
+                };
+              }),
+            ]}
             selectedId={selection?.kind === "handoff" ? selection.id : null}
-            onSelect={selectHandoff}
+            onSelect={(id) =>
+              id.startsWith(APPROVAL_PREFIX)
+                ? selectAgent(id.slice(APPROVAL_PREFIX.length))
+                : selectHandoff(id)
+            }
           />
           <AgentListSection
             title="공유 프로세스"
@@ -710,50 +728,42 @@ function AgentDetail({
       {runtime !== null && runtime.pendingApprovals.length > 0 && (
         <section className="agent-panel-section" aria-label="승인 대기">
           <h3>승인 대기</h3>
+          <p className="agent-hint">
+            대화를 넘겨받지 않아도 답할 수 있습니다. 명령은 내용을 확인한 뒤 승인하세요.
+          </p>
           <ul className="agent-approvals">
             {runtime.pendingApprovals.map((approval) => (
               <li key={approval.requestId}>
-                <span>{approvalKindLabel(approval.kind)} 요청</span>
-                {humanWritesInChat ? (
-                  <span className="agent-approval-actions">
-                    <button
-                      className="primary-button compact"
-                      type="button"
-                      disabled={!mutationAllowed}
-                      onClick={() =>
-                        void act("승인했습니다.", () =>
-                          api.respondAgentApproval(
-                            agent.id,
-                            approval.requestId,
-                            "approve",
-                            runtime.generation,
-                          ),
-                        )
-                      }
-                    >
-                      승인
-                    </button>
-                    <button
-                      className="quiet-button"
-                      type="button"
-                      disabled={!mutationAllowed}
-                      onClick={() =>
-                        void act("거부했습니다.", () =>
-                          api.respondAgentApproval(
-                            agent.id,
-                            approval.requestId,
-                            "deny",
-                            runtime.generation,
-                          ),
-                        )
-                      }
-                    >
-                      거부
-                    </button>
-                  </span>
-                ) : (
-                  <span className="agent-hint">Chat으로 개입하면 답할 수 있습니다.</span>
-                )}
+                <span className="agent-approval-text">
+                  <strong>{approvalKindLabel(approval.kind)} 요청</strong>
+                  {approval.summary !== undefined && <code>{approval.summary}</code>}
+                </span>
+                <span className="agent-approval-actions">
+                  <button
+                    className="primary-button compact"
+                    type="button"
+                    disabled={!mutationAllowed}
+                    onClick={() =>
+                      void act("승인했습니다.", () =>
+                        api.respondAgentApproval(agent.id, approval.requestId, "approve"),
+                      )
+                    }
+                  >
+                    승인
+                  </button>
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled={!mutationAllowed}
+                    onClick={() =>
+                      void act("거부했습니다.", () =>
+                        api.respondAgentApproval(agent.id, approval.requestId, "deny"),
+                      )
+                    }
+                  >
+                    거부
+                  </button>
+                </span>
               </li>
             ))}
           </ul>

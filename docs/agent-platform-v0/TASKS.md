@@ -308,6 +308,11 @@
     - Host 한도 같은 Naru 거절이 에이전트에게 `INTERNAL`로 갔다 → 의미 있는 code로 전달한다.
     - 예상하지 못한 tool 실패가 어디에도 기록되지 않았다 → `agent.tool.failed`(tool 이름과 오류 종류만)
     - 실행하지 못한 에이전트가 `starting`·`unknown`에 머물렀다 → `failed`로 바꿔 orchestrator를 깨운다.
+    - orchestrator가 writer일 때 도구 승인에 답할 주체가 없어 자율 진행이 멈췄다 → AP-D017(proposed).
+      - Naru MCP 도구는 묻지 않는다. 작업 역할은 편집을 묻지 않는다.
+      - 명령 승인은 요약과 함께 Inbox와 Agent Panel에 보인다. 사람이 대화를 넘겨받지 않고 답한다.
+      - 화면 확인: UI sandbox, 1440px·360px. 요청 요약 "Bash: pnpm test"가 보였다. Inbox에서 답한 뒤 승인
+        대기 0건이었고 writer는 orchestrator로 돌아갔다.
   - `pnpm test:e2e`: 29건 중 27건이 PASS다. 실패 2건(`mobile-output-copy:13`, `terminal-stability:56`)은
     문서에 기록된 기존 전체 실행 flaky다. 둘 다 재실행에서 통과했다. 기준 commit에서도 같은 spec을 돌려
     비교했다.
