@@ -289,6 +289,7 @@ export class CodexManagedSession {
           threadId: this.#threadId,
           limit: HISTORY_PAGE,
           sortDirection: "asc",
+          itemsView: "full",
           ...(cursor === null ? {} : { cursor }),
         }),
       );
