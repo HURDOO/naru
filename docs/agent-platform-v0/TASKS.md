@@ -92,13 +92,22 @@
 
 ### AP-T10. Event Store와 reconciler
 
-- [-] outbox, idempotency, orchestrator별 lease와 revision check, 재시작 reconcile(`unknown` 상태의
-  Run은 런타임에 조회한다).
+- [x] outbox, idempotency, orchestrator별 lease와 revision check, 재시작 reconcile(`unknown` 상태의
+      Run은 런타임에 조회한다).
 - 진행(2026-10-15):
   - 완료: AP-T09의 전역 순서 이벤트, cursor, idempotency, 재시작 시 `unknown` 처리.
     `OrchestratorWakeups`와 테스트 5개. 다룬 범위는 오케스트레이터별 in-flight turn 하나, 자기 이벤트
     무시, 사람 hold 중 누적, 빈도 제한, cursor 기반 재전달, main 오케스트레이터 범위, 전달 실패 재시도다.
-  - 남음: 런타임 조회 reconciler(Phase 3 어댑터의 probe가 필요하다), 실제 OrchestratorInvoker 연결.
+  - 2026-10-15 추가:
+    - 실제 OrchestratorInvoker를 연결했다. supervisor가 orchestrator 대화에 wakeup turn을 넣는다(AP-T16).
+    - 재시작 reconciler: Naru가 다시 시작하면 runtime이 스스로 상태를 보고한다. 살아 있는 runner와
+      Codex relay는 재접속하며 hello로 진행 중·대기·승인 대기를 알린다. 이것이 probe다.
+      - 유예 시간 안에 돌아오지 않은 에이전트는 `unknown`이 된다. 그 에이전트의 진행 중 Run도
+        `unknown`이 된다. 다른 에이전트의 Run은 그대로 둔다(A13).
+      - Claude TUI 형태는 Pane이 살아 있으면 유지한다.
+      - 실행 중에 연결이 끊긴 경우도 같은 규칙을 따른다.
+    - 바인딩 없는 Session: 에이전트는 Naru를 거쳐서만 Session을 만든다(AP-D006). 공유 프로세스는
+      재시작 때 Host Session과 대조해 없으면 `unknown`으로 둔다.
 
 ### AP-T11. Agent identity와 Naru MCP
 

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Actor, AgentEvent, HandoffPayload } from "@naru/contracts/naru-agent/v1";
 import { AgentPlatformCore, AgentPlatformError } from "../src/agent-platform/core.js";
 import { HoldMonitor } from "../src/agent-runtime/hold-monitor.js";
+import { ManagedAgentSupervisor } from "../src/agent-runtime/supervisor.js";
 import { DATABASE_MIGRATIONS, NaruRepository, runDatabaseMigrations } from "../src/database.js";
 
 const HUMAN: Actor = { kind: "human" };
@@ -399,6 +400,69 @@ describe("Agent Platform core", () => {
       "AGENT_INVALID_STATE",
     );
     expect(fixture.core.mergeGate(HUMAN, task.id)).toEqual({ open: true, reasons: [] });
+  });
+
+  it("after a restart marks only agents whose runtime did not come back unknown (A13)", async () => {
+    const fixture = platform();
+    const { orchestrator, worker, reviewer } = fixture.team();
+    for (const agentSessionId of [worker, reviewer]) {
+      fixture.repository.createAgentPane(agentSessionId, "agent");
+      fixture.core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "active" });
+    }
+    const task = fixture.core.createTask(fixture.ctx(agent(orchestrator)), {
+      projectId: fixture.projectId,
+      title: "work across a restart",
+      purpose: "",
+      completionCriteria: [],
+      originInstructionId: fixture.goal(),
+      assigneeAgentSessionId: worker,
+    });
+    const lost = fixture.core.startRun(fixture.ctx(agent(orchestrator)), {
+      taskId: task.id,
+      agentSessionId: worker,
+      runtime: "claude",
+    });
+    const kept = fixture.core.startRun(fixture.ctx(agent(orchestrator)), {
+      taskId: task.id,
+      agentSessionId: reviewer,
+      runtime: "codex",
+    });
+    const supervisor = new ManagedAgentSupervisor({
+      core: fixture.core,
+      launcher: { launch: () => Promise.resolve(), stop: () => Promise.resolve() },
+      channelSocketPath: "/nonexistent/agent-runtime.sock",
+      planFor: () => {
+        throw new Error("unused");
+      },
+      disconnectGraceMs: 50,
+    });
+    supervisor.reconcileAfterStart(() => false);
+    // The reviewer's runtime comes back within the grace period and reports itself.
+    supervisor.connected(
+      { agentSessionId: reviewer, send: () => undefined, close: () => undefined },
+      {
+        type: "hello",
+        version: 1,
+        token: "t".repeat(43),
+        started: true,
+        runtimeSessionRef: "thread-1",
+        busy: true,
+        pendingApprovals: [],
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fixture.core.getAgentSession(HUMAN, worker).status).toBe("unknown");
+    expect(fixture.core.getAgentSession(HUMAN, reviewer).status).toBe("active");
+    const runs = fixture.repository.agentPlatform.listRunsByStatus([
+      "starting",
+      "running",
+      "unknown",
+    ]);
+    expect(Object.fromEntries(runs.map((run) => [run.id, run.status]))).toEqual({
+      [lost.id]: "unknown",
+      [kept.id]: "starting",
+    });
+    supervisor.close();
   });
 
   it("marks interrupted runs unknown instead of inventing an outcome", () => {

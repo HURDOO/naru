@@ -451,6 +451,17 @@ export class AgentPlatformStore {
       .all() as string[];
   }
 
+  listLiveAgentSessions(): AgentSession[] {
+    return (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_sessions WHERE status IN ('starting', 'active', 'idle')
+           ORDER BY created_at`,
+        )
+        .all() as AgentSessionRow[]
+    ).map(agentSessionFromRow);
+  }
+
   /** Agent session whose dash-less id starts with `prefix` (native session names, AP-D015). */
   findAgentSessionsByIdPrefix(prefix: string): AgentSession[] {
     const rows = this.#database

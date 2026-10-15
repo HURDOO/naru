@@ -96,6 +96,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   readonly #planFor: (agent: AgentSession) => AnyRunnerPlan;
   readonly #runtimes = new Map<string, ManagedRuntime>();
   #wakeups: OrchestratorWakeups | null = null;
+  #startupTimer: NodeJS.Timeout | null = null;
+  readonly #disconnectGraceMs: number;
 
   constructor(options: {
     readonly core: AgentPlatformCore;
@@ -104,7 +106,10 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     readonly channelSocketPath: string;
     /** Built when a fresh runner asks for it, so it always resumes the recorded conversation. */
     readonly planFor: (agent: AgentSession) => AnyRunnerPlan;
+    /** How long a vanished runtime may take to come back before it is `unknown`. */
+    readonly disconnectGraceMs?: number;
   }) {
+    this.#disconnectGraceMs = options.disconnectGraceMs ?? DISCONNECT_GRACE_MS;
     this.#core = options.core;
     this.#launcher = options.launcher;
     this.#channelSocketPath = options.channelSocketPath;
@@ -360,18 +365,46 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     runtime.disconnectTimer = setTimeout(() => {
       runtime.disconnectTimer = null;
       if (runtime.connection !== null) return;
-      runtime.approvals.clear();
-      runtime.gate = { ...runtime.gate, turnActive: false };
-      this.#core.updateAgentRuntimeState(SYSTEM, {
-        agentSessionId: connection.agentSessionId,
-        status: "unknown",
-      });
-    }, DISCONNECT_GRACE_MS);
+      this.#markUnknown(connection.agentSessionId, runtime);
+    }, this.#disconnectGraceMs);
     runtime.disconnectTimer.unref();
+  }
+
+  /**
+   * After a Naru restart (AP-T10): an agent that Naru believes alive but whose runtime has not
+   * reached Naru within the grace period is `unknown`, and so are its unfinished runs. A runner that
+   * comes back reports its own state instead. Claude's TUI form has no channel; its live Pane counts.
+   */
+  reconcileAfterStart(isPaneRunning: (paneId: string) => boolean): void {
+    const timer = setTimeout(() => {
+      for (const agent of this.#core.listLiveManagedAgents(SYSTEM)) {
+        const runtime = this.#runtimes.get(agent.id);
+        if (runtime?.connection != null) continue;
+        if (agent.launchMode === "tui" && agent.runtime === "claude" && agent.paneId !== null) {
+          if (isPaneRunning(agent.paneId)) continue;
+        }
+        this.#markUnknown(agent.id, runtime ?? this.#runtime(agent.id, agent.runtimeSessionRef));
+      }
+    }, this.#disconnectGraceMs);
+    timer.unref();
+    this.#startupTimer = timer;
+  }
+
+  #markUnknown(agentSessionId: string, runtime: ManagedRuntime): void {
+    runtime.approvals.clear();
+    runtime.children.clear();
+    runtime.gate = { ...runtime.gate, turnActive: false };
+    this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "unknown" });
+    this.#core.markInterruptedRunsUnknown(
+      { actor: SYSTEM, idempotencyKey: randomUUID() },
+      { agentSessionId },
+    );
   }
 
   /** Releases timers when this Naru process shuts down; runners keep running. */
   close(): void {
+    if (this.#startupTimer !== null) clearTimeout(this.#startupTimer);
+    this.#startupTimer = null;
     for (const runtime of this.#runtimes.values()) {
       if (runtime.disconnectTimer !== null) clearTimeout(runtime.disconnectTimer);
       if (runtime.resumeTimer !== null) clearTimeout(runtime.resumeTimer);

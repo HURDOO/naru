@@ -759,7 +759,10 @@ export class AgentPlatformCore {
    * Restart recovery (INV-07, SOURCE_SPEC §12): runs that were live when Naru stopped become
    * `unknown`. Success or failure is never invented; the runtime adapter must confirm it later.
    */
-  markInterruptedRunsUnknown(context: CommandContext): Run[] {
+  markInterruptedRunsUnknown(
+    context: CommandContext,
+    filter: { readonly agentSessionId?: string } = {},
+  ): Run[] {
     if (context.actor.kind !== "system") {
       throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only Naru recovery marks runs unknown.");
     }
@@ -767,6 +770,10 @@ export class AgentPlatformCore {
     const events: AgentEvent[] = [];
     this.#store.transaction(() => {
       for (const run of this.#store.listRunsByStatus(["starting", "running"])) {
+        // Recovery is per runtime: a run whose agent came back keeps running (A13).
+        if (filter.agentSessionId !== undefined && run.agentSessionId !== filter.agentSessionId) {
+          continue;
+        }
         const next: Run = { ...run, status: "unknown" };
         this.#store.updateRun(next);
         changed.push(next);
@@ -1339,6 +1346,14 @@ export class AgentPlatformCore {
       openHandoffs: this.#store.listOpenHandoffs(null),
       globalAgents: this.#store.listAgentSessions(null),
     };
+  }
+
+  /** Naru-launched agents Naru still considers alive (restart reconciliation, AP-T10). */
+  listLiveManagedAgents(actor: Actor): AgentSession[] {
+    this.#requireSystem(actor);
+    return this.#store
+      .listLiveAgentSessions()
+      .filter((agent) => agent.paneId !== null && !agent.native);
   }
 
   listAgentSessions(actor: Actor, projectId: string | null): AgentSession[] {

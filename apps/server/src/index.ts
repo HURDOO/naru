@@ -233,8 +233,10 @@ const closeAgents = async (): Promise<void> => {
 let app: Awaited<ReturnType<typeof buildApp>>;
 try {
   await agentSocket?.start();
-  // Runners that outlived a Naru restart reconnect here (their Host PTYs keep running).
+  // Runners that outlived a Naru restart reconnect here (their Host PTYs keep running); those that
+  // do not come back within the grace period are marked unknown with their runs (AP-T10).
   await runtimeChannel?.start();
+  managedAgents?.reconcileAfterStart((paneId) => supervisor.isRunning(paneId));
   app = await buildApp(config, {
     repository,
     pathPolicy,
