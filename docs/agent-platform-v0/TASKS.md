@@ -47,8 +47,8 @@
 
 ### AP-T05. Claude 런타임 검증 (V03, V05, V07)
 
-- [-] `spike/claude-runtime`. 완료 조건: `validation/claude-runtime.md`와 `HANDOFF.yaml`을 commit하고
-  integration이 인수한다.
+- [x] `spike/claude-runtime`. 완료 조건: `validation/claude-runtime.md`와 `HANDOFF.yaml`을 commit하고
+      integration이 인수한다. 2026-10-15에 인수해 `dd723e7`로 병합했다.
 
 ### AP-T06. Claude 메시징 검증 (V06, V08 Claude 측)
 
