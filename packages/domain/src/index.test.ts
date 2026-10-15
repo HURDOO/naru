@@ -170,9 +170,7 @@ describe("layout domain", () => {
       (_, index) => `${String(index).padStart(8, "0")}-0000-4000-8000-000000000000`,
     );
     for (const id of ids) layout = insertCollapsedPane(layout, id);
-    expect(() =>
-      validateLayout(layout, new Set([paneA, paneB, paneC, ...ids])),
-    ).not.toThrow();
+    expect(() => validateLayout(layout, new Set([paneA, paneB, paneC, ...ids]))).not.toThrow();
     expect(visiblePaneIds(layout)).toEqual([paneA, paneB]);
   });
 });

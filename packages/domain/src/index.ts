@@ -83,11 +83,7 @@ export function insertCollapsedPane(root: LayoutNode | null, newPaneId: string):
     if (node.type === "pane") target = node;
     else queue.push(node.first, node.second);
   }
-  return setPaneCollapsed(
-    splitPane(root, target.paneId, newPaneId, "horizontal"),
-    newPaneId,
-    true,
-  );
+  return setPaneCollapsed(splitPane(root, target.paneId, newPaneId, "horizontal"), newPaneId, true);
 }
 
 export function removePane(root: LayoutNode | null, paneId: string): LayoutNode | null {

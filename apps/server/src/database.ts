@@ -1521,8 +1521,13 @@ export class NaruRepository {
           const bound = this.getPaneContext(process.paneId)?.pane;
           if (bound !== undefined) return bound;
         }
-        return this.#insertCollapsedPane(process.projectId, "terminal", title, "shell", (paneId, now) =>
-          this.agentPlatform.updateSharedProcess({ ...process, paneId, updatedAt: now }),
+        return this.#insertCollapsedPane(
+          process.projectId,
+          "terminal",
+          title,
+          "shell",
+          (paneId, now) =>
+            this.agentPlatform.updateSharedProcess({ ...process, paneId, updatedAt: now }),
         );
       })
       .immediate();

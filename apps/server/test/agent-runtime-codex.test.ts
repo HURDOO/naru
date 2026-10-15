@@ -243,9 +243,17 @@ describe("managed Codex agent in a DurableSession Host PTY (AP-T13)", () => {
 
     // A person typing in the TUI is refused while the orchestrator owns the conversation.
     const typed: string[] = [];
-    const detach = await env.facade.attach(paneId, 120, 40, (frame) => {
-      if (frame.type === "terminal.output") typed.push(frame.data);
-    }, undefined, undefined, { attachmentKey: "test-person", control: "controller" });
+    const detach = await env.facade.attach(
+      paneId,
+      120,
+      40,
+      (frame) => {
+        if (frame.type === "terminal.output") typed.push(frame.data);
+      },
+      undefined,
+      undefined,
+      { attachmentKey: "test-person", control: "controller" },
+    );
     cleanups.push(detach);
     await env.facade.setControlDesired(paneId, true, 120, 40, "test-person");
     const tuiTurns = () => env.codexEvents().filter((event) => event.event === "tui-turn");

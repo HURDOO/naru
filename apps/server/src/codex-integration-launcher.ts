@@ -46,7 +46,9 @@ async function launch(): Promise<void> {
     // The runner channel token stays in the relay; Codex and its tools never see it.
     ...(managed === undefined
       ? {}
-      : { managed: { socketPath: managed.NARU_RUNTIME_SOCKET, token: managed.NARU_RUNTIME_TOKEN } }),
+      : {
+          managed: { socketPath: managed.NARU_RUNTIME_SOCKET, token: managed.NARU_RUNTIME_TOKEN },
+        }),
   });
   process.exitCode = exitCode;
 }

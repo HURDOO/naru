@@ -249,7 +249,8 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
   }
 
   #paneContext(agent: AgentSession): PaneContext {
-    const context = agent.paneId === null ? undefined : this.#repository.getPaneContext(agent.paneId);
+    const context =
+      agent.paneId === null ? undefined : this.#repository.getPaneContext(agent.paneId);
     if (context === undefined) {
       throw new AppError("AGENT_INVALID_STATE", 409, "에이전트 Pane이 없습니다.");
     }

@@ -147,7 +147,9 @@ export interface AppDependencies {
   /** Which Panes a person's controller device should control; agent-run Panes wait for a hold. */
   paneControlPolicy?: PaneControlPolicy;
   /** Notes that a person typed into a Pane or wrote to an agent (hold idle timeout, AP-D005). */
-  noteHumanInput?: (target: { readonly paneId: string } | { readonly agentSessionId: string }) => void;
+  noteHumanInput?: (
+    target: { readonly paneId: string } | { readonly agentSessionId: string },
+  ) => void;
 }
 
 export async function buildApp(
@@ -581,15 +583,22 @@ export async function buildApp(
   });
 
   if (dependencies.agentPlatform !== undefined) {
-    registerAgentPlatformRoutes(app, dependencies.agentPlatform, {
-      requireSession: (request) => {
-        requireSession(request, sessions);
+    registerAgentPlatformRoutes(
+      app,
+      dependencies.agentPlatform,
+      {
+        requireSession: (request) => {
+          requireSession(request, sessions);
+        },
+        requireUnsafeRequest: (request) => {
+          requireUnsafeRequest(request, config, sessions);
+        },
+        requireSurfaceController: (request) => requireSurfaceController(request, leases),
       },
-      requireUnsafeRequest: (request) => {
-        requireUnsafeRequest(request, config, sessions);
-      },
-      requireSurfaceController: (request) => requireSurfaceController(request, leases),
-    }, dependencies.agentRuntime, dependencies.sharedProcesses, dependencies.noteHumanInput);
+      dependencies.agentRuntime,
+      dependencies.sharedProcesses,
+      dependencies.noteHumanInput,
+    );
   }
 
   app.get("/api/projects", (request) => {

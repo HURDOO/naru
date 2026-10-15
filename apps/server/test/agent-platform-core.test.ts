@@ -770,7 +770,11 @@ describe("shared processes, holds and spawned agents (AP-D005, AP-D006)", () => 
         },
         process: (processId, reason) => {
           released.push(`process:${reason}`);
-          fixture.core.setSharedProcessHold(fixture.ctx(SYSTEM), { processId, held: false, reason });
+          fixture.core.setSharedProcessHold(fixture.ctx(SYSTEM), {
+            processId,
+            held: false,
+            reason,
+          });
           return Promise.resolve();
         },
       },

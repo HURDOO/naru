@@ -70,9 +70,7 @@ describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
       ok: false,
       code: "AGENT_ROLE_DENIED",
     });
-    expect(
-      await call(fixture.orchestratorToken, "spawn_agent", { role: "worker" }),
-    ).toMatchObject({
+    expect(await call(fixture.orchestratorToken, "spawn_agent", { role: "worker" })).toMatchObject({
       ok: true,
       result: { role: "worker", parentAgentSessionId: fixture.orchestrator },
     });

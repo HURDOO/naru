@@ -130,15 +130,25 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
   }
 
   preflight(context: PaneContext): void {
-    if (context.pane.kind === "claude" && context.pane.launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE) {
+    if (
+      context.pane.kind === "claude" &&
+      context.pane.launchProfile === CLAUDE_AGENT_LAUNCH_PROFILE
+    ) {
       this.#requireAgentPanes().preflight(context);
       this.#authenticatedClaude(context, childEnvironment(this.#environment));
       return;
     }
-    if (context.pane.kind === "codex" && context.pane.launchProfile === CODEX_AGENT_LAUNCH_PROFILE) {
+    if (
+      context.pane.kind === "codex" &&
+      context.pane.launchProfile === CODEX_AGENT_LAUNCH_PROFILE
+    ) {
       this.#requireCodexAgentPanes().preflight(context);
       const executable = resolveCodexExecutable(this.#codexExecutable, this.#environment);
-      this.#ensureCodexAvailable(executable, context.projectPath, childEnvironment(this.#environment));
+      this.#ensureCodexAvailable(
+        executable,
+        context.projectPath,
+        childEnvironment(this.#environment),
+      );
       return;
     }
     this.resolve(context);
@@ -182,7 +192,11 @@ export class LaunchProfileRegistry implements PaneLaunchResolver {
       return codexAgentPanes.resolve(context, {
         codexExecutable,
         environment,
-        profileArgs: codexArguments(CODEX_PROFILES["codex-main"], null, this.#codexSessionHookCommand),
+        profileArgs: codexArguments(
+          CODEX_PROFILES["codex-main"],
+          null,
+          this.#codexSessionHookCommand,
+        ),
       });
     }
 
