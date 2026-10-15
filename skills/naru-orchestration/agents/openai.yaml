@@ -1,0 +1,4 @@
+interface:
+  display_name: "Naru Orchestration"
+  short_description: "Work with Naru tools, people and other agents"
+  default_prompt: "Use $naru-orchestration to carry out this task through Naru."

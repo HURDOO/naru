@@ -204,8 +204,23 @@
 
 ### AP-T16. 오케스트레이터 호출과 Skills
 
-- [ ] Main과 Project orchestrator의 이벤트 기반 turn 트리거, 비차단 Handoff, review와 intent 검사
+- [x] Main과 Project orchestrator의 이벤트 기반 turn 트리거, 비차단 Handoff, review와 intent 검사
       경로, `skills/naru-orchestration`.
+- 진행(2026-10-15):
+  - wakeup
+    - orchestrator 역할의 관리형 에이전트는 대화가 준비되면 wakeup 대상에 등록된다. 이벤트 참조만 담은
+      turn을 받는다.
+    - 실제 runner process로 확인했다: 사용자의 project 지시, hold 중 누적, 해제 시 한 묶음 전달.
+    - 결함 수정: runtime 상태 보고(`agent_session.updated`)가 자기 turn마다 자신을 다시 깨우는
+      반복이 있었다. 이제 다른 에이전트의 failed·unknown·stopped만 깨운다.
+  - `skills/naru-orchestration`: 공통 규칙과 역할별 규칙
+    - 다루는 규칙: 사용자 지시 우선, AP-D014 보조 에이전트, 설계 이탈, handoff 품질, 공유 프로세스와
+      비밀(AP-D003), hold
+    - 관리형 Claude는 runner의 system prompt와 TUI의 `--append-system-prompt`로 같은 지침을 받는다.
+    - `SKILL.md`는 서버 지침과 같은지, 본문의 도구가 실제로 있는지 skill 검증기가 확인한다.
+  - main orchestrator: 전역 세션이다. Pane은 사람이 고른 host project의 작업공간에 둔다.
+  - 비차단 handoff, review, merge gate 경로는 AP-T09·T11의 Core와 도구를 쓴다.
+  - 실제 모델로 하는 오케스트레이터 행동 인수(A02, A03 등)는 AP-T18에서 한다.
 
 ### AP-T17. 웹 화면
 

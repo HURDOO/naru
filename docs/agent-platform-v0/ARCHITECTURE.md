@@ -141,8 +141,12 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
     orchestrator에게 돌려준 뒤 hold를 푼다. 그래서 깨어난 orchestrator가 바로 쓸 수 있다.
   - `POST /turns`, `/interrupt`, `/approvals/:requestId`: 사람이 writer이고 browser가 본 generation이
     현재 것일 때만 받는다. Chat turn은 그 에이전트에 대한 사람의 원문 지시로 기록한다(AP-D002).
-- orchestrator 역할의 에이전트는 대화가 준비되면 wakeup 대상에 등록된다(AP-T16에서 지시 형식을
-  완성한다).
+- orchestrator 역할의 에이전트는 대화가 준비되면 wakeup 대상에 등록된다.
+  - 깨우는 이벤트에서 runtime 상태 보고는 뺀다. 다른 에이전트의 failed·unknown·stopped만 남긴다.
+  - 행동 지침(`skills/naru-orchestration`)은 runner의 system prompt와 TUI의 `--append-system-prompt`로
+    넣는다.
+- main orchestrator는 project가 없는 전역 세션이다. Pane과 작업 디렉터리는 사람이 생성할 때 고른 host
+  project의 것을 쓴다.
 - runtime 상태(`GET /runtime`)는 writer, generation, 형태, 대기 중인 승인, 실행 중인 보조 에이전트를
   보여 준다. 보조 에이전트는 관찰만 한다(AP-D014).
 

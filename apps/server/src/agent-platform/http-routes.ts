@@ -35,7 +35,7 @@ const EmptyBodySchema = z.strictObject({}).optional();
 
 /** The managed agent runtime (ManagedAgentSupervisor) as the browser routes use it. */
 export interface AgentRuntimeControl {
-  launch(agentSessionId: string): Promise<void>;
+  launch(agentSessionId: string, options?: { readonly hostProjectId?: string }): Promise<void>;
   stop(agentSessionId: string): void;
   runtimeState(agentSessionId: string): AgentRuntimeState;
   assertWriter(
@@ -234,10 +234,11 @@ export function registerAgentPlatformRoutes(
     mutate(request);
     const input = CreateManagedAgentRequestSchema.parse(request.body);
     const replay = core.commandRecorded(HUMAN, input.idempotencyKey);
+    const main = input.role === "main-orchestrator";
     const agent = core.registerAgentSession(
       { actor: HUMAN, idempotencyKey: input.idempotencyKey },
       {
-        projectId: input.projectId,
+        projectId: main ? null : input.projectId,
         role: input.role,
         runtime: input.runtime,
         native: false,
@@ -245,7 +246,11 @@ export function registerAgentPlatformRoutes(
         conversationWriter: "orchestrator",
       },
     );
-    if (!replay) await runtimeCall(() => runtime.launch(agent.id));
+    if (!replay) {
+      await runtimeCall(() =>
+        runtime.launch(agent.id, main ? { hostProjectId: input.hostProjectId } : {}),
+      );
+    }
     return reply.code(201).send(core.getAgentSession(HUMAN, agent.id));
   });
 

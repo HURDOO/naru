@@ -50,6 +50,7 @@ export function query({ prompt, options }) {
     mcp: Object.keys(options.mcpServers),
     runtimeToken: options.env.NARU_RUNTIME_TOKEN ?? null,
     bootstrap: options.env.NARU_CLAUDE_HOOK_BOOTSTRAP ?? null,
+    guidance: options.systemPrompt.append.includes("## Working through Naru"),
   }) + "\\n");
   async function* run() {
     yield { type: "system", subtype: "init", session_id: options.resume ?? "${SESSION}" };
@@ -333,6 +334,7 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
       mcp: ["naru"],
       runtimeToken: null,
       bootstrap: null,
+      guidance: true,
     });
 
     // The console in the Pane shows lifecycle only, never conversation text.
@@ -383,6 +385,10 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
       expect.arrayContaining(["--resume", SESSION, "--model", "claude-opus-5-5", "--strict-mcp-config"]),
     );
     expect(tuiArgs?.join(" ")).toContain("--setting-sources project,local");
+    // The TUI form gets the same naru-orchestration guidance as the runner.
+    expect(tuiArgs?.[tuiArgs.indexOf("--append-system-prompt") + 1]).toContain(
+      "## Role: worker",
+    );
     expect(() => supervisor.sendTurn(worker, "late", "orchestrator", 1)).toThrow();
 
     // TUI → orchestrator: the TUI exits and a fresh runner resumes the conversation.

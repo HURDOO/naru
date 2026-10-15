@@ -43,6 +43,35 @@ describe("orchestrator wakeups", () => {
     wakeups.close();
   });
 
+  it("ignores routine runtime state reports but wakes when another agent fails", async () => {
+    const fixture = setup();
+    const wakeups = fixture.wakeups();
+    wakeups.register(fixture.orchestrator);
+    await flush();
+    fixture.clock.value += 10_000;
+    wakeups.turnCompleted(fixture.orchestrator);
+    await flush();
+    const before = fixture.batches.length;
+    const system: Actor = { kind: "system" };
+    // Its own turn and a worker's turn report active/idle: no wakeup (no self-wakeup loop).
+    for (const agentSessionId of [fixture.orchestrator, fixture.worker]) {
+      fixture.core.updateAgentRuntimeState(system, { agentSessionId, status: "active" });
+      fixture.core.updateAgentRuntimeState(system, { agentSessionId, status: "idle" });
+    }
+    fixture.clock.value += 60_000;
+    await flush();
+    expect(fixture.batches).toHaveLength(before);
+
+    fixture.core.updateAgentRuntimeState(system, {
+      agentSessionId: fixture.worker,
+      status: "failed",
+    });
+    await flush();
+    expect(fixture.batches).toHaveLength(before + 1);
+    expect(fixture.batches.at(-1)!.events.map((event) => event.data.status)).toEqual(["failed"]);
+    wakeups.close();
+  });
+
   it("accumulates while a human holds the orchestrator and delivers once on release", async () => {
     const fixture = setup();
     const wakeups = fixture.wakeups();

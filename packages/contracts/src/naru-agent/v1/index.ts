@@ -505,13 +505,24 @@ export const SetAgentHoldRequestSchema = z.strictObject({
 });
 export type SetAgentHoldRequest = z.infer<typeof SetAgentHoldRequestSchema>;
 
-/** A person starts a Naru-managed agent in a project (its Pane joins the workspace collapsed). */
-export const CreateManagedAgentRequestSchema = z.strictObject({
-  projectId: Id,
-  role: z.enum(["project-orchestrator", "worker", "reviewer", "specialist"]),
-  runtime: z.literal("claude"),
-  idempotencyKey: IdempotencyKeySchema,
-});
+/**
+ * A person starts a Naru-managed agent (its Pane joins a workspace collapsed). Project roles name
+ * their project; the global main orchestrator names the project whose workspace hosts its Pane.
+ */
+export const CreateManagedAgentRequestSchema = z.union([
+  z.strictObject({
+    projectId: Id,
+    role: z.enum(["project-orchestrator", "worker", "reviewer", "specialist"]),
+    runtime: z.literal("claude"),
+    idempotencyKey: IdempotencyKeySchema,
+  }),
+  z.strictObject({
+    role: z.literal("main-orchestrator"),
+    hostProjectId: Id,
+    runtime: z.literal("claude"),
+    idempotencyKey: IdempotencyKeySchema,
+  }),
+]);
 export type CreateManagedAgentRequest = z.infer<typeof CreateManagedAgentRequestSchema>;
 
 /** A person takes over (or returns) an agent's shared process terminal (AP-D005, A09). */

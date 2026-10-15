@@ -14,7 +14,7 @@ from pathlib import Path
 
 SKILLS_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SKILLS_ROOT.parent
-EXPECTED_SKILLS = {"durable-session", "gateway-app", "workstation-setup"}
+EXPECTED_SKILLS = {"durable-session", "gateway-app", "naru-orchestration", "workstation-setup"}
 ALLOWED_FRONTMATTER = {"name", "description", "license", "allowed-tools", "metadata"}
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 

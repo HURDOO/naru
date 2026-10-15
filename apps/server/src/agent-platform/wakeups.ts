@@ -216,8 +216,16 @@ export function consumerId(agentSessionId: string): string {
   return `orchestrator:${agentSessionId}`;
 }
 
+/** Runtime liveness states worth a turn; routine active/idle churn is not. */
+const NOTABLE_AGENT_STATES = new Set<unknown>(["failed", "unknown", "stopped"]);
+
 function relevantTo(orchestrator: AgentSession, event: AgentEvent): boolean {
   if (event.actor.kind === "agent" && event.actor.agentSessionId === orchestrator.id) return false;
+  // Runtime state reports (system) follow every turn, including the orchestrator's own; waking on
+  // them would loop. Only another agent failing, stopping or going silent is worth a turn.
+  if (event.type === "agent_session.updated") {
+    return event.subjectId !== orchestrator.id && NOTABLE_AGENT_STATES.has(event.data.status);
+  }
   if (orchestrator.role !== "main-orchestrator") return true;
   // The main orchestrator summarises across projects; it is not woken by every project detail.
   switch (event.type) {

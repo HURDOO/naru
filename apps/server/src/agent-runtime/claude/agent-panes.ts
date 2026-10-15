@@ -13,6 +13,7 @@ import type { AgentPaneLaunchResolver, PaneLaunchCommand } from "../../launch-pr
 import type { NaruSessionFacade } from "../../session-facade.js";
 import type { RunnerPlan } from "../channel-protocol.js";
 import type { RunnerEnvironment, RunnerLauncher } from "../supervisor.js";
+import { orchestrationGuidance } from "../orchestration-skill.js";
 import { naruClaudeHookSettings } from "./hook-settings.js";
 
 const SYSTEM = { kind: "system" } as const;
@@ -79,12 +80,19 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
   }
 
   /** RunnerLauncher: binds (or reuses) the agent's Pane and starts its Host session. */
-  async launch(agentSessionId: string): Promise<void> {
+  async launch(
+    agentSessionId: string,
+    options: { readonly hostProjectId?: string } = {},
+  ): Promise<void> {
     const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
     if (agent.runtime !== "claude") {
       throw new AppError("AGENT_INVALID_STATE", 409, "Claude 에이전트가 아닙니다.");
     }
-    const pane = this.#repository.createAgentPane(agentSessionId, paneTitle(agent));
+    const pane = this.#repository.createAgentPane(
+      agentSessionId,
+      paneTitle(agent),
+      options.hostProjectId,
+    );
     // The TUI's SessionStart must be the one that confirms a resume, not an older report.
     if (agent.launchMode === "tui") this.#repository.clearClaudeSession(pane.id);
     await this.#sessions().start(pane.id);
@@ -171,6 +179,8 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
         nativeSessionName(agent.id),
         "--setting-sources",
         "project,local",
+        "--append-system-prompt",
+        roleInstructions(agent),
         "--settings",
         JSON.stringify(settings),
         "--mcp-config",
@@ -252,11 +262,11 @@ function paneTitle(agent: AgentSession): string {
 }
 
 function roleInstructions(agent: AgentSession): string {
-  return [
-    `You are a Naru-managed ${agent.role} agent (${nativeSessionName(agent.id)}).`,
-    "Naru records your user instructions, tasks and decisions; read them with the naru MCP tools",
-    "before acting, and report progress and results through them.",
-  ].join(" ");
+  return orchestrationGuidance(
+    agent.role,
+    `You are a Naru-managed ${agent.role} agent (${nativeSessionName(agent.id)}). Your naru MCP ` +
+      "tools act as you; Naru checks every call against your role and project.",
+  );
 }
 
 /** Concatenates hook matchers per event; other keys come from the first settings object. */

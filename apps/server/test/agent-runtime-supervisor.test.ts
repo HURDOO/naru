@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   runtimeChannelSocketPath,
 } from "../src/agent-runtime/runtime-channel-server.js";
 import { ManagedAgentSupervisor, SupervisorError } from "../src/agent-runtime/supervisor.js";
+import { OrchestratorWakeups } from "../src/agent-platform/wakeups.js";
 import { NaruRepository } from "../src/database.js";
 
 const HUMAN: Actor = { kind: "human" };
@@ -27,6 +28,9 @@ export function query({ prompt, options }) {
     yield { type: "system", subtype: "init", session_id: options.resume ?? "fake-session-1" };
     for await (const message of prompt) {
       const text = message.message.content;
+      if (process.env.FAKE_SDK_PROMPTS) {
+        (await import("node:fs")).appendFileSync(process.env.FAKE_SDK_PROMPTS, JSON.stringify(text) + "\\n");
+      }
       if (text.includes("APPROVE")) {
         await options.canUseTool("Write", {}, { signal: new AbortController().signal });
       }
@@ -217,5 +221,112 @@ describe("managed agent supervisor with a real runner process", () => {
     third.supervisor.stop(fixture.worker);
     await until(() => fixture.status(third.core) === "stopped", "stopped");
     await third.server.close();
+  }, 60_000);
+
+  it("wakes a project orchestrator with a Naru event turn when the user instructs its project", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "naru-wakeup-"));
+    cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
+    const sdkEntry = join(directory, "fake-sdk.mjs");
+    writeFileSync(sdkEntry, FAKE_SDK, { mode: 0o600 });
+    const prompts = join(directory, "prompts.log");
+    writeFileSync(prompts, "", { mode: 0o600 });
+    const repository = new NaruRepository(":memory:");
+    cleanups.push(() => repository.close());
+    const project = repository.createProject(directory, "wakeups");
+    const core = new AgentPlatformCore(repository.agentPlatform);
+    let ordinal = 0;
+    const ctx = () => ({
+      actor: HUMAN,
+      idempotencyKey: `f0000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`,
+    });
+    const orchestrator = core.registerAgentSession(ctx(), {
+      projectId: project.id,
+      role: "project-orchestrator",
+      runtime: "claude",
+      native: false,
+      observation: "transcript",
+      conversationWriter: "orchestrator",
+    }).id;
+    let supervisor: ManagedAgentSupervisor | null = null;
+    const launcher = new ChildProcessRunnerLauncher({
+      runnerEnvironment: (agentSessionId) => supervisor!.runnerEnvironment(agentSessionId),
+      command: process.execPath,
+      args: ["--import", "tsx", join(process.cwd(), "apps/server/src/claude-agent-runner.ts")],
+      environment: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: directory,
+        FAKE_SDK_PROMPTS: prompts,
+      },
+    });
+    cleanups.push(() => launcher.killAll());
+    supervisor = new ManagedAgentSupervisor({
+      core,
+      launcher,
+      channelSocketPath: runtimeChannelSocketPath(directory),
+      planFor: (agent) => ({
+        executable: "/fixture/claude",
+        sdkEntry,
+        cwd: directory,
+        model: "claude-opus-5-5",
+        resumeRef: agent.runtimeSessionRef,
+        nativeName: "naru-fixture",
+        settings: {},
+        mcpServers: {},
+        instructions: "",
+        permissionMode: "default",
+        environment: {},
+      }),
+    });
+    const wakeups = new OrchestratorWakeups(core, supervisor, { minIntervalMs: 0 });
+    supervisor.useWakeups(wakeups);
+    cleanups.push(() => wakeups.close());
+    const server = new RuntimeChannelServer(directory, supervisor);
+    await server.start();
+    cleanups.push(async () => {
+      supervisor.close();
+      await server.close();
+    });
+    const delivered = () =>
+      readFileSync(prompts, "utf8")
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => JSON.parse(line) as string);
+    await supervisor.launch(orchestrator);
+    // Once reachable, the orchestrator is woken for what already happened (its registration).
+    await until(() => delivered().length === 1, "first wakeup");
+    expect(delivered()[0]).toContain("agent_session.registered");
+    await until(() => core.getAgentSession(HUMAN, orchestrator).status === "idle", "first turn");
+    // Its own turn's state reports do not wake it again (no self-wakeup loop).
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(delivered()).toHaveLength(1);
+
+    core.createHumanInstruction(ctx(), {
+      scope: { kind: "project", projectId: project.id },
+      verbatim: "결제 흐름을 먼저 끝내 줘.",
+    });
+    await until(() => delivered().length === 2, "wakeup turn");
+    const turn = delivered()[1]!;
+    expect(turn).toContain("[Naru] New events");
+    expect(turn).toContain("instruction.created");
+    // The wakeup carries references only; the orchestrator reads the text through its tools.
+    expect(turn).not.toContain("결제");
+    await until(() => core.getAgentSession(HUMAN, orchestrator).status === "idle", "turn done");
+
+    // While a person holds the orchestrator, events accumulate instead of becoming turns.
+    core.setHumanHold(ctx(), { agentSessionId: orchestrator, held: true, reason: "takeover" });
+    await supervisor.switchWriter(orchestrator, "gui", false);
+    core.createHumanInstruction(ctx(), {
+      scope: { kind: "project", projectId: project.id },
+      verbatim: "다음 지시",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(delivered()).toHaveLength(2);
+    await supervisor.switchWriter(orchestrator, "orchestrator", false);
+    core.setHumanHold(ctx(), { agentSessionId: orchestrator, held: false, reason: "release" });
+    await until(() => delivered().length === 3, "accumulated events after release");
+    expect(delivered()[2]).toContain("agent_session.hold_released");
+    expect(delivered()[2]).toContain("instruction.created");
+    supervisor.stop(orchestrator);
+    await until(() => core.getAgentSession(HUMAN, orchestrator).status === "stopped", "stopped");
   }, 60_000);
 });

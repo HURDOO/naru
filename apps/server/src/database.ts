@@ -1481,19 +1481,24 @@ export class NaruRepository {
    * The Pane whose Host PTY runs a Naru-managed agent. It joins the workspace collapsed, so the
    * user sees it in Naru without the layout they arranged changing. Reuses a bound Pane.
    */
-  createAgentPane(agentSessionId: string, title: string): Pane {
+  createAgentPane(agentSessionId: string, title: string, hostProjectId?: string): Pane {
     return this.#database
       .transaction(() => {
         const agent = this.agentPlatform.getAgentSession(agentSessionId);
-        if (agent === null || agent.projectId === null) {
-          throw new AppError("AGENT_NOT_FOUND", 404, "프로젝트에 속한 에이전트를 찾을 수 없습니다.");
+        if (agent === null) {
+          throw new AppError("AGENT_NOT_FOUND", 404, "에이전트를 찾을 수 없습니다.");
         }
         if (agent.paneId !== null) {
           const bound = this.getPaneContext(agent.paneId)?.pane;
           if (bound !== undefined) return bound;
         }
+        // A global agent (the main orchestrator) is hosted in a workspace the person chose.
+        const projectId = agent.projectId ?? hostProjectId;
+        if (projectId === undefined || this.getProject(projectId) === undefined) {
+          throw new AppError("AGENT_INVALID_STATE", 409, "에이전트를 둘 프로젝트가 필요합니다.");
+        }
         return this.#insertCollapsedPane(
-          agent.projectId,
+          projectId,
           "claude",
           title,
           CLAUDE_AGENT_LAUNCH_PROFILE,

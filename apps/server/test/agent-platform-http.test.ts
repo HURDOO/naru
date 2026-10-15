@@ -200,6 +200,22 @@ describe("Agent Platform managed runtime API", () => {
     const agent = created.json<AgentSession>();
     expect((await post("/api/agent/agents", createPayload)).json<AgentSession>().id).toBe(agent.id);
     expect(runtime.launches).toEqual([agent.id]);
+
+    // The global main orchestrator is hosted in a workspace the person chooses.
+    const main = await post("/api/agent/agents", {
+      role: "main-orchestrator",
+      hostProjectId: fixture.projectId,
+      runtime: "claude",
+      idempotencyKey: "91000000-0000-4000-8000-000000000009",
+    });
+    expect(main.json<AgentSession>()).toMatchObject({ role: "main-orchestrator", projectId: null });
+    expect(runtime.launchOptions.at(-1)).toEqual({ hostProjectId: fixture.projectId });
+    const missingHost = await post("/api/agent/agents", {
+      role: "main-orchestrator",
+      runtime: "claude",
+      idempotencyKey: "91000000-0000-4000-8000-000000000010",
+    });
+    expect(missingHost.statusCode).toBe(400);
     fixture.repository.createAgentPane(agent.id, "agent");
     runtime.heldNow = () => core.getAgentSession({ kind: "human" }, agent.id).humanHoldSince !== null;
 
@@ -289,13 +305,15 @@ class FakeRuntime implements AgentRuntimeControl {
   writer: WriterKind = "orchestrator";
   generation = 1;
   readonly launches: string[] = [];
+  readonly launchOptions: unknown[] = [];
   readonly switches: { to: WriterKind; heldDuringSwitch: boolean }[] = [];
   readonly turns: string[] = [];
   readonly approvals: string[] = [];
   heldNow: () => boolean = () => false;
 
-  launch(agentSessionId: string): Promise<void> {
+  launch(agentSessionId: string, options?: { hostProjectId?: string }): Promise<void> {
     this.launches.push(agentSessionId);
+    this.launchOptions.push(options);
     return Promise.resolve();
   }
   stop(): void {}

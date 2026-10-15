@@ -41,7 +41,8 @@ const RESUME_TIMEOUT_MS = 60_000;
  * decides which form (`runner` or `tui`) a launch starts.
  */
 export interface RunnerLauncher {
-  launch(agentSessionId: string): Promise<void>;
+  /** `hostProjectId` places a global agent's Pane (the main orchestrator) in a workspace. */
+  launch(agentSessionId: string, options?: { readonly hostProjectId?: string }): Promise<void>;
   /** Ends the hosting process and resolves once it has exited. */
   stop(agentSessionId: string): Promise<void>;
   /**
@@ -125,11 +126,14 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     return this.#core.getAgentSession(SYSTEM, agent.id);
   }
 
-  async launch(agentSessionId: string): Promise<void> {
+  async launch(
+    agentSessionId: string,
+    options: { readonly hostProjectId?: string } = {},
+  ): Promise<void> {
     const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
     this.#runtime(agentSessionId, agent.runtimeSessionRef);
     this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "starting" });
-    await this.#launcher.launch(agentSessionId);
+    await this.#launcher.launch(agentSessionId, options);
   }
 
   /**
