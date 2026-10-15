@@ -163,3 +163,71 @@
   - 원문 로그는 저장소 밖 owner-only 디렉터리에 두고, 저장소에는 redacted 보고서와 재현 스크립트만
     둔다.
   - 판정은 설치 버전에서 재현한 동작만으로 한다.
+
+## AP-D009. Native subagent는 L1·L2 관찰용으로 유지하고 강제 억제를 주장하지 않는다
+
+- 상태: accepted (2026-10-15, Gate 1 근거: V04, V05, V12)
+- 근거:
+  - Claude는 L1·L2가 PASS이고 L3·L4는 FAIL이다. `--disallowedTools Task Agent`로 subagent tool을 제거할
+    수 있다.
+  - Codex는 L1·L2가 PASS이고, 실행 중인 child에 직접 입력하거나 steer하는 것은 거부된다. 기능
+    플래그를 꺼도 실제 spawn이 성공했다.
+  - OmO child는 L1~L3가 PASS이고 독립 PTY가 없다.
+- 결정:
+  - 일반 작업에는 native subagent를 쓰고 관찰 수준은 `transcript`로 기록한다.
+  - 실행 중 사람이 직접 개입해야 하거나(L3) 독립 터미널이 필요한(L4) 작업은 Skill 지침에 따라 Naru
+    managed agent로 보낸다.
+  - Codex에서는 native 억제를 보안 강제 수단으로 주장하지 않는다. 지침은 강제 수단이 아니라고 명시한다.
+    Claude의 tool 제거는 managed 세션 설정에서 선택적으로 쓴다.
+  - Agent Teams(Claude)는 interactive 전용이고 실험적이므로 오케스트레이터 기반에 쓰지 않는다.
+
+## AP-D010. 관리형 세션 간 통신은 Naru MCP 경로를 기본으로 한다
+
+- 상태: accepted (2026-10-15, 근거: V06, V08). 일반 Pane 적용 범위는 사용자 확인 대기다.
+- 결정:
+  - managed 세션 사이의 메시지는 `delegate` 같은 Naru MCP 도구로 보낸다. Naru가 발신자 신원
+    (capability), 원문, 원본 지시 ID를 기록한다.
+  - managed Claude 세션에서는 native cross-session을 다음과 같이 차단하고 subagent 메시징은 유지한다.
+    - inbound는 `crossSessionInbound: "refuse"`로 막는다.
+    - 발신은 PreToolUse hook으로 막되, SubagentStart로 수집한 agent ID만 허용한다.
+  - 사용자가 만든 일반 Claude Pane은 바꾸지 않는다(권고, 사용자 확인 대기).
+- 이유: native 메시징은 발신자가 스스로 정한 이름이고 원본 지시를 담을 필드가 없으며, 기본 설정에서는
+  Naru를 거치지 않고 작업을 만들 수 있다.
+
+## AP-D011. 관리형 런타임과 대화 writer
+
+- 상태: proposed (Gate 1). Claude와 OpenCode 부분은 근거가 확보됐다. Codex 부분은 `spike/codex-runtime`
+  인수 뒤 확정한다.
+- 공통:
+  - 런타임의 동시 입력 중재는 믿지 않는다. Claude, OpenCode, Codex 모두 동시 입력이 진행 중인 turn에
+    합쳐지거나 유실됐다.
+  - 그래서 Naru가 agent 대화마다 single writer를 강제한다.
+  - 사람 개입 hold(AP-D005)도 같은 writer gate에서 처리한다.
+- Claude:
+  - 관리형 세션은 Claude Agent SDK runner로 실행한다. runner는 DurableSession PTY에서 관찰용
+    console을 소유한다.
+  - protocol은 PTY를 거치지 않고 pipe와 owner-only socket으로 주고받는다.
+  - TUI 전환은 stop 후 resume(B안)이다. turn을 끝내거나 interrupt한 뒤 runner를 종료하고, 기존 Claude
+    Pane resume(D023)으로 연다. `SessionStart` resume이 같은 ID로 확인된 뒤에만 입력을 연다. 실패하면
+    rollback한다.
+  - `--bg`와 `claude attach`는 쓰지 않는다.
+  - Chat 이력은 SDK의 공식 history API로 다시 읽는다.
+- OpenCode:
+  - Naru가 별도 `opencode serve`를 띄우고, 같은 세션에 `opencode attach` TUI를 DurableSession PTY로
+    붙인다. 이렇게 하면 GUI와 TUI가 live로 공존한다.
+  - 쓰기는 Naru proxy의 gate만 통과시킨다. 신원과 이벤트는 Naru plugin(`OPENCODE_CONFIG_CONTENT`)으로
+    받는다. 운영 `/omo/` adapter는 바꾸지 않는다.
+- Codex(잠정): 공유 app-server와 relay의 single-writer proxy(A안)를 기본으로 하고, B안은 복구
+  경로로 둔다(V01, V02).
+- 역할별 model은 항상 명시한다. Claude는 사용자 settings 없이 실행하면 기본값이 haiku가 된다.
+
+## AP-D012. 새 production 의존성: Claude Agent SDK
+
+- 상태: proposed (Gate 1)
+- 결정: `@anthropic-ai/claude-agent-sdk`를 `apps/server`의 의존성으로 추가한다.
+- 이유:
+  - 대화 이력 재구성(`getSessionMessages`, `getSubagentMessages`), 구조화 이벤트, 권한 callback을 제공하는
+    공식 인터페이스다(V03 (c)).
+  - CLI만 쓰면 transcript 파일을 직접 파싱해야 한다. 이는 비공식 경로다.
+- 호환성: SDK와 CLI의 version 짝을 Capability Matrix에 기록한다. 둘 중 하나가 바뀌면 V03과 V05를 다시
+  검증한다.
