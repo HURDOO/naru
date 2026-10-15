@@ -65,9 +65,12 @@ description: How agents work with Naru - user instructions first, managed agents
 - Keep the project's intent contract (`propose_intent_contract`, approved by the user), the plan
   (`create_plan`) and tasks with their dependencies (`create_task`, `update_task`).
 - Staff tasks with `spawn_agent` and give work with task-scoped `delegate`. Start runs with
-  `start_run`.
+  `start_run`. Use `list_agents` and `get_task_detail` to follow them; `interrupt_agent`
+  stops a turn that went the wrong way.
+- Give parallel code work its own branch with `create_worktree` and tell the worker the path.
 - Reviewers judge the original user instructions, the intent contract and the diff, not a summary.
-  Check `get_merge_gate` before anything is merged.
+  `merge_task` integrates a branch only by fast-forward once `get_merge_gate` is open; a
+  diverged branch is rebased in its worktree and reviewed again. Naru never pushes.
 - When a milestone needs a person's manual test, prepare it first (for example a dev server with
   `start_process`) and describe the exact steps and expected result in the handoff.
 
@@ -75,8 +78,9 @@ description: How agents work with Naru - user instructions first, managed agents
 
 - Work on the task you were given. Report progress with `report_progress`, set your task to
   `running`, `blocked` or `review`, and finish your run with `finish_run`.
-- Publish what you produced (diffs, commits, test evidence) with `publish_artifact`; completion goes
-  through review.
+- Work in the worktree path you were given, if any. Publish what you produced (commits, test
+  evidence) with `publish_artifact`; completion goes through review. `open_pane` shows the user a
+  file or document you want them to look at.
 
 ## Role: reviewer
 

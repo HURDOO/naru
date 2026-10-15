@@ -30,6 +30,11 @@ import {
 } from "./agent-runtime/runtime-channel-server.js";
 import { ManagedAgentSupervisor } from "./agent-runtime/supervisor.js";
 import { SharedProcessRuntime } from "./agent-runtime/shared-processes.js";
+import { AGENT_GIT_TIMEOUT_MS, AgentWorkspace } from "./agent-runtime/workspace.js";
+import { GitMetadataAdapter, SystemGitCommandRunner } from "./git-metadata.js";
+import { ProjectCatalogService } from "./project-catalog.js";
+import { ProjectDocumentReader } from "./project-documents.js";
+import { ProjectFileService } from "./project-files.js";
 import { HoldMonitor } from "./agent-runtime/hold-monitor.js";
 import { LeaseManager } from "./lease.js";
 import type { NaruSessionFacade } from "./session-facade.js";
@@ -185,11 +190,34 @@ const sharedProcesses =
     ? new SharedProcessRuntime({ core: agentPlatform, repository, sessions: () => supervisor })
     : undefined;
 await sharedProcesses?.restore();
+// Worktrees, view Panes and merge (AP-D016) use the same catalog and path policy as the person.
+const projectCatalog = new ProjectCatalogService(repository, new GitMetadataAdapter(pathPolicy));
+const agentWorkspace =
+  agentPlatform === undefined
+    ? undefined
+    : new AgentWorkspace({
+        core: agentPlatform,
+        repository,
+        pathPolicy,
+        git: new SystemGitCommandRunner(undefined, AGENT_GIT_TIMEOUT_MS),
+        registerProject: (realPath, name) => projectCatalog.register(realPath, name),
+        checkViewPath: async (projectPath, kind, relativePath) => {
+          if (kind === "docs") await new ProjectDocumentReader().read(projectPath, relativePath);
+          else await new ProjectFileService().read(projectPath, relativePath, true);
+        },
+      });
 agentSocket?.useRuntime({
   ...(sharedProcesses === undefined ? {} : { processes: sharedProcesses }),
   ...(managedAgents === undefined
     ? {}
-    : { agents: { spawn: (context, input) => managedAgents.spawn(context, input) } }),
+    : {
+        agents: {
+          spawn: (context, input) => managedAgents.spawn(context, input),
+          interrupt: (actor, agentSessionId) =>
+            managedAgents.interruptByAgent(actor, agentSessionId),
+        },
+      }),
+  ...(agentWorkspace === undefined ? {} : { workspace: agentWorkspace }),
 });
 const leaseManager = new LeaseManager();
 const holdMonitor =

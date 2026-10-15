@@ -40,9 +40,12 @@ import {
   currentPushSubscriptionFingerprint,
   defaultPushDeviceName,
   enablePushNotifications,
+  handoffTargetFromLocation,
+  listenForHandoffTargets,
   listenForNotificationTargets,
   notificationTargetFromLocation,
   unsubscribeCurrentPushSubscription,
+  type HandoffNotificationTarget,
   type NotificationTarget,
 } from "./push-notifications";
 import {
@@ -111,6 +114,12 @@ export default function App(): React.JSX.Element {
   const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(() =>
     notificationTargetFromLocation(),
   );
+  const [handoffTarget, setHandoffTarget] = useState<HandoffNotificationTarget | null>(() =>
+    handoffTargetFromLocation(),
+  );
+  /** The Inbox item a handoff alert opened; the agent screen starts on it. */
+  const [focusedHandoffId, setFocusedHandoffId] = useState<string | null>(null);
+  const routingHandoffRef = useRef(false);
   const passkeyReturnFocusRef = useRef<HTMLElement | null>(null);
   const pushReturnFocusRef = useRef<HTMLElement | null>(null);
   const routingNotificationRef = useRef(false);
@@ -682,6 +691,52 @@ export default function App(): React.JSX.Element {
   };
 
   useEffect(() => listenForNotificationTargets(setNotificationTarget), []);
+  useEffect(() => listenForHandoffTargets(setHandoffTarget), []);
+
+  useEffect(() => {
+    if (
+      authState !== "signed-in" ||
+      handoffTarget === null ||
+      !agentsAvailable ||
+      routingHandoffRef.current
+    ) {
+      return;
+    }
+    routingHandoffRef.current = true;
+    void (async () => {
+      try {
+        if (!projects.some((candidate) => candidate.id === handoffTarget.projectId)) {
+          setNotice("알림이 가리킨 프로젝트를 더 이상 찾을 수 없습니다.");
+          return;
+        }
+        if (handoffTarget.projectId !== selectedProjectId) {
+          if (!(await flushWorkspace())) return;
+          rememberProject(handoffTarget.projectId);
+          clearWorkspace();
+          await loadWorkspace(handoffTarget.projectId);
+        }
+        setSidebarOpen(false);
+        setSidebarPreviewOpen(false);
+        setFocusedHandoffId(handoffTarget.handoffId);
+        setMainView("agents");
+      } catch (error) {
+        setNotice(messageFrom(error));
+      } finally {
+        setHandoffTarget(null);
+        routingHandoffRef.current = false;
+      }
+    })();
+  }, [
+    agentsAvailable,
+    authState,
+    clearWorkspace,
+    flushWorkspace,
+    handoffTarget,
+    loadWorkspace,
+    projects,
+    rememberProject,
+    selectedProjectId,
+  ]);
 
   useEffect(() => {
     if (
@@ -1023,13 +1078,14 @@ export default function App(): React.JSX.Element {
             <>
               <MainViewTabs view={mainView} onChange={setMainView} />
               <AgentView
-                key={selectedProject.id}
+                key={`${selectedProject.id}:${focusedHandoffId ?? ""}`}
                 api={api}
                 projectId={selectedProject.id}
                 projects={projects}
                 mutationAllowed={mutationAllowed}
                 onOpenPane={(paneId) => void openAgentPane(paneId)}
                 onSelectProject={selectProject}
+                initialHandoffId={focusedHandoffId}
               />
             </>
           ) : (

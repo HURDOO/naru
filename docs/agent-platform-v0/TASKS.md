@@ -79,16 +79,17 @@
 
 ### AP-T09. 계약과 저장소
 
-- [-] `naru-agent/v1` contract(additive)와 DB migration: instruction, intent contract, plan, agent task,
-  run, agent session, handoff, event, artifact, shared process, session holder. 기존 migration 전
-  backup 계약을 따른다.
+- [x] `naru-agent/v1` contract(additive)와 DB migration: instruction, intent contract, plan, agent task,
+      run, agent session, handoff, event, artifact, shared process, session holder. 기존 migration 전
+      backup 계약을 따른다.
 - 진행(2026-10-15):
   - 완료: contract, v20 migration(`apps/server/src/agent-platform/migration.ts`), store, 정책 Core,
     단위 테스트 11개(`apps/server/test/agent-platform-core.test.ts`). 테스트 범위는 원본 지시 연결,
     역할과 scope, 사람 hold, idempotency, revision과 cycle, merge gate, 재시작 뒤 `unknown`,
     이벤트 순서와 cursor, project 삭제, v19→v20 backup 뒤 migration이다.
-  - 남음: terminal Session 바인딩, SharedProcess, holder는 AP-T12와 함께 추가한다. browser HTTP
-    API와 MCP 노출은 AP-T11이다.
+  - 2026-10-15 완료: terminal Session 바인딩(`agent_sessions.pane_id`), SharedProcess와 hold는 AP-T12·T14,
+    worktree 연결(`agent_worktrees`)은 AP-T11에서 v20에 더했다. v20은 아직 어느 운영 instance에도 적용되지
+    않았다.
 
 ### AP-T10. Event Store와 reconciler
 
@@ -111,7 +112,7 @@
 
 ### AP-T11. Agent identity와 Naru MCP
 
-- [-] Session별 capability, owner-only UDS, stdio MCP bin, L1~L6 도구(AP-D004), 감사 기록.
+- [x] Session별 capability, owner-only UDS, stdio MCP bin, L1~L6 도구(AP-D004), 감사 기록.
 - 진행(2026-10-15):
   - 완료:
     - capability: 256-bit token을 쓰고 DB에는 digest만 저장한다. revoke할 수 있다.
@@ -121,13 +122,23 @@
     - 실제 Claude Code 2.1.296 왕복(`tests/spikes/agent-platform/claude-mcp-roundtrip.ts`)이 통과했다.
     - browser HTTP API(사람 행위자)는 `agentPlatform` 의존성을 주입할 때만 등록된다. 읽기에는 세션이
       필요하고, 쓰기에는 CSRF와 사람 기기 lease가 필요하다. 테스트 3개.
-  - 남음:
-    - L2~L6 도구(DS, managed agent, 사람 채널, Workspace, merge 실행). AP-T12와 Phase 3에서 한다.
+  - 2026-10-15 L2~L6 완료(세부 범위 AP-D016, proposed):
+    - L2: 공유 프로세스 도구(AP-T12)
+    - L3: `spawn_agent`, `list_agents`, `get_task_detail`, `interrupt_agent`
+    - L4: Handoff 도구, Handoff 요청 시 Web Push. 알림을 열면 Inbox 항목이 열린다.
+    - L5: `create_worktree`, `open_pane`
+    - L6: `get_merge_gate`, `merge_task`(fast-forward만, push 없음)
+    - 테스트:
+      - 실제 git 임시 저장소로 worktree 생성, 승인 root 밖 거부, 권한 거부, worktree scope, merge gate,
+        더러운 checkout 거부, fast-forward merge, 갈라진 branch 거부, view Pane
+      - supervisor interrupt(실제 runner process)
+      - Handoff push(service, app 연결, service worker)
+    - 이전 "남음"의 native bridge 시작 경로와 Codex MCP 주입은 AP-T13·T14 때 연결했다.
   - 2026-10-15 추가: AP-D015 native 메시징 bridge를 구현했다. hook 전용 tool, hook bin, settings builder,
     TUI 직접 입력 기록이 들어갔다. MCP bin은 광고한 tool만 전달한다. 테스트 5개와 V06c 실제 세션 검증이
     통과했다.
-    - Naru 시작 경로에 연결하기. 기본은 꺼 두고 opt-in으로 켠다.
-    - Codex에서 MCP를 주입하는 방식(V08 Codex)
+    - 완료: Naru 시작 경로에 연결했다. Agent Platform은 `NARU_AGENT_PLATFORM=1`일 때만 켜진다.
+    - 완료: Codex MCP 주입은 AP-T13에서 thread별 `mcp_servers.naru` 설정으로 했다.
 
 ### AP-T12. 쓰기 권리와 Session 확장
 

@@ -49,6 +49,9 @@ describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
           spawned.push(input);
           return Promise.resolve(fixture.core.spawnAgentSession(context, input));
         },
+        interrupt: () => {
+          throw new Error("unused");
+        },
       },
     });
     const reply = await call(fixture.workerToken, "start_process", startArgs);

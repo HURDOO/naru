@@ -22,6 +22,7 @@ import type { AppConfig } from "../src/config.js";
 import { NaruRepository } from "../src/database.js";
 import { ProjectPathPolicy } from "../src/path-policy.js";
 import { hashPassword } from "../src/password.js";
+import type { PushNotificationService } from "../src/push-notifications.js";
 import { PtySupervisor, type PtyProcess } from "../src/pty.js";
 
 const origin = "http://127.0.0.1:5173";
@@ -176,6 +177,63 @@ describe("Agent Platform browser API", () => {
         originUserInstructionId: goal,
       }),
     ).toThrow(AgentPlatformError);
+  });
+});
+
+describe("Agent Platform handoff alerts", () => {
+  it("pushes an agent's handoff to the person's devices by IDs only", async () => {
+    const alerts: unknown[] = [];
+    const push = {
+      configuration: () => ({ configured: true, publicKey: null, inactivityDelayMinutes: 5 }),
+      updateConfiguration: () => ({ configured: true, publicKey: null, inactivityDelayMinutes: 5 }),
+      list: () => [],
+      subscribe: () => {
+        throw new Error("unused");
+      },
+      rename: () => {
+        throw new Error("unused");
+      },
+      delete: () => false,
+      handleActivity: () => undefined,
+      notifyHandoff: (input: unknown) => alerts.push(input),
+      close: () => Promise.resolve(),
+    } satisfies PushNotificationService;
+    const fixture = await createFixture(true, undefined, push);
+    const core = fixture.core!;
+    const worker = core.registerAgentSession(
+      { actor: { kind: "human" }, idempotencyKey: "90000000-0000-4000-8000-000000000601" },
+      {
+        projectId: fixture.projectId,
+        role: "worker",
+        runtime: "claude",
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      },
+    ).id;
+    const handoff = core.requestHandoff(
+      {
+        actor: { kind: "agent", agentSessionId: worker },
+        idempotencyKey: "90000000-0000-4000-8000-000000000602",
+      },
+      {
+        projectId: fixture.projectId,
+        kind: "manual-test",
+        payload: {
+          reason: "로그인 확인",
+          blockingTaskIds: [],
+          independentWorkToContinue: [],
+          options: [],
+          recommendation: "dev server에서 확인",
+          risks: [],
+          preparedEnvironment: [],
+          resumeCondition: "결정",
+        },
+      },
+    );
+    expect(alerts).toEqual([
+      { projectId: fixture.projectId, handoffId: handoff.id, kind: "manual-test" },
+    ]);
   });
 });
 
@@ -533,7 +591,11 @@ class FakeRuntime implements AgentRuntimeControl {
   }
 }
 
-async function createFixture(withAgentPlatform: boolean, agentRuntime?: AgentRuntimeControl) {
+async function createFixture(
+  withAgentPlatform: boolean,
+  agentRuntime?: AgentRuntimeControl,
+  pushNotifications?: PushNotificationService,
+) {
   const base = await mkdtemp(join(tmpdir(), "naru-agent-api-"));
   cleanups.push(() => rm(base, { recursive: true, force: true }));
   const root = join(base, "coding");
@@ -566,6 +628,7 @@ async function createFixture(withAgentPlatform: boolean, agentRuntime?: AgentRun
     supervisor,
     ...(core === undefined ? {} : { agentPlatform: core }),
     ...(agentRuntime === undefined ? {} : { agentRuntime }),
+    ...(pushNotifications === undefined ? {} : { pushNotifications }),
   });
   cleanups.push(async () => {
     await app.close();

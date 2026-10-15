@@ -1,4 +1,8 @@
-import { PushNotificationPayloadSchema, type PushNotificationPayload } from "@naru/contracts";
+import {
+  PushHandoffPayloadSchema,
+  PushNotificationPayloadSchema,
+  type PushNotificationPayload,
+} from "@naru/contracts";
 import type { NaruApi } from "./api";
 import { getPwaServiceWorkerRegistration } from "./pwa";
 
@@ -6,6 +10,12 @@ export interface NotificationTarget {
   projectId: string;
   paneId: string;
   eventId: string;
+}
+
+/** An agent handoff alert: opens the project's agent screen on that Inbox item. */
+export interface HandoffNotificationTarget {
+  projectId: string;
+  handoffId: string;
 }
 
 export function browserSupportsPushNotifications(): boolean {
@@ -104,6 +114,41 @@ export function notificationTargetFromLocation(): NotificationTarget | null {
   const query = parameters.toString();
   window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   return { projectId, paneId, eventId };
+}
+
+export function handoffTargetFromLocation(): HandoffNotificationTarget | null {
+  const parameters = new URLSearchParams(window.location.search);
+  const projectId = parameters.get("naruProject");
+  const handoffId = parameters.get("naruHandoff");
+  if (!isUuid(projectId) || !isUuid(handoffId)) return null;
+  parameters.delete("naruProject");
+  parameters.delete("naruHandoff");
+  const query = parameters.toString();
+  window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+  return { projectId, handoffId };
+}
+
+export function listenForHandoffTargets(
+  listener: (target: HandoffNotificationTarget) => void,
+): () => void {
+  if (!("serviceWorker" in navigator)) return () => undefined;
+  const receive = (event: MessageEvent<unknown>): void => {
+    if (
+      event.data === null ||
+      typeof event.data !== "object" ||
+      !("type" in event.data) ||
+      event.data.type !== "NARU_PUSH_HANDOFF" ||
+      !("payload" in event.data)
+    ) {
+      return;
+    }
+    const parsed = PushHandoffPayloadSchema.safeParse(event.data.payload);
+    if (parsed.success) {
+      listener({ projectId: parsed.data.projectId, handoffId: parsed.data.handoffId });
+    }
+  };
+  navigator.serviceWorker.addEventListener("message", receive);
+  return () => navigator.serviceWorker.removeEventListener("message", receive);
 }
 
 export function listenForNotificationTargets(

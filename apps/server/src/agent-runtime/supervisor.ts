@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, AgentRuntimeState, AgentSession } from "@naru/contracts/naru-agent/v1";
-import type { AgentPlatformCore, CommandContext } from "../agent-platform/core.js";
+import type {
+  Actor,
+  AgentEvent,
+  AgentRuntimeState,
+  AgentSession,
+} from "@naru/contracts/naru-agent/v1";
+import {
+  AgentPlatformError,
+  type AgentPlatformCore,
+  type CommandContext,
+} from "../agent-platform/core.js";
 import type {
   OrchestratorInvoker,
   OrchestratorWakeups,
@@ -221,6 +230,27 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       throw new SupervisorError("WRITER_REQUIRED", "Another writer owns this conversation.");
     }
     runtime.connection!.send({ type: "interrupt" });
+  }
+
+  /**
+   * An orchestrator stops a working agent's turn (AP-D004 L3). Core checks role, scope and human
+   * hold; the conversation must still be the orchestrator's, so a person writing is never cut off.
+   */
+  interruptByAgent(actor: Actor, agentSessionId: string): AgentRuntimeState {
+    this.#core.authorizeInterrupt(actor, agentSessionId);
+    const { writer, generation } = this.writer(agentSessionId);
+    try {
+      this.interrupt(agentSessionId, "orchestrator", generation);
+    } catch (error) {
+      if (!(error instanceof SupervisorError)) throw error;
+      throw new AgentPlatformError(
+        writer === "orchestrator" && error.code === "RUNTIME_NOT_CONNECTED"
+          ? "AGENT_RUNTIME_UNAVAILABLE"
+          : "AGENT_WRITER_REQUIRED",
+        writer === "orchestrator" ? error.message : "A person is writing to this agent.",
+      );
+    }
+    return this.runtimeState(agentSessionId);
   }
 
   pendingApprovals(agentSessionId: string): { requestId: string; kind: string }[] {

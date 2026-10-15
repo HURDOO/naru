@@ -4,9 +4,14 @@ import type {
   NaruPushSubscription,
   PushClearPayload,
   PushConfiguration,
+  PushHandoffPayload,
   PushNotificationPayload,
 } from "@naru/contracts";
-import { PushClearPayloadSchema, PushNotificationPayloadSchema } from "@naru/contracts";
+import {
+  PushClearPayloadSchema,
+  PushHandoffPayloadSchema,
+  PushNotificationPayloadSchema,
+} from "@naru/contracts";
 import webPush, {
   type PushSubscription as WebPushSubscription,
   type RequestOptions,
@@ -36,6 +41,12 @@ export interface PushNotificationService {
   rename(id: string, name: string): NaruPushSubscription;
   delete(id: string): boolean;
   handleActivity(change: RuntimePaneActivityChange): void;
+  /** An agent's handoff waits for the person (AP-D004 L4); suppressed while they are here. */
+  notifyHandoff(input: {
+    readonly projectId: string;
+    readonly handoffId: string;
+    readonly kind: PushHandoffPayload["handoffKind"];
+  }): void;
   close(): Promise<void>;
 }
 
@@ -129,8 +140,58 @@ export class WebPushNotificationService implements PushNotificationService {
     this.#track(this.#deliver(payload));
   }
 
+  notifyHandoff(input: {
+    readonly projectId: string;
+    readonly handoffId: string;
+    readonly kind: PushHandoffPayload["handoffKind"];
+  }): void {
+    if (this.config === undefined) return;
+    const eventId = randomUUID();
+    const inactivityDelayMinutes = this.repository.getPushInactivityDelayMinutes();
+    if (this.hasRecentlyActiveClient(inactivityDelayMinutes)) {
+      this.eventSink?.("info", "push.suppressed", {
+        eventId,
+        projectId: input.projectId,
+        eventKind: "handoff",
+        reason: "active_client",
+        inactivityDelayMinutes,
+      });
+      return;
+    }
+    const payload = PushHandoffPayloadSchema.parse({
+      version: 1,
+      type: "handoff",
+      eventId,
+      projectId: input.projectId,
+      handoffId: input.handoffId,
+      handoffKind: input.kind,
+    });
+    this.#track(this.#deliverHandoff(payload));
+  }
+
   async close(): Promise<void> {
     await Promise.allSettled([...this.#pending]);
+  }
+
+  async #deliverHandoff(payload: PushHandoffPayload): Promise<void> {
+    await Promise.all(
+      this.repository.listActivePushSubscriptionRecords().map(async (subscription) => {
+        try {
+          // Its own topic: a later clear for the project must not replace an undelivered handoff.
+          await this.#send(subscription, payload, payload.handoffId, "high");
+          this.eventSink?.("info", "push.delivered", {
+            eventId: payload.eventId,
+            subscriptionId: subscription.id,
+          });
+        } catch (error) {
+          this.eventSink?.("warn", "push.delivery.failed", {
+            eventId: payload.eventId,
+            subscriptionId: subscription.id,
+            statusCode: this.#handleSendFailure(subscription.id, error),
+          });
+        }
+      }),
+    );
   }
 
   #track(delivery: Promise<void>): void {
@@ -180,7 +241,7 @@ export class WebPushNotificationService implements PushNotificationService {
 
   async #send(
     subscription: PushSubscriptionDeliveryRecord,
-    payload: PushNotificationPayload | PushClearPayload,
+    payload: PushNotificationPayload | PushClearPayload | PushHandoffPayload,
     projectId: string,
     urgency: "normal" | "high",
   ): Promise<void> {

@@ -134,6 +134,46 @@ describe("WebPushNotificationService", () => {
     }
   });
 
+  it("alerts every device of an agent handoff by IDs only, unless the person is here", async () => {
+    const repository = new NaruRepository(":memory:");
+    const sender = vi.fn().mockResolvedValue({ statusCode: 201 });
+    let here = false;
+    const service = new WebPushNotificationService(
+      repository,
+      pushConfig,
+      sender,
+      undefined,
+      () => here,
+    );
+    try {
+      service.subscribe(subscriptionInput("phone"));
+      service.subscribe(subscriptionInput("tablet"));
+      const projectId = randomUUID();
+      const handoffId = randomUUID();
+      service.notifyHandoff({ projectId, handoffId, kind: "manual-test" });
+      await service.close();
+      expect(sender).toHaveBeenCalledTimes(2);
+      const [, body, options] = sender.mock.calls[0] as [unknown, string, { urgency: string }];
+      expect(JSON.parse(body)).toEqual({
+        version: 1,
+        type: "handoff",
+        eventId: expect.any(String) as string,
+        projectId,
+        handoffId,
+        handoffKind: "manual-test",
+      });
+      expect(options.urgency).toBe("high");
+
+      here = true;
+      sender.mockClear();
+      service.notifyHandoff({ projectId, handoffId: randomUUID(), kind: "product-decision" });
+      await service.close();
+      expect(sender).not.toHaveBeenCalled();
+    } finally {
+      repository.close();
+    }
+  });
+
   it("suppresses every device while the controlling client is recently active", async () => {
     const repository = new NaruRepository(":memory:");
     repository.updatePushInactivityDelayMinutes(5);

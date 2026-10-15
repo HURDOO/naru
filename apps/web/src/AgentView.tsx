@@ -64,6 +64,8 @@ interface AgentViewProps {
   /** Shows an agent's or process's Pane in the workspace (TUI, console, terminal). */
   readonly onOpenPane: (paneId: string) => void;
   readonly onSelectProject: (projectId: string) => void;
+  /** Opened from a handoff alert: start on that Inbox item. */
+  readonly initialHandoffId?: string | null;
 }
 
 /**
@@ -79,12 +81,15 @@ export function AgentView({
   mutationAllowed,
   onOpenPane,
   onSelectProject,
+  initialHandoffId = null,
 }: AgentViewProps): React.JSX.Element {
   const [view, setView] = useState<AgentProjectView | null>(null);
   const [overview, setOverview] = useState<AgentOverview | null>(null);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(() =>
+    initialHandoffId === null ? null : { kind: "handoff", id: initialHandoffId },
+  );
   const [status, setStatus] = useState<string>("");
   const detailRef = useRef<HTMLDivElement | null>(null);
   const eventsLoaded = useRef(false);

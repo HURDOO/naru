@@ -235,6 +235,28 @@ export const PushNotificationPayloadSchema = z
   .strict();
 export type PushNotificationPayload = z.infer<typeof PushNotificationPayloadSchema>;
 
+/**
+ * An agent asked the person for a decision, manual test or terminal control (Agent Platform Inbox,
+ * AP-D004 L4). Opening it shows that handoff.
+ */
+export const PushHandoffPayloadSchema = z
+  .object({
+    version: z.literal(1),
+    type: z.literal("handoff"),
+    eventId: z.string().uuid(),
+    projectId: z.string().uuid(),
+    handoffId: z.string().uuid(),
+    handoffKind: z.enum([
+      "design-deviation",
+      "product-decision",
+      "manual-test",
+      "terminal-control",
+      "security-or-external",
+    ]),
+  })
+  .strict();
+export type PushHandoffPayload = z.infer<typeof PushHandoffPayloadSchema>;
+
 export const PUSH_CLEAR_MAX_ALERT_EVENT_IDS = 32;
 
 /** Tells a device to close the listed alerts of a project whose attention states were resolved. */

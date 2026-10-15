@@ -300,3 +300,54 @@
   - 원본 지시는 보낸 쪽의 진행 중 Task가 있으면 그 Task의 것을, 없으면 그 에이전트에게 적용되는 최신 사용자
     지시를 쓴다. 둘 다 없으면 거부한다.
   - 실제 Claude 세션 3개로 V06c 5단계가 모두 통과했다.
+
+## AP-D016. Naru MCP L2~L6의 세부 범위: worktree, fast-forward merge, 사람 채널
+
+- 상태: proposed (2026-10-15). 아래 기본값으로 구현했다. 사용자가 바꾸면 새 결정으로 반영한다.
+- 배경: AP-D004가 L1~L6을 정했고, 사용자는 L5·L6을 포함하라고 했다(K2). merge 방식과 main 보호는
+  아직 정하지 않았다.
+- 결정(기본값):
+  - L5 worktree(`create_worktree`, project orchestrator):
+    - 위치와 이름
+      - 위치: project 옆 `<project>-<slug>-<task 앞 8자>`
+      - branch: `naru/<slug>-<task 앞 8자>`, project의 현재 HEAD에서 만든다.
+    - 경로는 realpath 기준으로 승인된 project root 안이어야 한다.
+    - 만든 worktree는 Naru project로 연결한다. 같은 저장소 묶음에 보인다. branch는 Task의 artifact로
+      남는다.
+    - 그 worktree는 부모 project에 묶인다. 부모 project의 에이전트는 그 안에서 공유 프로세스 등을 쓸 수
+      있다. 다른 project의 에이전트는 쓸 수 없다.
+  - L5 Pane(`open_pane`, orchestrator·worker·specialist):
+    - Files·Docs Pane만 연다. 접힌 채 들어가고 제목에 `· agent`를 붙인다.
+    - Docs는 `docs/` 아래 문서만 연다. 경로는 기존 문서·파일 reader로 project 안인지 확인한다.
+    - terminal은 기존 `start_process`를 쓴다.
+  - L6 merge(`merge_task`, project orchestrator):
+    - 조건: merge gate가 열려 있어야 한다(정확성·의도 리뷰 통과, 막는 Handoff 없음). 대상은 Task의
+      최신 branch artifact다.
+    - 대상 branch는 project 경로에 checkout된 branch다. 그 checkout에 추적 파일 변경이 있으면 거부한다.
+    - `git merge --ff-only`만 쓴다.
+      - merge commit을 만들지 않고, 사람의 checkout에 충돌을 남기지 않는다.
+      - 갈라진 branch는 worktree에서 rebase하고 다시 리뷰받은 뒤 merge한다(A15).
+    - push는 하지 않는다. 원격 저장소 변경은 사용자 승인 경계다.
+    - 결과 commit을 Task의 artifact로 남긴다.
+    - 한계: 에이전트는 native git으로 이 규칙을 우회할 수 있다(AP-D004). Naru는 project에 hook을
+      설치하지 않는다. 설치하려면 project별 사용자 승인이 필요하다.
+    - git 명령 하나는 8초 안에 끝나야 한다(agent socket idle 시간보다 짧게). 큰 저장소의 worktree 생성은
+      이 시간을 넘을 수 있다.
+  - L3 agent(project orchestrator):
+    - `list_agents`, `get_task_detail`로 상태를 본다.
+    - `interrupt_agent`는 작업자·리뷰어·전문가의 turn만 멈춘다. 사람이 hold했거나 대화 writer가 사람이면
+      거부한다.
+  - L4 사람 채널:
+    - Handoff가 요청되면 Naru가 Web Push를 보낸다. 내용은 ID와 종류만 담는다. 사람이 최근 활동 중이면
+      보내지 않는다.
+    - 알림을 열면 그 project의 Inbox 항목이 열린다. project 없는 전역 Handoff는 아직 push하지 않는다.
+  - L2 범위:
+    - 에이전트는 자기 project와 묶인 worktree의 공유 프로세스만 목록으로 보고, 관찰하고, 입력하고,
+      정지한다.
+    - 사람이 직접 연 terminal Pane은 에이전트에게 보이지 않는다. 화면 내용이 민감할 수 있기 때문이다
+      (AP-D003).
+    - 제어권은 사람이 hold하고 반환한다. 에이전트는 Handoff로 요청한다.
+- 대안:
+  - Naru 신원으로 `--no-ff` merge commit을 만든다.
+  - worktree 위치를 설정으로 지정한다.
+  - merge 뒤 push한다. 사용자 승인 없이는 하지 않는다.

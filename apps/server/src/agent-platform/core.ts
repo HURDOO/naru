@@ -16,6 +16,7 @@ import {
   type AgentTask,
   type AgentTaskDetail,
   type AgentTaskStatus,
+  type AgentWorktree,
   type Artifact,
   type Handoff,
   type HandoffPayload,
@@ -1573,6 +1574,154 @@ export class AgentPlatformCore {
     return { open: reasons.length === 0, reasons };
   }
 
+  // Workspace and merge (AP-D004 L5/L6, AP-D016) -------------------------------------------------
+
+  /** Checked before Naru creates a worktree for a task; the worktree belongs to its project. */
+  authorizeWorktree(actor: Actor, taskId: string): AgentTask {
+    const task = this.#requireTask(taskId);
+    this.#authorize(actor, "workspace.worktree", task.projectId);
+    return task;
+  }
+
+  /** The worktree Naru already made for this task and branch (a retried create returns it). */
+  findTaskWorktree(taskId: string, branch: string): AgentWorktree | null {
+    return this.#store.findTaskWorktree(taskId, branch);
+  }
+
+  /**
+   * Records a worktree Naru created and connected for a task. Its branch becomes the task's branch
+   * artifact, which a later merge integrates.
+   */
+  recordWorktree(
+    context: CommandContext,
+    input: { readonly taskId: string; readonly worktreeProjectId: string; readonly branch: string },
+  ): AgentWorktree {
+    const task = this.authorizeWorktree(context.actor, input.taskId);
+    return this.#command(
+      context,
+      "workspace.worktree",
+      input,
+      "worktree",
+      (events) => {
+        this.#requireProject(input.worktreeProjectId);
+        const now = this.#timestamp();
+        this.#store.insertWorktree({
+          projectId: input.worktreeProjectId,
+          parentProjectId: task.projectId,
+          taskId: task.id,
+          branch: input.branch,
+          createdByAgentSessionId:
+            context.actor.kind === "agent" ? context.actor.agentSessionId : null,
+          createdAt: now,
+        });
+        const artifact: Artifact = {
+          id: this.#newId(),
+          taskId: task.id,
+          runId: null,
+          kind: "branch",
+          reference: input.branch,
+          summary: "Naru worktree",
+          exitCode: null,
+          createdAt: now,
+        };
+        this.#store.insertArtifact(artifact);
+        events.push({
+          type: "artifact.published",
+          projectId: task.projectId,
+          subjectId: artifact.id,
+          correlationId: task.id,
+          data: { kind: artifact.kind, exitCode: null },
+        });
+        return input.worktreeProjectId;
+      },
+      (id) => this.#requireWorktree(id),
+    );
+  }
+
+  /**
+   * What a merge may integrate: the task's latest branch artifact, and only while the merge gate
+   * is open (both reviews pass, no open handoff blocks the task).
+   */
+  authorizeMerge(
+    actor: Actor,
+    taskId: string,
+  ): { readonly task: AgentTask; readonly branch: string } {
+    const task = this.#requireTask(taskId);
+    this.#authorize(actor, "task.merge", task.projectId);
+    const gate = this.mergeGate(actor, task.id);
+    if (!gate.open) {
+      throw new AgentPlatformError(
+        "AGENT_INVALID_STATE",
+        `The merge gate is closed: ${gate.reasons.join(", ")}.`,
+      );
+    }
+    const branch = this.#store
+      .listArtifacts(task.id)
+      .filter((artifact) => artifact.kind === "branch")
+      .at(-1)?.reference;
+    if (branch === undefined) {
+      throw new AgentPlatformError(
+        "AGENT_INVALID_STATE",
+        "The task has no branch artifact to merge.",
+      );
+    }
+    return { task, branch };
+  }
+
+  /** Records the commit a merge produced as the task's artifact. */
+  recordMerge(
+    context: CommandContext,
+    input: { readonly taskId: string; readonly commit: string; readonly summary: string },
+  ): Artifact {
+    const task = this.#requireTask(input.taskId);
+    this.#authorize(context.actor, "task.merge", task.projectId);
+    return this.#command(
+      context,
+      "task.merge",
+      input,
+      "artifact",
+      (events) => {
+        const artifact: Artifact = {
+          id: this.#newId(),
+          taskId: task.id,
+          runId: null,
+          kind: "commit",
+          reference: input.commit,
+          summary: input.summary,
+          exitCode: null,
+          createdAt: this.#timestamp(),
+        };
+        this.#store.insertArtifact(artifact);
+        events.push({
+          type: "artifact.published",
+          projectId: task.projectId,
+          subjectId: artifact.id,
+          correlationId: task.id,
+          data: { kind: artifact.kind, exitCode: null },
+        });
+        return artifact.id;
+      },
+      (id) => this.#requireArtifact(id, task.id),
+    );
+  }
+
+  /** An orchestrator may stop a working agent's turn in its project unless a person holds it. */
+  authorizeInterrupt(actor: Actor, agentSessionId: string): AgentSession {
+    const target = this.#requireAgentSession(agentSessionId);
+    this.#authorize(actor, "agent.interrupt", target.projectId);
+    if (target.role === "main-orchestrator" || target.role === "project-orchestrator") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Orchestrators are not interrupted.");
+    }
+    this.#assertNotHeld(actor, target.id);
+    return target;
+  }
+
+  /** An agent may open a view Pane (files, docs) for the person in its own scope. */
+  authorizePaneOpen(actor: Actor, projectId: string): void {
+    this.#requireProject(projectId);
+    this.#authorize(actor, "pane.open", projectId);
+  }
+
   getTaskDetail(actor: Actor, taskId: string): AgentTaskDetail {
     const task = this.#requireTask(taskId);
     this.#authorize(actor, "state.read", task.projectId);
@@ -1772,7 +1921,7 @@ export class AgentPlatformCore {
       throw new AgentPlatformError("AGENT_ROLE_DENIED", `Role ${agent.role} cannot ${command}.`);
     }
     // The main orchestrator is global; every other role is confined to its own project.
-    if (agent.role !== "main-orchestrator" && projectId !== agent.projectId) {
+    if (agent.role !== "main-orchestrator" && !this.#inAgentProject(agent, projectId)) {
       throw new AgentPlatformError(
         "AGENT_SCOPE_DENIED",
         "The target is outside the agent's project.",
@@ -1793,6 +1942,16 @@ export class AgentPlatformCore {
       );
     }
     return agent;
+  }
+
+  /** The agent's project and the worktrees Naru made for it (AP-D016). */
+  #inAgentProject(agent: AgentSession, projectId: string | null): boolean {
+    if (projectId === agent.projectId) return true;
+    return (
+      projectId !== null &&
+      agent.projectId !== null &&
+      this.#store.getWorktree(projectId)?.parentProjectId === agent.projectId
+    );
   }
 
   #authorizeTaskUpdate(
@@ -2004,6 +2163,10 @@ export class AgentPlatformCore {
     return (
       this.#store.listReviews(taskId).find((review) => review.id === id) ?? throwNotFound("review")
     );
+  }
+
+  #requireWorktree(projectId: string): AgentWorktree {
+    return this.#store.getWorktree(projectId) ?? throwNotFound("worktree");
   }
 
   #requireArtifact(id: string, taskId: string): Artifact {

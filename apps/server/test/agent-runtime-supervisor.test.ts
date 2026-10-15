@@ -223,6 +223,45 @@ describe("managed agent supervisor with a real runner process", () => {
     await third.server.close();
   }, 60_000);
 
+  it("lets an orchestrator interrupt a worker's turn unless a person holds it", async () => {
+    const fixture = setup();
+    const naru = await fixture.naru();
+    const projectId = naru.core.getAgentSession(HUMAN, fixture.worker).projectId;
+    const orchestrator = naru.core.registerAgentSession(fixture.ctx(HUMAN), {
+      projectId,
+      role: "project-orchestrator",
+      runtime: "claude",
+      native: false,
+      observation: "transcript",
+      conversationWriter: "orchestrator",
+    }).id;
+    const byAgent = (agentSessionId: string): Actor => ({ kind: "agent", agentSessionId });
+    await naru.supervisor.launch(fixture.worker);
+    await until(() => fixture.status(naru.core) === "idle", "conversation ready");
+
+    naru.supervisor.sendTurn(fixture.worker, "SLOW800 long work", "orchestrator", 1);
+    await until(() => naru.supervisor.runtimeState(fixture.worker).turnActive, "turn running");
+    expect(() => naru.supervisor.interruptByAgent(byAgent(fixture.worker), fixture.worker)).toThrow(
+      /cannot agent.interrupt/,
+    );
+    expect(naru.supervisor.interruptByAgent(byAgent(orchestrator), fixture.worker).turnActive).toBe(
+      true,
+    );
+    await until(() => fixture.status(naru.core) === "idle", "interrupted turn ends");
+
+    naru.core.setHumanHold(fixture.ctx(HUMAN), {
+      agentSessionId: fixture.worker,
+      held: true,
+      reason: "takeover",
+    });
+    expect(() => naru.supervisor.interruptByAgent(byAgent(orchestrator), fixture.worker)).toThrow(
+      /human is working/,
+    );
+    naru.supervisor.stop(fixture.worker);
+    await until(() => fixture.status(naru.core) === "stopped", "stopped");
+    await naru.server.close();
+  }, 30_000);
+
   it("wakes a project orchestrator with a Naru event turn when the user instructs its project", async () => {
     const directory = mkdtempSync(join(tmpdir(), "naru-wakeup-"));
     cleanups.push(() => rmSync(directory, { recursive: true, force: true }));

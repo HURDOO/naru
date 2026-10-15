@@ -356,6 +356,10 @@ export const AgentCommandNameSchema = z.enum([
   "process.read",
   "process.stop",
   "agent.spawn",
+  "agent.interrupt",
+  "pane.open",
+  "workspace.worktree",
+  "task.merge",
 ]);
 export type AgentCommandName = z.infer<typeof AgentCommandNameSchema>;
 
@@ -395,9 +399,13 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "run.report_progress",
     "agent_session.register",
     "agent.spawn",
+    "agent.interrupt",
     "handoff.request",
     "handoff.cancel",
     "artifact.publish",
+    "pane.open",
+    "workspace.worktree",
+    "task.merge",
     ...PROCESS_COMMANDS,
   ],
   worker: [
@@ -409,6 +417,7 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "handoff.request",
     "handoff.cancel",
     "artifact.publish",
+    "pane.open",
     ...PROCESS_COMMANDS,
   ],
   reviewer: [
@@ -426,6 +435,7 @@ export const AGENT_ROLE_COMMANDS: Readonly<Record<AgentRole, readonly AgentComma
     "handoff.request",
     "handoff.cancel",
     "artifact.publish",
+    "pane.open",
     ...PROCESS_COMMANDS,
   ],
 };
@@ -596,6 +606,20 @@ export const ProjectAgentSummarySchema = z.strictObject({
   heldAgents: z.number().int().min(0),
 });
 export type ProjectAgentSummary = z.infer<typeof ProjectAgentSummarySchema>;
+
+/**
+ * A git worktree Naru made for a task (AP-D004 L5, AP-D016). It is connected as its own Naru project
+ * so the user sees it; agents of the parent project may work in it.
+ */
+export const AgentWorktreeSchema = z.strictObject({
+  projectId: Id,
+  parentProjectId: Id,
+  taskId: Id.nullable(),
+  branch: z.string().min(1).max(200),
+  createdByAgentSessionId: Id.nullable(),
+  createdAt: Timestamp,
+});
+export type AgentWorktree = z.infer<typeof AgentWorktreeSchema>;
 
 /** One task with its runs, reviews, artifacts and merge gate, for the Project graph (AP-T17). */
 export const AgentTaskDetailSchema = z.strictObject({

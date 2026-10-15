@@ -190,6 +190,22 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
     browser 상태나 draft에 남기지 않는다. Claude·Codex Pane에는 두지 않는다(입력이 모델 prompt가 된다).
   - Host의 입력 중복 제거 fingerprint는 process별 key의 HMAC이다.
 
+### 6.5.1 worktree, merge, 사람 채널 (AP-T11, AP-D016)
+
+- `AgentWorkspace`(`agent-runtime/workspace.ts`)가 git과 Naru project 작업을 한다. 권한은 Core가 먼저
+  판단한다(`authorizeWorktree`, `authorizeMerge`, `authorizePaneOpen`).
+  - git은 Naru의 metadata 조회와 같은 runner를 쓴다: 사용자·system 설정 없음, 승인 root를 ceiling으로,
+    명령당 8초.
+  - worktree는 `ProjectCatalogService.register`로 연결한다. `agent_worktrees`가 부모 project를 기록한다.
+    Core의 scope 검사는 에이전트의 project와 그 project에 묶인 worktree를 같은 범위로 본다.
+  - merge는 대상 checkout이 깨끗할 때 `--ff-only`로만 한다. 결과 commit을 artifact로 남긴다.
+- `interrupt_agent`는 supervisor의 writer gate를 거친다. 대화 writer가 orchestrator일 때만 보낸다.
+- Handoff push: app이 Core 이벤트 `handoff.requested`를 받아 `notifyHandoff`를 부른다.
+  - payload(`PushHandoffPayloadSchema`)는 ID와 종류만 담는다. 이유, 선택지, 환경은 서버에만 있다.
+  - topic은 Handoff별이다. project의 clear 알림이 아직 전달되지 않은 Handoff 알림을 대체하지 않게 한다.
+  - service worker는 `naru:handoff:<id>` tag로 한 번만 보여 준다. 열면 `naruHandoff` 또는
+    `NARU_PUSH_HANDOFF`로 앱이 그 Inbox 항목을 연다.
+
 ### 6.6 웹 화면 (AP-T17)
 
 - 작업공간 옆의 `에이전트` 탭이다. 사람 기기 lease가 있어야 바꿀 수 있다(AP-D005 첫 계층). 읽기는

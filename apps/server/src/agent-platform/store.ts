@@ -5,6 +5,7 @@ import {
   type AgentEventType,
   type AgentSession,
   type AgentTask,
+  type AgentWorktree,
   type Artifact,
   type Handoff,
   type Instruction,
@@ -777,6 +778,39 @@ export class AgentPlatformStore {
     return rows.map(artifactFromRow);
   }
 
+  // Worktrees (AP-D016) --------------------------------------------------------------------------
+
+  insertWorktree(worktree: AgentWorktree): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_worktrees (
+           project_id, parent_project_id, task_id, branch, created_by_agent_session_id, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        worktree.projectId,
+        worktree.parentProjectId,
+        worktree.taskId,
+        worktree.branch,
+        worktree.createdByAgentSessionId,
+        worktree.createdAt,
+      );
+  }
+
+  getWorktree(projectId: string): AgentWorktree | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_worktrees WHERE project_id = ?")
+      .get(projectId) as WorktreeRow | undefined;
+    return row === undefined ? null : worktreeFromRow(row);
+  }
+
+  findTaskWorktree(taskId: string, branch: string): AgentWorktree | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_worktrees WHERE task_id = ? AND branch = ?")
+      .get(taskId, branch) as WorktreeRow | undefined;
+    return row === undefined ? null : worktreeFromRow(row);
+  }
+
   // Native messages (AP-D015) -------------------------------------------------------------------
 
   insertNativeMessage(input: {
@@ -1342,6 +1376,26 @@ function reviewFromRow(row: ReviewRow): Review {
     kind: row.kind,
     verdict: row.verdict,
     findings: row.findings,
+    createdAt: row.created_at,
+  };
+}
+
+interface WorktreeRow {
+  project_id: string;
+  parent_project_id: string;
+  task_id: string | null;
+  branch: string;
+  created_by_agent_session_id: string | null;
+  created_at: string;
+}
+
+function worktreeFromRow(row: WorktreeRow): AgentWorktree {
+  return {
+    projectId: row.project_id,
+    parentProjectId: row.parent_project_id,
+    taskId: row.task_id,
+    branch: row.branch,
+    createdByAgentSessionId: row.created_by_agent_session_id,
     createdAt: row.created_at,
   };
 }

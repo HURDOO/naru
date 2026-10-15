@@ -1533,16 +1533,38 @@ export class NaruRepository {
       .immediate();
   }
 
+  /** A Files or Docs Pane an agent opened for the person (AP-D004 L5), added collapsed. */
+  createAgentViewPane(
+    projectId: string,
+    kind: "files" | "docs",
+    title: string,
+    selectedDocumentPath: string | null,
+  ): Pane {
+    return this.#database
+      .transaction(() =>
+        this.#insertCollapsedPane(
+          projectId,
+          kind,
+          title,
+          kind === "files" ? "files-editor" : "docs-readonly",
+          () => undefined,
+          selectedDocumentPath,
+        ),
+      )
+      .immediate();
+  }
+
   #insertCollapsedPane(
     projectId: string,
     kind: PaneKind,
     title: string,
     launchProfile: string,
     bind: (paneId: string, now: string) => void,
+    selectedDocumentPath: string | null = null,
   ): Pane {
     const workspace = this.getWorkspace(projectId);
     const now = new Date().toISOString();
-    const pane = createPaneRecord(projectId, kind, title, launchProfile, now);
+    const pane = createPaneRecord(projectId, kind, title, launchProfile, now, selectedDocumentPath);
     const layout = insertCollapsedPane(workspace.layout, pane.id);
     const activePaneId = workspace.activePaneId ?? pane.id;
     assertWorkspaceState(

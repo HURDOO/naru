@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NARU_APP_BASE_PATH_META_NAME, naruAppScopePath } from "@naru/contracts/naru-app/v1";
+import { HandoffKindSchema } from "@naru/contracts/naru-agent/v1";
 import type { ServerOptions } from "node:https";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
@@ -265,6 +266,17 @@ export async function buildApp(
       });
     }
     pushNotifications.handleActivity(change);
+  });
+  // An agent's handoff reaches the person's devices like other attention events (AP-D004 L4).
+  const unsubscribeHandoffs = dependencies.agentPlatform?.subscribe((event) => {
+    if (event.type !== "handoff.requested" || event.projectId === null) return;
+    const kind = HandoffKindSchema.safeParse(event.data.kind);
+    if (!kind.success) return;
+    pushNotifications.notifyHandoff({
+      projectId: event.projectId,
+      handoffId: event.subjectId,
+      kind: kind.data,
+    });
   });
   const unsubscribeCodexIdentity = dependencies.supervisor.onCodexIdentity((change) => {
     for (const active of sockets) {
@@ -1620,6 +1632,7 @@ export async function buildApp(
   app.addHook("onClose", async () => {
     clearInterval(leaseTimer);
     unsubscribeActivity();
+    unsubscribeHandoffs?.();
     unsubscribeCodexIdentity();
     await pushNotifications.close();
     tlsCertificateManager?.stop();

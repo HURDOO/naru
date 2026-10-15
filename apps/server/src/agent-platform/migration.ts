@@ -252,6 +252,17 @@ export const AGENT_PLATFORM_MIGRATION: DatabaseMigration = {
       CREATE INDEX agent_shared_process_inputs_process
         ON agent_shared_process_inputs(process_id, created_at);
 
+      -- A git worktree Naru made for a task and connected as its own project (AP-D016).
+      CREATE TABLE agent_worktrees (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        parent_project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        task_id TEXT REFERENCES agent_tasks(id) ON DELETE SET NULL,
+        branch TEXT NOT NULL,
+        created_by_agent_session_id TEXT REFERENCES agent_sessions(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX agent_worktrees_parent ON agent_worktrees(parent_project_id);
+
       CREATE TABLE agent_commands (
         actor_key TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,

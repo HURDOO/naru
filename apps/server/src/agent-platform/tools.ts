@@ -10,7 +10,9 @@ import {
   ReviewKindSchema,
   ReviewVerdictSchema,
   type Actor,
+  type AgentRuntimeState,
   type AgentSession,
+  type Artifact,
   type InstructionScope,
   type SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
@@ -43,6 +45,24 @@ export interface AgentToolRuntime {
         readonly runtime: "claude" | "codex";
       },
     ): Promise<AgentSession>;
+    interrupt(actor: Actor, agentSessionId: string): AgentRuntimeState;
+  };
+  /** Worktrees, view Panes and merge (AP-D004 L5/L6, AP-D016). */
+  readonly workspace?: {
+    createWorktree(
+      context: CommandContext,
+      input: { readonly taskId: string; readonly slug: string },
+    ): Promise<{ readonly projectId: string; readonly path: string; readonly branch: string }>;
+    merge(context: CommandContext, input: { readonly taskId: string }): Promise<Artifact>;
+    openPane(
+      context: CommandContext,
+      input: {
+        readonly projectId: string;
+        readonly kind: "files" | "docs";
+        readonly title: string;
+        readonly path?: string;
+      },
+    ): Promise<{ readonly paneId: string; readonly projectId: string }>;
   };
 }
 
@@ -526,6 +546,76 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
         projectId: ownProject(core, context.actor, input.project_id),
         role: input.role,
         runtime: input.runtime,
+      }),
+  ),
+  readTool(
+    "list_agents",
+    "List the Naru-managed agents of a project: role, runtime, status, parent and whether a person " +
+      "holds them.",
+    z.strictObject({ project_id: Id.optional() }),
+    (core, actor, input) =>
+      core.listAgentSessions(actor, ownProject(core, actor, input.project_id)),
+  ),
+  readTool(
+    "get_task_detail",
+    "Read a task with its runs, reviews, artifacts (branches, commits, test results) and merge gate.",
+    z.strictObject({ task_id: Id }),
+    (core, actor, input) => core.getTaskDetail(actor, input.task_id),
+  ),
+  readTool(
+    "interrupt_agent",
+    "Stop the running turn of a worker, reviewer or specialist in your project (orchestrators " +
+      "only). Fails while a person holds or writes to it.",
+    z.strictObject({ agent_session_id: Id }),
+    (_core, actor, input, runtime) =>
+      requireRuntime(runtime, "agents").interrupt(actor, input.agent_session_id),
+  ),
+  writeTool(
+    "create_worktree",
+    "Create a git worktree and branch for a task next to the project (within Naru's approved " +
+      "roots) and connect it as a Naru project the user can open. Work there, publish commits, " +
+      "then ask for reviews; merge_task integrates the branch.",
+    z.strictObject({
+      task_id: Id,
+      slug: Text(40).describe("Short name for the branch and folder, e.g. login-screen."),
+    }),
+    (_core, context, input, runtime) =>
+      requireRuntime(runtime, "workspace").createWorktree(context, {
+        taskId: input.task_id,
+        slug: input.slug,
+      }),
+  ),
+  writeTool(
+    "merge_task",
+    "Integrate a task's branch into the branch checked out in its project, by fast-forward only, " +
+      "once the merge gate is open. Naru never pushes. A diverged branch must be rebased in its " +
+      "worktree and reviewed again.",
+    z.strictObject({ task_id: Id }),
+    (_core, context, input, runtime) =>
+      requireRuntime(runtime, "workspace").merge(context, { taskId: input.task_id }),
+  ),
+  writeTool(
+    "open_pane",
+    "Open a Files or Docs view for the user in Naru, marked as opened by an agent, e.g. a test " +
+      "plan or the file to look at.",
+    z.strictObject({
+      project_id: Id.optional(),
+      kind: z.enum(["files", "docs"]),
+      title: Text(NARU_AGENT_LIMITS.titleCharacters),
+      path: z
+        .string()
+        .trim()
+        .min(1)
+        .max(1_024)
+        .optional()
+        .describe("Path relative to the project; Docs opens documents under docs/."),
+    }),
+    (core, context, input, runtime) =>
+      requireRuntime(runtime, "workspace").openPane(context, {
+        projectId: ownProject(core, context.actor, input.project_id),
+        kind: input.kind,
+        title: input.title,
+        ...(input.path === undefined ? {} : { path: input.path }),
       }),
   ),
 ];

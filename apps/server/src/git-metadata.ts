@@ -324,9 +324,11 @@ export class GitMetadataAdapter {
 
 export class SystemGitCommandRunner implements GitCommandRunner {
   readonly #executable: string;
+  readonly #timeoutMs: number;
 
-  constructor(executable = DEFAULT_GIT_EXECUTABLE) {
+  constructor(executable = DEFAULT_GIT_EXECUTABLE, timeoutMs = GIT_COMMAND_TIMEOUT_MS) {
     this.#executable = executable;
+    this.#timeoutMs = timeoutMs;
   }
 
   run(cwd: string, approvedRoot: string, args: readonly string[]): Promise<Buffer> {
@@ -368,7 +370,7 @@ export class SystemGitCommandRunner implements GitCommandRunner {
 
       child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk, "stdout"));
       child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk, "stderr"));
-      const timeout = setTimeout(() => stopFor("timeout"), GIT_COMMAND_TIMEOUT_MS);
+      const timeout = setTimeout(() => stopFor("timeout"), this.#timeoutMs);
       timeout.unref();
       child.once("error", (error) =>
         finish(new GitCommandError("spawn", null, Buffer.alloc(0), error)),
@@ -602,7 +604,7 @@ function invalidOutput(message: string): GitMetadataError {
   return new GitMetadataError("invalid-output", message);
 }
 
-class GitCommandError extends Error {
+export class GitCommandError extends Error {
   readonly reason: "spawn" | "exit" | "timeout" | "output-too-large";
   readonly exitCode: number | null;
   readonly stderr: Buffer;

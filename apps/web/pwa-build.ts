@@ -287,6 +287,10 @@ async function handlePush(event) {
     await clearProjectNotifications(payload);
     return;
   }
+  if (isPushHandoffPayload(payload)) {
+    await showHandoffNotification(payload);
+    return;
+  }
   if (!isPushPayload(payload)) return;
 
   const tag = "naru:project:" + payload.projectId;
@@ -319,6 +323,32 @@ async function handlePush(event) {
     renotify: false,
     data: payload,
   });
+}
+
+async function showHandoffNotification(payload) {
+  const tag = "naru:handoff:" + payload.handoffId;
+  const existing = await self.registration.getNotifications({ tag });
+  if (existing.length > 0) return;
+  const summary = await loadPushProjectSummary(payload.projectId);
+  const projectName = normalizedProjectName(summary?.projectName) ?? "Naru";
+  await self.registration.showNotification(projectName + " · 결정 요청", {
+    body: handoffBody(payload.handoffKind),
+    badge: appPath("/icons/naru-192.png"),
+    icon: appPath("/icons/naru-192.png"),
+    tag,
+    renotify: false,
+    data: payload,
+  });
+}
+
+function handoffBody(kind) {
+  return {
+    "design-deviation": "에이전트가 설계 변경 승인을 기다립니다.",
+    "product-decision": "에이전트가 제품 결정을 기다립니다.",
+    "manual-test": "에이전트가 직접 테스트를 부탁했습니다.",
+    "terminal-control": "에이전트가 터미널 입력을 부탁했습니다.",
+    "security-or-external": "에이전트가 보안·외부 작업 승인을 기다립니다.",
+  }[kind];
 }
 
 async function clearProjectNotifications(clear) {
@@ -417,7 +447,8 @@ function isNotificationCount(value) {
 }
 
 async function openNotificationTarget(payload) {
-  if (!isPushPayload(payload)) return;
+  const handoff = isPushHandoffPayload(payload);
+  if (!handoff && !isPushPayload(payload)) return;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   const client = windows.find((candidate) => {
     try {
@@ -429,15 +460,39 @@ async function openNotificationTarget(payload) {
   });
   if (client) {
     await client.focus();
-    client.postMessage({ type: "NARU_PUSH_EVENT", payload });
+    client.postMessage({ type: handoff ? "NARU_PUSH_HANDOFF" : "NARU_PUSH_EVENT", payload });
     return;
   }
 
   const url = new URL(APP_SCOPE_PATH, self.location.origin);
   url.searchParams.set("naruProject", payload.projectId);
-  url.searchParams.set("naruPane", payload.paneId);
-  url.searchParams.set("naruEvent", payload.eventId);
+  if (handoff) {
+    url.searchParams.set("naruHandoff", payload.handoffId);
+  } else {
+    url.searchParams.set("naruPane", payload.paneId);
+    url.searchParams.set("naruEvent", payload.eventId);
+  }
   await self.clients.openWindow(url.href);
+}
+
+function isPushHandoffPayload(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.keys(value).length === 6 &&
+    value.version === 1 &&
+    value.type === "handoff" &&
+    isUuid(value.eventId) &&
+    isUuid(value.projectId) &&
+    isUuid(value.handoffId) &&
+    [
+      "design-deviation",
+      "product-decision",
+      "manual-test",
+      "terminal-control",
+      "security-or-external",
+    ].includes(value.handoffKind)
+  );
 }
 
 function isPushClearPayload(value) {
