@@ -1,3 +1,4 @@
+import { AgentApprovalDecisionSchema } from "@naru/contracts/naru-agent/v1";
 import { z } from "zod";
 
 /**
@@ -33,6 +34,8 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
     kind: z.enum(["command", "file", "tool", "permission", "question"]),
     /** What is asked (tool and command or path), shown to the person; never stored (AP-D017). */
     summary: z.string().max(300).optional(),
+    /** The runtime can allow this kind of call for the rest of the session (AP-D023). */
+    sessionAllow: z.boolean().optional(),
   }),
   z.strictObject({ type: z.literal("approval-resolved"), requestId: Id }),
   z.strictObject({
@@ -79,7 +82,11 @@ export const RunnerPlanSchema = z.strictObject({
   settings: z.record(z.string(), z.unknown()),
   mcpServers: z.record(z.string(), z.unknown()),
   instructions: z.string().max(64_000),
-  permissionMode: z.enum(["default", "acceptEdits", "plan"]),
+  /**
+   * Absent: Claude starts in the person's own mode (their settings' `defaultMode`, else auto), as
+   * their own Claude does (AP-D023). Naru does not choose it for them.
+   */
+  permissionMode: z.enum(["default", "acceptEdits", "plan", "auto"]).optional(),
   environment: z.record(z.string(), z.string()),
 });
 export type RunnerPlan = z.infer<typeof RunnerPlanSchema>;
@@ -112,7 +119,7 @@ export const NaruMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("approval"),
     requestId: Id,
-    decision: z.enum(["approve", "deny"]),
+    decision: AgentApprovalDecisionSchema,
   }),
   z.strictObject({
     type: z.literal("history"),

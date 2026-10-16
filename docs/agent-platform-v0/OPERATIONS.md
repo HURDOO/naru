@@ -26,7 +26,8 @@ Agent Platform은 기본으로 꺼져 있다. 켜려면 Naru 환경에 다음을
 
 - Claude: 역할별 `claude-opus-5-5`. 사용자 로그인(keychain)을 쓴다.
   - 사용자 settings(`~/.claude`)도 불러온다. 개인 skill, plugin, 권한 허용 규칙, hook이 에이전트에도
-    적용된다. Naru 주입 설정(model, 권한 모드, Naru 도구 허용, bridge hook)이 우선한다(AP-D020).
+    적용된다. Naru 주입 설정(model, Naru 도구 허용, bridge hook)이 우선한다(AP-D020). 권한 모드는 Naru가
+    정하지 않고 사용자 자신의 모드를 따른다(AP-D023).
 - Codex: 역할별 `gpt-6-astra`. reasoning은 Host profile `codex-main`의 설정(xhigh)을 따른다.
 - 모델 표는 코드 상수다(`CLAUDE_AGENT_MODELS`, `CODEX_AGENT_MODELS`). 운영 값은 AP-T19에서 정한다.
 
@@ -36,9 +37,9 @@ Agent Platform은 기본으로 꺼져 있다. 켜려면 Naru 환경에 다음을
   - 최소 간격 5초, 시간당 60 turn
   - 완료 보고가 없으면 30분 뒤 같은 묶음을 다시 보낸다.
   - 사람 hold 중에는 쌓아 두었다가, 반환할 때 한 번에 보낸다.
-- 도구 승인(AP-D017): Naru 도구와 작업 디렉터리 안 편집은 묻지 않는다. 명령 실행은 관제실의 "나를 기다리는 것"이나
-  그 에이전트 대화에서 사람이 답한다. 자주 쓰는 명령은 project `.claude/settings.json`이나 개인 `~/.claude/settings.json`에서 미리
-  허용할 수 있다.
+- 도구 승인(AP-D017, AP-D023): 에이전트는 사용자 자신의 권한 모드(평소 auto)로 일한다. 그 모드가 묻는
+  것만 관제실의 "나를 기다리는 것"이나 그 에이전트 대화에 승인 요청으로 온다. 런타임이 제안하면 "이
+  세션에서는 항상 허용"을 고를 수 있다. 개인·project `.claude/settings.json`의 허용 규칙도 그대로 쓴다.
 - 통합(AP-D019): `merge_task`는 작업마다 merge commit을 만든다. 충돌하면 되돌리고 거부한다. push는 하지
   않는다.
 - 사람 채널:

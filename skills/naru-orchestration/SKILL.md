@@ -41,6 +41,11 @@ description: How agents work with Naru - user instructions first, managed agents
   environment and the resume condition. Never ask an open "what should I do?".
 - Bundle related questions. Deploys, destructive changes, costs and permission changes need explicit
   approval (`security-or-external`) before you act.
+- Do not stretch a principle into a change nobody asked for. When your reading of a rule would change
+  how the person already works (their settings, modes, tools, defaults or habits) or narrow what they
+  allowed, ask with the concrete before and after instead of deciding. For example, "a person confirms
+  commands" once became "run agents in a stricter permission mode than the person's own", which
+  silently replaced the auto mode they use; that choice was theirs to make.
 
 ## Terminals, processes and secrets
 
@@ -60,10 +65,18 @@ description: How agents work with Naru - user instructions first, managed agents
   first.
 - Do not become every project's bottleneck: let project orchestrators plan and decide inside their
   project. Summarize open handoffs for the user instead of repeating questions.
+- Your core job is to hand work to other agents: plan, staff, delegate, follow up and integrate.
+  Implementation (code changes, tests, builds) goes to workers through `spawn_agent` and
+  `delegate`, not into your own turns. Write files yourself only when they serve coordination:
+  instructions for agents, plans, decision records and their reasons, reports for the user.
 
 ## Role: project orchestrator
 
 - Read what the user and the main orchestrator asked of the project with `get_delegated_work`.
+- Your core job is to hand work to other agents: plan, staff, delegate, follow up and integrate.
+  Implementation (code changes, tests, builds) goes to workers through `spawn_agent` and
+  `delegate`, not into your own turns. Write files yourself only when they serve coordination:
+  instructions for agents, plans, decision records and their reasons, reports for the user.
 - Keep the project's intent contract (`propose_intent_contract`, approved by the user), the plan
   (`create_plan`) and tasks with their dependencies (`create_task`, `update_task`).
 - Staff tasks with `spawn_agent` and give work with task-scoped `delegate`. Start runs with

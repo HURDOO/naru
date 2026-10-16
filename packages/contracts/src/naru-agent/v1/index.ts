@@ -544,6 +544,14 @@ export const SetProcessHoldRequestSchema = z.strictObject({
 /** Writer generation the browser last saw; a stale one is fenced (INV-05). */
 const WriterGeneration = z.number().int().positive();
 
+/**
+ * The person's answer to a tool approval (AP-D017). `approve-session` also allows the same kind of
+ * call for the rest of this runtime session, as the runtime itself proposes it (AP-D023); nothing is
+ * written to the person's settings files.
+ */
+export const AgentApprovalDecisionSchema = z.enum(["approve", "approve-session", "deny"]);
+export type AgentApprovalDecision = z.infer<typeof AgentApprovalDecisionSchema>;
+
 export const AgentWriterSchema = z.enum(["orchestrator", "gui", "tui", "none"]);
 export const AgentRuntimeStateSchema = z.strictObject({
   agentSessionId: Id,
@@ -567,6 +575,8 @@ export const AgentRuntimeStateSchema = z.strictObject({
         kind: z.string().max(40),
         /** What is asked (tool and command or path); from the runtime, never stored (AP-D017). */
         summary: z.string().max(300).optional(),
+        /** The runtime offers to allow this kind of call for the rest of the session (AP-D023). */
+        sessionAllow: z.boolean().optional(),
       }),
     )
     .max(64),
@@ -589,7 +599,7 @@ export const AgentInterruptRequestSchema = z.strictObject({ generation: WriterGe
  * conversation; `generation` is accepted for older clients and ignored.
  */
 export const AgentApprovalResponseRequestSchema = z.strictObject({
-  decision: z.enum(["approve", "deny"]),
+  decision: AgentApprovalDecisionSchema,
   generation: WriterGeneration.optional(),
 });
 export const AgentHistoryQuerySchema = z.strictObject({

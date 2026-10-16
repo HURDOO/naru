@@ -7,6 +7,7 @@ import {
 } from "../src/agent-runtime/claude/runner.js";
 import type {
   ClaudeCanUseTool,
+  ClaudePermissionResult,
   ClaudeSdkMessage,
   ClaudeSdkPort,
 } from "../src/agent-runtime/claude/sdk-port.js";
@@ -20,13 +21,16 @@ const PLAN: ClaudeRunnerPlan = {
   settings: { hooks: {} },
   mcpServers: { naru: { command: "/fixture/node", args: [], env: {} } },
   instructions: "fixture role guidance",
-  permissionMode: "default",
   environment: { HOME: "/fixture/home" },
 };
 
 /** Scripted SDK: one result per user message; markers in the text trigger approvals, children, failure. */
 function fakeSdk(options: { crashAfterTurns?: number } = {}) {
-  const calls: { options?: Record<string, unknown>; history?: unknown } = {};
+  const calls: {
+    options?: Record<string, unknown>;
+    history?: unknown;
+    results: ClaudePermissionResult[];
+  } = { results: [] };
   let interrupted = false;
   const port: ClaudeSdkPort = {
     query({ prompt, options: queryOptions }) {
@@ -58,8 +62,21 @@ function fakeSdk(options: { crashAfterTurns?: number } = {}) {
               { command: "fixture" },
               {
                 signal: new AbortController().signal,
+                ...(text.includes("SESSION")
+                  ? {
+                      suggestions: [
+                        {
+                          type: "addRules",
+                          rules: [{ toolName: "Bash", ruleContent: "fixture:*" }],
+                          behavior: "allow",
+                          destination: "localSettings",
+                        },
+                      ],
+                    }
+                  : {}),
               },
             );
+            calls.results.push(decision);
             yield { type: "assistant", decision: decision.behavior };
           }
           if (text.includes("SLOW")) await new Promise((resolve) => setTimeout(resolve, 30));
@@ -132,6 +149,8 @@ describe("Claude SDK runner", () => {
       extraArgs: { name: "naru-000000000001" },
       forwardSubagentText: true,
     });
+    // No mode from Naru: Claude starts in the person's own mode (AP-D023).
+    expect(calls.options).not.toHaveProperty("permissionMode");
     expect(runner.runtimeSessionRef).toBe("session-fixture-1");
     // The turn starts when Naru hands over the input; the SDK reports the conversation after that.
     expect(events).toEqual([
@@ -188,6 +207,47 @@ describe("Claude SDK runner", () => {
     await runner.interrupt();
     await until(events, (event) => event.type === "turn-ended" && event.outcome === "interrupted");
     expect(runner.runtimeSessionRef).toBe("session-resumed");
+    await runner.stop();
+  });
+
+  it("allows the rest of the session only with the SDK's own proposal, scoped to the session", async () => {
+    const { port, calls } = fakeSdk();
+    const runner = new ClaudeRunner(port, PLAN);
+    const events: AgentRuntimeEvent[] = [];
+    runner.onEvent((event) => events.push(event));
+    runner.start();
+    runner.sendTurn("APPROVE SESSION");
+    await until(events, (event) => event.type === "approval-requested");
+    const offered = events.find((event) => event.type === "approval-requested");
+    expect(offered).toMatchObject({ sessionAllow: true });
+    runner.respondApproval((offered as { requestId: string }).requestId, "approve-session");
+    await until(events, (event) => event.type === "turn-ended");
+    // The rule the SDK proposed, but never written to the person's settings files.
+    expect(calls.results.at(-1)).toEqual({
+      behavior: "allow",
+      updatedPermissions: [
+        {
+          type: "addRules",
+          rules: [{ toolName: "Bash", ruleContent: "fixture:*" }],
+          behavior: "allow",
+          destination: "session",
+        },
+      ],
+    });
+
+    // Without a proposal there is nothing to extend: a plain approval.
+    runner.sendTurn("APPROVE once");
+    await until(
+      events,
+      (event) =>
+        event.type === "approval-requested" &&
+        (event as { requestId: string }).requestId !== (offered as { requestId: string }).requestId,
+    );
+    const plain = events.filter((event) => event.type === "approval-requested").at(-1);
+    expect(plain).not.toHaveProperty("sessionAllow");
+    runner.respondApproval((plain as { requestId: string }).requestId, "approve-session");
+    await until(events, (event) => event.type === "turn-ended" && calls.results.length === 2);
+    expect(calls.results.at(-1)).toEqual({ behavior: "allow" });
     await runner.stop();
   });
 

@@ -49,6 +49,25 @@ export function InboxCard({ item }: { readonly item: InboxItem }): React.JSX.Ele
           >
             거부
           </button>
+          {item.approval.sessionAllow === true && (
+            <button
+              className="ag-button"
+              type="button"
+              disabled={!app.mutationAllowed}
+              title="같은 종류의 요청은 이 에이전트 세션이 끝날 때까지 묻지 않습니다"
+              onClick={() =>
+                void app.act("이 세션에서는 묻지 않게 허용했습니다.", () =>
+                  app.api.respondAgentApproval(
+                    item.agent.id,
+                    item.approval.requestId,
+                    "approve-session",
+                  ),
+                )
+              }
+            >
+              이 세션에서는 항상 허용
+            </button>
+          )}
           <button className="ag-link" type="button" onClick={() => app.openChat(item.agent.id)}>
             대화 보기
           </button>

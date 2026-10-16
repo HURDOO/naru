@@ -1925,8 +1925,10 @@ export class AgentPlatformCore {
       readonly latest?: boolean;
     },
   ): AgentEvent[] {
-    const agent = this.#authorize(actor, "state.read", options.projectId ?? null);
-    const projectId = options.projectId ?? agent?.projectId ?? undefined;
+    // A project agent that names no project reads its own; only global actors read everything.
+    const scope = options.projectId ?? this.#actorProject(actor);
+    const agent = this.#authorize(actor, "state.read", scope);
+    const projectId = scope ?? agent?.projectId ?? undefined;
     return this.#store.readEvents({
       afterSeq: options.afterSeq,
       ...(projectId === undefined ? {} : { projectId }),

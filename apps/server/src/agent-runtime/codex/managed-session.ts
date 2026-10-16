@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentApprovalDecision } from "@naru/contracts/naru-agent/v1";
 import type { AgentRuntimeEvent } from "../adapter.js";
 import type { CodexRunnerPlan, NaruMessage } from "../channel-protocol.js";
 import { RunnerChannelClient } from "../runner-channel.js";
@@ -384,6 +385,7 @@ export class CodexManagedSession {
       requestId: key,
       kind,
       summary: codexApprovalSummary(method, record),
+      ...(SESSION_ALLOW_METHODS.has(method) ? { sessionAllow: true } : {}),
     });
   }
 
@@ -419,19 +421,28 @@ function codexApprovalSummary(method: string, params: Record<string, unknown>): 
   return text.length > 300 ? `${text.slice(0, 299)}…` : text;
 }
 
-function approvalResult(method: string, decision: "approve" | "deny"): unknown {
-  const approve = decision === "approve";
+/** Approvals Codex itself can extend to the rest of the session (`acceptForSession`). */
+const SESSION_ALLOW_METHODS: ReadonlySet<string> = new Set([
+  "item/commandExecution/requestApproval",
+  "item/fileChange/requestApproval",
+  "execCommandApproval",
+  "applyPatchApproval",
+]);
+
+function approvalResult(method: string, decision: AgentApprovalDecision): unknown {
+  const approve = decision !== "deny";
+  const session = decision === "approve-session" && SESSION_ALLOW_METHODS.has(method);
   if (method === "mcpServer/elicitation/request") {
     return approve ? { action: "accept", content: {} } : { action: "decline", content: null };
   }
   if (method === "execCommandApproval" || method === "applyPatchApproval") {
-    return { decision: approve ? "approved" : "denied" };
+    return { decision: session ? "approved_for_session" : approve ? "approved" : "denied" };
   }
   if (method === "item/permissions/requestApproval") {
     // Naru never widens permissions on an approval; a person grants them in the TUI.
     return { permissions: {}, scope: "turn" };
   }
-  return { decision: approve ? "accept" : "decline" };
+  return { decision: session ? "acceptForSession" : approve ? "accept" : "decline" };
 }
 
 function inputText(input: unknown): string {

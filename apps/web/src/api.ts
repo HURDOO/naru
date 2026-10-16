@@ -34,6 +34,7 @@ import type {
   startRegistration,
 } from "@simplewebauthn/browser";
 import type {
+  AgentApprovalDecision,
   AgentEvent,
   AgentOverview,
   AgentRuntimeState,
@@ -75,6 +76,8 @@ export interface AgentPendingApproval {
   readonly requestId: string;
   readonly kind: string;
   readonly summary?: string;
+  /** The runtime can allow this kind of call for the rest of the session (AP-D023). */
+  readonly sessionAllow?: boolean;
 }
 
 /** One project on the control room board: the project view without instruction text. */
@@ -566,7 +569,7 @@ export class NaruApi {
   respondAgentApproval(
     agentSessionId: string,
     requestId: string,
-    decision: "approve" | "deny",
+    decision: AgentApprovalDecision,
   ): Promise<AgentRuntimeState> {
     return this.#agentWrite(
       `/api/agent/agents/${agentSessionId}/approvals/${encodeURIComponent(requestId)}`,

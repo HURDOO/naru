@@ -219,6 +219,10 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - `POST /approvals/:requestId`는 사람이 답하는 경로다(`respondApprovalAsPerson`). 대화 writer와
   무관하게 기기 lease만 요구한다. `generation`은 이전 client를 위해 받기만 하고 쓰지 않는다.
 - Naru MCP 도구는 Claude settings의 `mcp__naru` 허용과 Codex relay의 자동 응답으로 묻지 않는다.
+- 권한 모드(AP-D023): Naru는 Claude의 `permissionMode`를 넘기지 않는다. 사용자 settings의 `defaultMode`,
+  없으면 auto로 시작한다. 그 모드가 결정하지 못한 호출만 `canUseTool`로 와서 승인 요청이 된다.
+  - SDK가 같이 준 `suggestions`가 있으면 승인 항목에 `sessionAllow`를 붙인다. `approve-session`이면 그
+    규칙을 `destination: "session"`으로만 돌려준다. Codex 명령·파일 승인은 `acceptForSession`이다.
 
 ### 6.6 웹 화면 (AP-T17)
 

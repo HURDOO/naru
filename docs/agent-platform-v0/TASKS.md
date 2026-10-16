@@ -352,6 +352,11 @@
         였다. 운영 doctor는 29/29 healthy다. 인증 없는 요청은 다른 앱처럼 Gateway가 401로 막는다.
     - 남은 것: 사용자가 며칠 쓰며 확인(MANUAL_TESTS), 고칠 것 반영(테스트 instance는 Naru만 upgrade), 그 뒤
       main merge와 운영 반영 승인
+  - 2026-10-16 테스트 앱 피드백:
+    - 오케스트레이터가 셸 명령마다 승인을 물음 → AP-D023(사용자 자신의 권한 모드, 세션 동안 허용, 오케스트레이터
+      지침). 사례를 [HUMAN_IN_THE_LOOP.md](HUMAN_IN_THE_LOOP.md)에 기록했다.
+    - project 에이전트의 `read_events`가 project를 지정하지 않으면 항상 범위 밖으로 거부됨 → 자기 project를
+      기본 범위로 읽게 고쳤다(회귀 테스트 추가).
 
 ### AP-T20. 에이전트 화면 재설계 (Figma 시안 v1)
 

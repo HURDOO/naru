@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { AgentApprovalDecision } from "@naru/contracts/naru-agent/v1";
 import type { AgentRuntimeEvent, HistoryPage } from "../adapter.js";
 import type {
   ClaudePermissionResult,
+  ClaudePermissionUpdate,
   ClaudeSdkMessage,
   ClaudeSdkPort,
   ClaudeSdkQuery,
@@ -24,7 +26,8 @@ export interface ClaudeRunnerPlan {
   readonly settings: Record<string, unknown>;
   readonly mcpServers: Record<string, unknown>;
   readonly instructions: string;
-  readonly permissionMode: "default" | "acceptEdits" | "plan";
+  /** Absent: the person's own mode, as their Claude starts it (AP-D023). */
+  readonly permissionMode?: "default" | "acceptEdits" | "plan" | "auto" | undefined;
   readonly environment: Record<string, string>;
 }
 
@@ -32,6 +35,8 @@ type Listener = (event: AgentRuntimeEvent) => void;
 
 interface PendingApproval {
   readonly resolve: (result: ClaudePermissionResult) => void;
+  /** What the SDK proposed for "allow for this session", kept for the answer. */
+  readonly suggestions: readonly ClaudePermissionUpdate[];
 }
 
 const HISTORY_PAGE = 50;
@@ -86,12 +91,17 @@ export class ClaudeRunner {
         settings: this.#plan.settings,
         mcpServers: this.#plan.mcpServers,
         strictMcpConfig: true,
-        permissionMode: this.#plan.permissionMode,
+        ...(this.#plan.permissionMode === undefined
+          ? {}
+          : { permissionMode: this.#plan.permissionMode }),
         systemPrompt: { type: "preset", preset: "claude_code", append: this.#plan.instructions },
         extraArgs: { name: this.#plan.nativeName },
         forwardSubagentText: true,
-        canUseTool: (toolName: string, input: Record<string, unknown>) =>
-          this.#requestApproval(toolName, input),
+        canUseTool: (
+          toolName: string,
+          input: Record<string, unknown>,
+          options: { readonly suggestions?: readonly ClaudePermissionUpdate[] },
+        ) => this.#requestApproval(toolName, input, options.suggestions ?? []),
       },
     });
     this.#done = this.#consume(this.#query);
@@ -117,14 +127,23 @@ export class ClaudeRunner {
     await this.#query.interrupt();
   }
 
-  respondApproval(requestId: string, decision: "approve" | "deny"): boolean {
+  respondApproval(requestId: string, decision: AgentApprovalDecision): boolean {
     const pending = this.#approvals.get(requestId);
     if (pending === undefined) return false;
     this.#approvals.delete(requestId);
     pending.resolve(
-      decision === "approve"
-        ? { behavior: "allow" }
-        : { behavior: "deny", message: "The person declined this action in Naru." },
+      decision === "deny"
+        ? { behavior: "deny", message: "The person declined this action in Naru." }
+        : decision === "approve-session" && pending.suggestions.length > 0
+          ? {
+              behavior: "allow",
+              // Only for this session: never written to the person's settings files (AP-D023).
+              updatedPermissions: pending.suggestions.map((update) => ({
+                ...update,
+                destination: "session",
+              })),
+            }
+          : { behavior: "allow" },
     );
     this.#emit({ type: "approval-resolved", requestId });
     return true;
@@ -232,15 +251,17 @@ export class ClaudeRunner {
   #requestApproval(
     toolName: string,
     input: Record<string, unknown>,
+    suggestions: readonly ClaudePermissionUpdate[],
   ): Promise<ClaudePermissionResult> {
     const requestId = randomUUID();
     return new Promise((resolve) => {
-      this.#approvals.set(requestId, { resolve });
+      this.#approvals.set(requestId, { resolve, suggestions });
       this.#emit({
         type: "approval-requested",
         requestId,
         kind: approvalKind(toolName),
         summary: approvalSummary(toolName, input),
+        ...(suggestions.length > 0 ? { sessionAllow: true } : {}),
       });
     });
   }

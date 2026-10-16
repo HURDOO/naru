@@ -24,14 +24,25 @@ export interface ClaudeSdkQuery extends AsyncIterable<ClaudeSdkMessage> {
   close?(): void;
 }
 
+/** A permission rule change the SDK proposes with an approval (`PermissionUpdate`). */
+export type ClaudePermissionUpdate = Record<string, unknown> & { readonly destination?: string };
+
 export type ClaudePermissionResult =
-  | { readonly behavior: "allow"; readonly updatedInput?: Record<string, unknown> }
+  | {
+      readonly behavior: "allow";
+      readonly updatedInput?: Record<string, unknown>;
+      readonly updatedPermissions?: readonly ClaudePermissionUpdate[];
+    }
   | { readonly behavior: "deny"; readonly message: string };
 
 export type ClaudeCanUseTool = (
   toolName: string,
   input: Record<string, unknown>,
-  options: { readonly signal: AbortSignal },
+  options: {
+    readonly signal: AbortSignal;
+    /** Rule changes that would stop the same prompt this session ("always allow"). */
+    readonly suggestions?: readonly ClaudePermissionUpdate[];
+  },
 ) => Promise<ClaudePermissionResult>;
 
 export interface ClaudeSdkPort {

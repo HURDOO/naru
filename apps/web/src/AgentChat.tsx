@@ -697,6 +697,21 @@ function Thread({
               >
                 거부
               </button>
+              {approval.sessionAllow === true && (
+                <button
+                  className="ag-button"
+                  type="button"
+                  disabled={!app.mutationAllowed}
+                  title="같은 종류의 요청은 이 에이전트 세션이 끝날 때까지 묻지 않습니다"
+                  onClick={() =>
+                    void app.act("이 세션에서는 묻지 않게 허용했습니다.", () =>
+                      app.api.respondAgentApproval(agent.id, approval.requestId, "approve-session"),
+                    )
+                  }
+                >
+                  이 세션에서는 항상 허용
+                </button>
+              )}
             </div>
           </li>
         ))}
@@ -1126,13 +1141,6 @@ function Composer({
                 ? "Claude"
                 : "OpenCode"}
           </span>
-          {agent.runtime === "claude" && agent.launchMode === "runner" && (
-            <span className="ag-chip" data-static="true">
-              {agent.role === "worker" || agent.role === "specialist"
-                ? "편집은 자동 · 명령은 묻기"
-                : "편집·명령 모두 묻기"}
-            </span>
-          )}
           <span className="ag-grow" />
           {mine && working ? (
             <button

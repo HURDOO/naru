@@ -47,6 +47,32 @@ function naru(options, tool, args) {
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
+/**
+ * Asks Naru to allow a command the way the real SDK does: with the rule it proposes for "always
+ * allow", and reports how the person answered.
+ */
+async function ask(options, command) {
+  const result = await options.canUseTool(
+    "Bash",
+    { command },
+    {
+      signal: new AbortController().signal,
+      suggestions: [
+        {
+          type: "addRules",
+          rules: [{ toolName: "Bash", ruleContent: `${command.split(" ")[0]}:*` }],
+          behavior: "allow",
+          destination: "localSettings",
+        },
+      ],
+    },
+  );
+  if (result.behavior !== "allow") return "거부됨";
+  return result.updatedPermissions?.every((update) => update.destination === "session")
+    ? "이 세션 동안 허용됨"
+    : "한 번 허용됨";
+}
+
 function assistant(content) {
   said.push({ type: "assistant", message: { role: "assistant", content } });
 }
@@ -246,15 +272,11 @@ async function work(options, goal) {
     "구현을 마쳤습니다. `issueSession`이 30분 뒤 만료 시각을 돌려줍니다. 테스트로 확인하겠습니다.",
   );
   if (goal.includes("APPROVE")) {
-    await options.canUseTool(
-      "Bash",
-      { command: "pnpm test --filter auth" },
-      { signal: new AbortController().signal },
-    );
+    const answer = await ask(options, "pnpm test --filter auth");
     tool(
       "Bash",
       { command: "pnpm test --filter auth" },
-      "✓ session.test.ts (3)\n\nTest Files  1 passed\nTests  3 passed",
+      `(${answer})\n✓ session.test.ts (3)\n\nTest Files  1 passed\nTests  3 passed`,
     );
   }
 }
@@ -352,12 +374,8 @@ export function query({ prompt, options }) {
         // A person writing directly.
         think("사람이 직접 한 말을 먼저 반영한다.");
         if (text.includes("APPROVE")) {
-          await options.canUseTool(
-            "Bash",
-            { command: "pnpm test" },
-            { signal: new AbortController().signal },
-          );
-          tool("Bash", { command: "pnpm test" }, "Tests  12 passed");
+          const answer = await ask(options, "pnpm test");
+          tool("Bash", { command: "pnpm test" }, `(${answer})\nTests  12 passed`);
         }
         if (text.includes("SLOW")) await sleep(8000);
         answer(

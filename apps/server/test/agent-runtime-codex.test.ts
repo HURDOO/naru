@@ -288,12 +288,33 @@ describe("managed Codex agent in a DurableSession Host PTY (AP-T13)", () => {
     expect(env.codexEvents().some((event) => event.event === "approval")).toBe(false);
     const [approval] = supervisor.pendingApprovals(worker);
     expect(approval?.summary).toBe("명령: pnpm test");
+    // Codex can extend a command approval to the session; Naru offers it (AP-D023).
+    expect(approval?.sessionAllow).toBe(true);
     supervisor.respondApproval(worker, approval!.requestId, "approve", "gui", gui.generation);
     await until(() => supervisor.pendingApprovals(worker).length === 0, "approval resolved");
     expect(env.codexEvents().filter((event) => event.event === "approval")).toEqual([
       { event: "approval", decision: "accept" },
     ]);
     await until(() => agent().status === "idle", "approved turn ended");
+
+    supervisor.sendTurn(worker, "APPROVE again", "gui", gui.generation);
+    await until(() => supervisor.pendingApprovals(worker).length === 1, "second approval");
+    const [again] = supervisor.pendingApprovals(worker);
+    supervisor.respondApprovalAsPerson(worker, again!.requestId, "approve-session");
+    await until(
+      () => supervisor.pendingApprovals(worker).length === 0,
+      "session approval resolved",
+    );
+    expect(
+      env
+        .codexEvents()
+        .filter((event) => event.event === "approval")
+        .at(-1),
+    ).toEqual({
+      event: "approval",
+      decision: "acceptForSession",
+    });
+    await until(() => agent().status === "idle", "session-approved turn ended");
 
     // Naru answers Codex's prompt for its own MCP server; the person is not asked (AP-D017).
     supervisor.sendTurn(worker, "call a NARUTOOL", "gui", gui.generation);

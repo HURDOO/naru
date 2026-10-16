@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   Actor,
+  AgentApprovalDecision,
   AgentEvent,
   AgentRuntimeState,
   AgentSession,
@@ -79,7 +80,10 @@ interface ManagedRuntime {
   lastSeq: number;
   gate: WriterGateState;
   /** requestId → kind and, when the runtime gave one, what is asked (AP-D017). */
-  readonly approvals: Map<string, { readonly kind: string; readonly summary?: string }>;
+  readonly approvals: Map<
+    string,
+    { readonly kind: string; readonly summary?: string; readonly sessionAllow?: boolean }
+  >;
   /** Native subagents by runtime ref → start time (observation only). */
   readonly children: Map<string, string>;
   readonly history: Map<string, (page: HistoryPage | null) => void>;
@@ -266,20 +270,21 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
 
   pendingApprovals(
     agentSessionId: string,
-  ): { requestId: string; kind: string; summary?: string }[] {
+  ): { requestId: string; kind: string; summary?: string; sessionAllow?: boolean }[] {
     const approvals = this.#runtimes.get(agentSessionId)?.approvals;
     if (approvals === undefined) return [];
     return [...approvals].map(([requestId, approval]) => ({
       requestId,
       kind: approval.kind,
       ...(approval.summary === undefined ? {} : { summary: approval.summary }),
+      ...(approval.sessionAllow === true ? { sessionAllow: true } : {}),
     }));
   }
 
   respondApproval(
     agentSessionId: string,
     requestId: string,
-    decision: "approve" | "deny",
+    decision: AgentApprovalDecision,
     writer: WriterKind,
     generation: number,
   ): void {
@@ -301,7 +306,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   respondApprovalAsPerson(
     agentSessionId: string,
     requestId: string,
-    decision: "approve" | "deny",
+    decision: AgentApprovalDecision,
   ): void {
     const runtime = this.#connected(agentSessionId);
     if (!runtime.approvals.has(requestId)) {
@@ -513,6 +518,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         runtime.approvals.set(event.requestId, {
           kind: event.kind,
           ...(event.summary === undefined ? {} : { summary: event.summary }),
+          ...(event.sessionAllow === true ? { sessionAllow: true } : {}),
         });
         this.#showAttention(agentSessionId, runtime);
         return;

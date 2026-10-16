@@ -15,6 +15,7 @@ import {
   SetAgentHoldRequestSchema,
   SetProcessHoldRequestSchema,
   type Actor,
+  type AgentApprovalDecision,
   type AgentRuntimeState,
   type AgentSession,
   type SharedProcess,
@@ -49,7 +50,7 @@ export interface AgentRuntimeControl {
   respondApproval(
     agentSessionId: string,
     requestId: string,
-    decision: "approve" | "deny",
+    decision: AgentApprovalDecision,
     writer: WriterKind,
     generation: number,
   ): void;
@@ -57,7 +58,7 @@ export interface AgentRuntimeControl {
   respondApprovalAsPerson(
     agentSessionId: string,
     requestId: string,
-    decision: "approve" | "deny",
+    decision: AgentApprovalDecision,
   ): void;
   readHistory(agentSessionId: string, cursor: string | null): Promise<HistoryPage>;
   switchWriter(agentSessionId: string, to: WriterKind, interrupt: boolean): Promise<unknown>;

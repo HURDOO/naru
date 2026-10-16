@@ -566,7 +566,19 @@ describe("Agent Platform managed runtime API", () => {
       generation: 1,
     });
     await post(`/api/agent/agents/${agent.id}/approvals/request-2`, { decision: "deny" });
-    expect(runtime.approvals).toEqual(["request-1:approve", "request-2:deny"]);
+    // "Allow for this session" (AP-D023) reaches the runtime as its own answer.
+    await post(`/api/agent/agents/${agent.id}/approvals/request-3`, {
+      decision: "approve-session",
+    });
+    expect(
+      (await post(`/api/agent/agents/${agent.id}/approvals/request-4`, { decision: "always" }))
+        .statusCode,
+    ).toBe(400);
+    expect(runtime.approvals).toEqual([
+      "request-1:approve",
+      "request-2:deny",
+      "request-3:approve-session",
+    ]);
 
     const history = await fixture.app.inject({
       method: "GET",
@@ -652,14 +664,14 @@ class FakeRuntime implements AgentRuntimeControl {
   respondApproval(
     id: string,
     requestId: string,
-    decision: "approve" | "deny",
+    decision: string,
     writer: WriterKind,
     generation: number,
   ): void {
     this.assertWriter(id, writer, generation);
     this.approvals.push(`${requestId}:${decision}`);
   }
-  respondApprovalAsPerson(_id: string, requestId: string, decision: "approve" | "deny"): void {
+  respondApprovalAsPerson(_id: string, requestId: string, decision: string): void {
     this.approvals.push(`${requestId}:${decision}`);
   }
   readHistory(): Promise<{ items: unknown[]; nextCursor: string | null }> {

@@ -1,4 +1,8 @@
-import type { AgentRuntime, RuntimeCapabilities } from "@naru/contracts/naru-agent/v1";
+import type {
+  AgentApprovalDecision,
+  AgentRuntime,
+  RuntimeCapabilities,
+} from "@naru/contracts/naru-agent/v1";
 import type { SwitchStrategy, WriterKind } from "./writer-gate.js";
 
 /**
@@ -41,6 +45,8 @@ export type AgentRuntimeEvent =
       readonly kind: "command" | "file" | "tool" | "permission" | "question";
       /** What is asked (tool and command or path), shown to the person; never stored. */
       readonly summary?: string;
+      /** The runtime can allow this kind of call for the rest of the session (AP-D023). */
+      readonly sessionAllow?: boolean;
     }
   | { readonly type: "approval-resolved"; readonly requestId: string }
   | {
@@ -63,7 +69,7 @@ export interface AgentRuntimeHandle {
   /** Starts a turn; the caller must hold the writer gate for `writer` at `generation`. */
   sendTurn(text: string, writer: WriterKind, generation: number): Promise<void>;
   interrupt(): Promise<void>;
-  respondApproval(requestId: string, decision: "approve" | "deny"): Promise<void>;
+  respondApproval(requestId: string, decision: AgentApprovalDecision): Promise<void>;
   readHistory(cursor: string | null): Promise<HistoryPage>;
   stop(): Promise<void>;
 }

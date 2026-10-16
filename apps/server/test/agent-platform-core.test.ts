@@ -591,6 +591,17 @@ describe("Agent Platform core", () => {
       "AGENT_NOT_FOUND",
     );
     expect(fixture.core.readEvents(HUMAN, { afterSeq: 3 })).toEqual([]);
+
+    // A project agent that names no project reads its own project (and global events), never
+    // another project's; naming another project is refused.
+    const { orchestrator } = fixture.team();
+    const own = fixture.core.readEvents(agent(orchestrator), { afterSeq: 0 });
+    expect(own.map((event) => event.projectId)).not.toContain(other.id);
+    expect(own.some((event) => event.projectId === fixture.projectId)).toBe(true);
+    expectCode(
+      () => fixture.core.readEvents(agent(orchestrator), { afterSeq: 0, projectId: other.id }),
+      "AGENT_SCOPE_DENIED",
+    );
   });
 
   it("removes a project's agent data with the project", () => {
