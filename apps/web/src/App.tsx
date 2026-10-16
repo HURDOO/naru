@@ -51,10 +51,13 @@ import {
   handoffTargetFromLocation,
   listenForHandoffTargets,
   listenForNotificationTargets,
+  listenForStallTargets,
   notificationTargetFromLocation,
+  stallTargetFromLocation,
   unsubscribeCurrentPushSubscription,
   type HandoffNotificationTarget,
   type NotificationTarget,
+  type StallNotificationTarget,
 } from "./push-notifications";
 import {
   PROJECT_PATH_PLACEHOLDER,
@@ -150,6 +153,9 @@ export default function App(): React.JSX.Element {
   );
   const [handoffTarget, setHandoffTarget] = useState<HandoffNotificationTarget | null>(() =>
     handoffTargetFromLocation(),
+  );
+  const [stallTarget, setStallTarget] = useState<StallNotificationTarget | null>(() =>
+    stallTargetFromLocation(),
   );
   /** The Inbox item a handoff alert opened; the agent screen starts on it. */
   const [focusedHandoffId, setFocusedHandoffId] = useState<string | null>(null);
@@ -1019,6 +1025,21 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => listenForNotificationTargets(setNotificationTarget), []);
   useEffect(() => listenForHandoffTargets(setHandoffTarget), []);
+  useEffect(() => listenForStallTargets(setStallTarget), []);
+
+  // A stall alert (AP-D034) opens the control room: the stalled job and its inbox item say why.
+  useEffect(() => {
+    if (authState !== "signed-in" || stallTarget === null || !agentsAvailable) return;
+    const timer = window.setTimeout(() => {
+      setSidebarOpen(false);
+      setSidebarPreviewOpen(false);
+      setFocusedHandoffId(null);
+      setFocusedAgentPaneId(null);
+      navigate("control");
+      setStallTarget(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [agentsAvailable, authState, navigate, stallTarget]);
 
   useEffect(() => {
     if (

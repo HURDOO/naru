@@ -57,6 +57,8 @@ export async function startNaruStack(options: {
   /** The approved project root (default: the Host fixture's temp root). */
   readonly projectRoot?: string;
   readonly port?: number;
+  /** Minutes before a stall is noticed (AP-D034); the server default otherwise. */
+  readonly stallMinutes?: number;
   /** Extra environment for the Host's agent processes (e.g. a puppet socket path). */
   readonly agentEnvironment?: Readonly<Record<string, string>>;
 }): Promise<NaruStack> {
@@ -210,6 +212,9 @@ process.on("SIGTERM", () => process.exit(0));
       NARU_CODEX_PATH: codex,
       NARU_CLAUDE_AGENT_SDK_PATH: sdkEntry,
       NARU_AGENT_PLATFORM: "1",
+      ...(options.stallMinutes === undefined
+        ? {}
+        : { NARU_AGENT_STALL_MINUTES: String(options.stallMinutes) }),
     })
       .map(([key, value]) => `${key}='${value}'`)
       .join("\n"),

@@ -120,8 +120,30 @@ export function registerAgentPlatformRoutes(
     return core.getOverview(HUMAN);
   });
 
+  /** Agents whose turn runs now and the tool call it makes, from the runtime (AP-D034). */
+  const working = (agents: readonly AgentSession[]) =>
+    runtime === undefined
+      ? []
+      : agents.filter(isManaged).flatMap((agent) => {
+          try {
+            const state = runtime.runtimeState(agent.id);
+            return state.turnActive
+              ? [
+                  {
+                    agentSessionId: agent.id,
+                    turnStartedAt: state.turnStartedAt ?? null,
+                    activity: state.activity ?? null,
+                  },
+                ]
+              : [];
+          } catch {
+            return [];
+          }
+        });
+
   const projectBoard = (id: string) => {
     const agents = core.listAgentSessions(HUMAN, id);
+    const stall = core.projectProgress(id).stall;
     return {
       ...core.getProjectState(HUMAN, id),
       pendingIntentContract: core.getPendingIntentContract(HUMAN, id),
@@ -129,6 +151,9 @@ export function registerAgentPlatformRoutes(
       // What managed agents wait for the person to allow, for the Inbox (AP-D017).
       pendingApprovals: pendingApprovals(agents),
       processes: core.listSharedProcesses(HUMAN, id),
+      working: working(agents),
+      // Shown to the person once Naru woke the orchestrator and it still did not move (AP-D034).
+      stall: stall?.stage === "person" ? stall : null,
     };
   };
 
@@ -165,6 +190,7 @@ export function registerAgentPlatformRoutes(
       globalAgents: overview.globalAgents,
       openHandoffs: overview.openHandoffs,
       globalPendingApprovals: pendingApprovals(overview.globalAgents),
+      globalWorking: working(overview.globalAgents),
       paneNames: customPaneTitles?.(paneIds) ?? {},
       // Cleaned-up agents still name the tasks and runs they did (AP-D033).
       retiredAgents: core.listRetiredAgentSessions(HUMAN),
@@ -192,6 +218,30 @@ export function registerAgentPlatformRoutes(
       }
     }
     return { ...cleaned, panesKept };
+  });
+
+  /** "오케스트레이터에게 확인시키기" (AP-D034): the person asks the orchestrator to look again. */
+  app.post("/api/agent/projects/:id/nudge", (request) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = IdempotentRequestSchema.parse(request.body);
+    const current = core.projectProgress(id).stall;
+    return core.recordStall(
+      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+      {
+        projectId: id,
+        stage: "orchestrator",
+        cause: current?.cause ?? "no-activity",
+        taskId: current?.taskId ?? null,
+        minutes: current?.minutes ?? 0,
+      },
+    );
+  });
+
+  /** "맡긴 일" (AP-D034): the person's goals and the tasks they became. */
+  app.get("/api/agent/jobs", (request) => {
+    guards.requireSession(request);
+    return { jobs: core.listJobs(HUMAN) };
   });
 
   app.get("/api/agent/handoffs", (request) => {

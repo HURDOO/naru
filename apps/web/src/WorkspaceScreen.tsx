@@ -1317,7 +1317,10 @@ function PaneMenu(props: PaneActionsProps): React.JSX.Element {
           !props.inView && props.onPlace !== undefined && props.viewName !== null
             ? item(`${props.viewName}에 넣기`, props.onPlace, false, "plus")
             : null,
-          item("Pane 끄기", props.onClose, true, "power"),
+          // An agent's Pane goes with the agent (AP-D034): stop it, then clean it up in 관제실.
+          owner !== null && owner.kind === "agent"
+            ? null
+            : item("Pane 끄기", props.onClose, true, "power"),
         ];
       })()}
     </Popover>

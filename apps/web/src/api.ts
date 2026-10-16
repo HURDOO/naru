@@ -49,6 +49,9 @@ import type {
   InstructionScope,
   IntentContract,
   Plan,
+  ProjectStall,
+  Review,
+  Run,
   SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
 import { currentAppPath } from "./app-base-path";
@@ -86,6 +89,37 @@ export interface AgentPendingApproval {
 /** One project on the control room board: the project view without instruction text. */
 export interface AgentBoardProject extends Omit<AgentProjectView, "instructions"> {
   readonly projectId: string;
+  /** Agents whose turn runs now and what they do (AP-D034); absent from older servers. */
+  readonly working?: AgentWorking[];
+  /** Open work that stands still after Naru woke the orchestrator (AP-D034). */
+  readonly stall?: ProjectStall | null;
+}
+
+/** An agent's running turn and the tool call it makes now, live from the runtime (AP-D026). */
+export interface AgentWorking {
+  readonly agentSessionId: string;
+  readonly turnStartedAt: string | null;
+  readonly activity: {
+    readonly tool: string;
+    readonly target: string | null;
+    readonly since: string;
+  } | null;
+}
+
+/** One goal the person handed over and the tasks it became (`GET /api/agent/jobs`, AP-D034). */
+export interface AgentJob {
+  readonly goal: Instruction;
+  readonly projectIds: readonly string[];
+  readonly delegatedAt: string | null;
+  readonly tasks: readonly AgentJobTask[];
+}
+
+export interface AgentJobTask {
+  readonly task: AgentTask;
+  readonly reviews: Partial<
+    Record<Review["kind"], { readonly verdict: Review["verdict"]; readonly at: string }>
+  >;
+  readonly latestRun: Run | null;
 }
 
 /** Every project with agent work in one read (`GET /api/agent/board`, AP-D022). */
@@ -99,6 +133,7 @@ export interface AgentBoard {
   readonly paneNames?: Readonly<Record<string, string>>;
   /** Cleaned-up agents, to name them in old records (AP-D033); absent from older servers. */
   readonly retiredAgents?: AgentSession[];
+  readonly globalWorking?: AgentWorking[];
 }
 
 /** Who asked an agent what, verbatim, and the user instructions those requests serve. */
@@ -530,6 +565,16 @@ export class NaruApi {
 
   agentBoard(): Promise<AgentBoard> {
     return this.#request<AgentBoard>("/api/agent/board");
+  }
+
+  /** The person's goals and the tasks they became (AP-D034). */
+  async agentJobs(): Promise<AgentJob[]> {
+    return (await this.#request<{ jobs: AgentJob[] }>("/api/agent/jobs")).jobs;
+  }
+
+  /** "오케스트레이터에게 확인시키기": wakes the project's orchestrator to look again (AP-D034). */
+  nudgeProject(projectId: string): Promise<unknown> {
+    return this.#agentWrite(`/api/agent/projects/${projectId}/nudge`, { idempotencyKey: key() });
   }
 
   agentInstructions(agentSessionId: string): Promise<AgentInstructions> {

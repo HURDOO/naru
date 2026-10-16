@@ -220,6 +220,12 @@ export class ClaudeRunner {
       this.#emit({ type: "conversation-ready", runtimeSessionRef: message.session_id });
     }
     if (message.type === "system" && message.subtype === "init") return;
+    if (message.type === "assistant") {
+      const call = lastToolUse(message);
+      if (call !== null)
+        this.#emit({ type: "tool-activity", ...toolActivity(call.name, call.input) });
+      return;
+    }
     if (message.type === "result") {
       if (this.#turnsInFlight === 0) return;
       this.#turnsInFlight -= 1;
@@ -275,6 +281,50 @@ export class ClaudeRunner {
       }
     }
   }
+}
+
+/** The last tool call an assistant message makes, if any. */
+function lastToolUse(
+  message: ClaudeSdkMessage,
+): { readonly name: string; readonly input: Record<string, unknown> } | null {
+  const body = message.message;
+  const content =
+    typeof body === "object" && body !== null ? (body as { content?: unknown }).content : null;
+  if (!Array.isArray(content)) return null;
+  for (let index = content.length - 1; index >= 0; index -= 1) {
+    const block = content[index] as { type?: unknown; name?: unknown; input?: unknown };
+    if (block?.type === "tool_use" && typeof block.name === "string") {
+      const input =
+        typeof block.input === "object" && block.input !== null
+          ? (block.input as Record<string, unknown>)
+          : {};
+      return { name: block.name, input };
+    }
+  }
+  return null;
+}
+
+/** "What it is doing now" (AP-D026): a readable tool name and its short target. */
+export function toolActivity(
+  toolName: string,
+  input: Record<string, unknown>,
+): { readonly tool: string; readonly target: string | null } {
+  const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/u.exec(toolName);
+  const tool = (mcp === null ? toolName : `${mcp[1]} ${mcp[2]}`).slice(0, 80);
+  const raw = [
+    input.command,
+    input.file_path,
+    input.notebook_path,
+    input.path,
+    input.pattern,
+    input.url,
+    input.description,
+  ].find((value): value is string => typeof value === "string" && value.trim() !== "");
+  const target = raw === undefined ? null : raw.replace(/\s+/gu, " ").trim();
+  return {
+    tool,
+    target: target === null ? null : target.length > 200 ? `${target.slice(0, 199)}…` : target,
+  };
 }
 
 /** What the person is asked to allow: the tool and its command or path, shortened (AP-D017). */

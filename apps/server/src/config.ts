@@ -81,6 +81,13 @@ const RawConfigSchema = z.object({
     .min(10_000)
     .max(24 * 60 * 60_000)
     .default(5 * 60_000),
+  /** AP-D034 stall check: minutes without progress before Naru wakes the orchestrator; 0 is off. */
+  NARU_AGENT_STALL_MINUTES: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 60)
+    .default(10),
   NARU_CODEX_INTEGRATION_SOCKET_PATH: z.string().min(1).optional(),
   NARU_TLS_STATE_DIR: z.string().min(1).optional(),
   NARU_TLS_RELOAD_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).optional(),
@@ -156,6 +163,8 @@ interface AppConfigBase {
   agentPlatform?: boolean;
   claudeAgentSdkPath?: string;
   agentHoldTimeouts?: { readonly idleMs: number; readonly disconnectMs: number };
+  /** Minutes without progress before a stall is noticed (AP-D034); 0 turns the check off. */
+  agentStallMinutes?: number;
   codexIntegrationSocketPath?: string;
   tls?: TlsConfig;
   push?: PushConfig;
@@ -255,6 +264,7 @@ export function loadConfig(
       idleMs: raw.NARU_AGENT_HOLD_IDLE_MS,
       disconnectMs: raw.NARU_AGENT_HOLD_DISCONNECT_MS,
     },
+    agentStallMinutes: raw.NARU_AGENT_STALL_MINUTES,
     ...(raw.NARU_CLAUDE_AGENT_SDK_PATH === undefined
       ? {}
       : {

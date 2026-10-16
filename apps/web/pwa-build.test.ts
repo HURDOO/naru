@@ -348,6 +348,67 @@ describe("PWA build artifacts", () => {
     );
   });
 
+  it("shows one stall alert per project and opens the control room (AP-D034)", async () => {
+    const payload = {
+      version: 1,
+      type: "stall",
+      eventId: "70000000-0000-4000-8000-000000000001",
+      projectId: "70000000-0000-4000-8000-000000000002",
+      cause: "no-review",
+    };
+    const harness = workerHarness();
+    harness.fetcher.mockResolvedValueOnce(
+      summaryResponse({ projectId: payload.projectId }, "idle", 0, false, "blog"),
+    );
+    await harness.dispatch("push", { data: { json: () => payload } });
+    expect(harness.showNotification).toHaveBeenCalledWith(
+      "blog · 진행이 멈췄습니다",
+      expect.objectContaining({
+        body: "검증 단계인데 리뷰가 시작되지 않았습니다.",
+        data: payload,
+        tag: `naru:stall:${payload.projectId}`,
+      }),
+    );
+
+    harness.notifications.push({
+      data: payload,
+      tag: `naru:stall:${payload.projectId}`,
+      close: vi.fn(),
+    });
+    harness.showNotification.mockClear();
+    await harness.dispatch("push", { data: { json: () => payload } });
+    expect(harness.showNotification).not.toHaveBeenCalled();
+    for (const invalid of [
+      { ...payload, cause: "anything" },
+      { ...payload, projectId: "not-a-uuid" },
+      { ...payload, extra: true },
+    ]) {
+      await harness.dispatch("push", {
+        data: { json: () => ({ ...invalid, eventId: "70000000-0000-4000-8000-000000000009" }) },
+      });
+    }
+    expect(harness.showNotification).not.toHaveBeenCalled();
+
+    const client = {
+      url: "https://naru.example.test:8443/naru/",
+      visibilityState: "visible",
+      focus: vi.fn().mockResolvedValue(undefined),
+      postMessage: vi.fn(),
+    };
+    harness.windows.push(client);
+    await harness.dispatch("notificationclick", {
+      notification: { data: payload, close: vi.fn() },
+    });
+    expect(client.postMessage).toHaveBeenCalledWith({ type: "NARU_PUSH_STALL", payload });
+    harness.windows.splice(0);
+    await harness.dispatch("notificationclick", {
+      notification: { data: payload, close: vi.fn() },
+    });
+    expect(harness.openWindow).toHaveBeenCalledWith(
+      "https://naru.example.test:8443/naru/?naruProject=70000000-0000-4000-8000-000000000002&naruStall=70000000-0000-4000-8000-000000000001",
+    );
+  });
+
   it("closes only the listed alerts of a cleared project without querying the server", async () => {
     const projectId = "50000000-0000-4000-8000-000000000002";
     const listed = "50000000-0000-4000-8000-000000000010";

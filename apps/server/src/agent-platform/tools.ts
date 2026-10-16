@@ -210,7 +210,9 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   readTool(
     "get_applicable_user_instructions",
     "Read the verbatim user instructions in force for you (global, project, task and your own). " +
-      "The latest user instruction wins over agent reinterpretations.",
+      "Orchestrators also get what the person said directly to any agent of that project " +
+      "(scope agent, with its agentSessionId). The latest user instruction wins over agent " +
+      "reinterpretations.",
     z.strictObject({ project_id: Id.optional(), task_id: Id.optional() }),
     (core, actor, input) =>
       core.getApplicableInstructions(actor, {
@@ -230,7 +232,11 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   ),
   writeTool(
     "delegate",
-    "Send a delegation message. It must cite the original user instruction it serves. Fails with " +
+    "Send a delegation message. It must cite the original user instruction it serves. Who receives " +
+      "it depends on scope_kind: `agent` reaches exactly agent_session_id (use it for a reviewer or " +
+      "any agent that is not the task's assignee); `task` reaches the task's assignee only; " +
+      "`project` reaches the project's orchestrator. Arguments that do not belong to the scope are " +
+      "rejected. An agent that is not running is started again to receive it. Fails with " +
       "AGENT_HELD_BY_HUMAN while a human works directly with the target agent.",
     z.strictObject({
       scope_kind: z.enum(["project", "task", "agent"]),
@@ -241,6 +247,14 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       origin_user_instruction_id: Id,
     }),
     (core, context, input) => {
+      // A field from another scope was silently dropped once, sending a review to the worker
+      // instead of the reviewer (2026-10-16); it is an error now.
+      if (input.scope_kind !== "agent" && input.agent_session_id !== undefined) {
+        throw mismatched("agent_session_id", input.scope_kind, "agent");
+      }
+      if (input.scope_kind !== "task" && input.task_id !== undefined) {
+        throw mismatched("task_id", input.scope_kind, "task");
+      }
       let scope: InstructionScope;
       if (input.scope_kind === "task") {
         if (input.task_id === undefined) throw invalid("task_id");
@@ -700,6 +714,14 @@ function ownProjectOrNull(
 
 function invalid(field: string): AgentPlatformError {
   return new AgentPlatformError("AGENT_INVALID_REFERENCE", `${field} is required for this scope.`);
+}
+
+function mismatched(field: string, scope: string, belongsTo: string): AgentPlatformError {
+  return new AgentPlatformError(
+    "AGENT_INVALID_REFERENCE",
+    `${field} is not used with scope_kind "${scope}"; it belongs to scope_kind "${belongsTo}". ` +
+      `To reach a specific agent (for example a reviewer), use scope_kind "agent".`,
+  );
 }
 
 /** MCP `tools/list` entries derived from the same schemas. */

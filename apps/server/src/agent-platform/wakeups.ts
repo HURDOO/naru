@@ -220,6 +220,19 @@ export function consumerId(agentSessionId: string): string {
 /** Runtime liveness states worth a turn; routine active/idle churn is not. */
 const NOTABLE_AGENT_STATES = new Set<unknown>(["failed", "unknown", "stopped"]);
 
+/**
+ * What a project orchestrator reads on its next turn but is not woken for: progress notes,
+ * published artifacts, other agents' registrations and processes starting or ending normally. Each of these used to
+ * cost a turn and a chat line ("nothing to act on"); the step that matters follows as its own event
+ * (the task moving to review, the run finishing, a process failing).
+ */
+const INFORMATIONAL_EVENTS: ReadonlySet<AgentEventType> = new Set([
+  "run.progress",
+  "artifact.published",
+  "shared_process.started",
+]);
+const NOTABLE_PROCESS_STATES = new Set<unknown>(["failed", "unknown"]);
+
 function relevantTo(
   orchestrator: AgentSession,
   event: AgentEvent,
@@ -235,7 +248,14 @@ function relevantTo(
   if (event.type === "agent_session.updated") {
     return event.subjectId !== orchestrator.id && NOTABLE_AGENT_STATES.has(event.data.status);
   }
-  if (orchestrator.role !== "main-orchestrator") return true;
+  if (orchestrator.role !== "main-orchestrator") {
+    // Its own registration is its first turn: it reads the work waiting for it.
+    if (event.type === "agent_session.registered") return event.subjectId === orchestrator.id;
+    if (INFORMATIONAL_EVENTS.has(event.type)) return false;
+    if (event.type === "shared_process.updated")
+      return NOTABLE_PROCESS_STATES.has(event.data.status);
+    return true;
+  }
   // The main orchestrator summarises across projects; it is not woken by every project detail.
   switch (event.type) {
     case "instruction.created":

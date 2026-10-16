@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NARU_APP_BASE_PATH_META_NAME, naruAppScopePath } from "@naru/contracts/naru-app/v1";
-import { HandoffKindSchema } from "@naru/contracts/naru-agent/v1";
+import { HandoffKindSchema, StallCauseSchema } from "@naru/contracts/naru-agent/v1";
 import type { ServerOptions } from "node:https";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
@@ -285,6 +285,14 @@ export async function buildApp(
       handoffId: event.subjectId,
       kind: kind.data,
     });
+  });
+  // Work that stands still after its orchestrator was woken reaches the person too (AP-D034).
+  const unsubscribeStalls = dependencies.agentPlatform?.subscribe((event) => {
+    if (event.type !== "project.stalled" || event.projectId === null) return;
+    if (event.data.stage !== "person") return;
+    const cause = StallCauseSchema.safeParse(event.data.cause);
+    if (!cause.success) return;
+    pushNotifications.notifyStall?.({ projectId: event.projectId, cause: cause.data });
   });
   const unsubscribeCodexIdentity = dependencies.supervisor.onCodexIdentity((change) => {
     for (const active of sockets) {
@@ -1112,6 +1120,15 @@ export async function buildApp(
     requireSurfaceController(request, leases);
     const { id } = IdParamsSchema.parse(request.params);
     const input = DeletePaneRequestSchema.parse(request.body);
+    // Closing an agent's Pane once lost the agent for good (AP-D034); it is stopped or cleaned up.
+    const agent = dependencies.repository.agentPlatform.findAgentSessionByPane(id);
+    if (agent !== null && !agent.retiredAt) {
+      throw new AppError(
+        "AGENT_INVALID_STATE",
+        409,
+        "에이전트의 Pane은 끌 수 없습니다. 멈추려면 에이전트 정지를, 없애려면 관제실의 꺼진 에이전트 정리를 쓰세요.",
+      );
+    }
     dependencies.repository.assertPaneDeletion(id, input.workspaceVersion);
     await dependencies.supervisor.remove(id);
     legacyTerminalSizes.delete(id);
@@ -1712,6 +1729,7 @@ export async function buildApp(
     clearInterval(leaseTimer);
     unsubscribeActivity();
     unsubscribeHandoffs?.();
+    unsubscribeStalls?.();
     unsubscribeCodexIdentity();
     await pushNotifications.close();
     tlsCertificateManager?.stop();

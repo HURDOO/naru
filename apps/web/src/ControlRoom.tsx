@@ -17,6 +17,8 @@ import {
   timelineRows,
 } from "./agent-model";
 import { EmptyNote, InboxCard } from "./AgentInbox";
+import { JobCards } from "./JobCards";
+import { activityLine } from "./jobs-model";
 import { Avatar, Icon, Pill, Progress, Sheet } from "./agent-ui";
 import { autosize, PHONE, submitOnEnter, useMedia } from "./agent-dom";
 import type { AgentBoardProject } from "./api";
@@ -37,6 +39,7 @@ export function ControlRoom(): React.JSX.Element {
       {phone ? (
         <>
           <InboxColumn limit={2} />
+          <JobCards compact />
           <Lanes compact />
           <button
             className="ag-fab"
@@ -63,6 +66,7 @@ export function ControlRoom(): React.JSX.Element {
             </p>
             <Ask />
           </section>
+          <JobCards />
           <Stats />
           <div className="ag-split">
             <Lanes />
@@ -240,7 +244,8 @@ function Stats(): React.JSX.Element {
       item.kind === "handoff" &&
       (item.handoff.kind === "manual-test" || item.handoff.kind === "terminal-control"),
   ).length;
-  const decisions = app.inbox.length - approvals - checks;
+  const stalls = app.inbox.filter((item) => item.kind === "stall").length;
+  const decisions = app.inbox.length - approvals - checks - stalls;
   const today = startOfDay(app.now);
   const todays = app.events.filter((event) => Date.parse(event.createdAt) >= today);
   const merged = todays.filter(
@@ -283,6 +288,7 @@ function Stats(): React.JSX.Element {
         </p>
         <p className="ag-stat-note">
           승인 {approvals} · 확인 {checks} · 결정 {decisions}
+          {stalls > 0 ? ` · 멈춤 ${stalls}` : ""}
         </p>
       </div>
       <div className="ag-stat">
@@ -697,6 +703,9 @@ export function AgentRow({
   const presence = app.presence(agent);
   const identity = app.identity(agent);
   const activity = agentActivity(agent, presence, app.inbox, tasks);
+  // The tool call its running turn makes now (AP-D034).
+  const working = app.working.get(agent.id);
+  const live = working?.activity == null ? null : activityLine(working, app.now);
   const project = projectTag(app, agent);
   return (
     <button
@@ -704,7 +713,7 @@ export function AgentRow({
       className="ag-agent-row"
       data-presence={presence}
       aria-current={selected ? "true" : undefined}
-      aria-label={`${identity.name}${project === null ? "" : ` (${project})`}, ${presenceLabel(presence)}, ${activity}`}
+      aria-label={`${identity.name}${project === null ? "" : ` (${project})`}, ${presenceLabel(presence)}, ${activity}${live === null ? "" : `, 지금 ${live}`}`}
       onClick={() => app.openChat(agent.id)}
     >
       <Avatar identity={identity} size={30} presence={presence} />
@@ -714,6 +723,7 @@ export function AgentRow({
           {project !== null && <span className="ag-agent-project">{project}</span>}
         </span>
         <span className="ag-agent-activity">{activity}</span>
+        {live !== null && <span className="ag-agent-live">{live}</span>}
       </span>
       <span className="ag-agent-time">{ago(agent.updatedAt, app.now)}</span>
     </button>

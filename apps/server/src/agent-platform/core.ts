@@ -3,6 +3,7 @@ import {
   AGENT_ROLE_COMMANDS,
   AgentTaskStatusSchema,
   NARU_AGENT_LIMITS,
+  StallCauseSchema,
   WORKER_TASK_STATUSES,
   type Actor,
   type AgentCommandName,
@@ -24,9 +25,11 @@ import {
   type InstructionScope,
   type IntentContract,
   type Plan,
+  type ProjectStall,
   type Review,
   type Run,
   type SharedProcess,
+  type StallCause,
 } from "@naru/contracts/naru-agent/v1";
 import type { AgentPlatformStore } from "./store.js";
 
@@ -183,6 +186,14 @@ export class AgentPlatformCore {
         }
         if (input.scope.kind === "agent")
           this.#assertNotHeld(context.actor, input.scope.agentSessionId);
+        // A person stopped this agent on purpose; work sent to it would wait unseen (AP-D034).
+        const recipients = this.#recipients(input.scope);
+        if (recipients.length > 0 && recipients.every((agent) => agent.status === "stopped")) {
+          throw new AgentPlatformError(
+            "AGENT_INVALID_STATE",
+            "The person stopped this agent. Give the work to another agent or ask the person.",
+          );
+        }
         const instruction = this.#instruction({
           scope: input.scope,
           author: { kind: "agent", agentSessionId: agent!.id },
@@ -232,11 +243,17 @@ export class AgentPlatformCore {
       readonly agentSessionId?: string;
     },
   ): Instruction[] {
-    this.#authorize(actor, "state.read", target.projectId);
+    const agent = this.#authorize(actor, "state.read", target.projectId);
+    // Orchestrators also read what the person said directly to the project's agents, so a word
+    // typed into one agent's chat ("I turned it off") is not lost to the rest of the team.
+    const orchestrator =
+      agent !== null &&
+      (agent.role === "main-orchestrator" || agent.role === "project-orchestrator");
     return this.#store.listApplicableHumanInstructions({
       projectId: target.projectId,
       taskId: target.taskId ?? null,
       agentSessionId: target.agentSessionId ?? null,
+      agentWords: orchestrator,
     });
   }
 
@@ -1469,6 +1486,180 @@ export class AgentPlatformCore {
     return this.#store.listAgentSessions(projectId);
   }
 
+  /**
+   * Who receives an instruction (AP-D034): the agent for agent scope, the task's assignee for task
+   * scope, the project's orchestrators for project scope and main orchestrators for global scope.
+   */
+  instructionRecipients(actor: Actor, instructionId: string): AgentSession[] {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only Naru resolves recipients.");
+    }
+    const instruction = this.#store.getInstruction(instructionId);
+    return instruction === null ? [] : this.#recipients(instruction.scope);
+  }
+
+  #recipients(scope: InstructionScope): AgentSession[] {
+    switch (scope.kind) {
+      case "agent": {
+        const agent = this.#store.getAgentSession(scope.agentSessionId);
+        return agent === null || agent.retiredAt ? [] : [agent];
+      }
+      case "task": {
+        const assignee = this.#store.getTask(scope.taskId)?.assigneeAgentSessionId ?? null;
+        const agent = assignee === null ? null : this.#store.getAgentSession(assignee);
+        return agent === null || agent.retiredAt ? [] : [agent];
+      }
+      case "project":
+        return this.#store
+          .listAgentSessions(scope.projectId)
+          .filter((agent) => agent.role === "project-orchestrator");
+      case "global":
+        return this.#store
+          .listAgentSessions(null)
+          .filter((agent) => agent.role === "main-orchestrator");
+    }
+  }
+
+  /**
+   * Records that a project's open work stands still (AP-D034). The event wakes the project
+   * orchestrator; at the `person` stage the person's screens show it too. A person can also ask
+   * for a check ("오케스트레이터에게 확인시키기"), which is an `orchestrator` stage by the person.
+   */
+  recordStall(
+    context: CommandContext,
+    input: {
+      readonly projectId: string;
+      readonly stage: ProjectStall["stage"];
+      readonly cause: StallCause;
+      readonly taskId: string | null;
+      readonly minutes: number;
+    },
+  ): ProjectStall | null {
+    if (context.actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only Naru or the person reports a stall.");
+    }
+    return this.#command(
+      context,
+      "project.stall",
+      input,
+      "project",
+      (events) => {
+        this.#requireProject(input.projectId);
+        events.push({
+          type: "project.stalled",
+          projectId: input.projectId,
+          subjectId: input.taskId ?? input.projectId,
+          data: {
+            stage: input.stage,
+            cause: input.cause,
+            taskId: input.taskId,
+            minutes: input.minutes,
+          },
+        });
+        return input.projectId;
+      },
+      (projectId) => this.projectProgress(projectId).stall,
+    );
+  }
+
+  /**
+   * When a project last made progress (anything but runtime state reports and stall notes), and
+   * the stall noticed since then, if any (AP-D034). The newest note sets the stage, so a person's
+   * nudge after a `person` note hands it back to the orchestrator until it is noticed again.
+   */
+  projectProgress(projectId: string): {
+    readonly lastProgressAt: string | null;
+    /** When the newest stall note since that progress was recorded. */
+    readonly lastNoteAt: string | null;
+    readonly stall: ProjectStall | null;
+  } {
+    const events = this.#store.latestProjectEvents(projectId, 400);
+    const notes: AgentEvent[] = [];
+    let lastProgressAt: string | null = events.at(-1)?.createdAt ?? null;
+    for (const event of events) {
+      if (event.type === "project.stalled") notes.push(event);
+      else if (event.type !== "agent_session.updated") {
+        lastProgressAt = event.createdAt;
+        break;
+      }
+    }
+    const newest = notes[0];
+    const oldest = notes.at(-1);
+    if (newest === undefined || oldest === undefined) {
+      return { lastProgressAt, lastNoteAt: null, stall: null };
+    }
+    // The newest note gives the stage and cause; the oldest one since progress gives `since`.
+    const cause = StallCauseSchema.safeParse(newest.data.cause);
+    const stage = newest.data.stage === "person" ? "person" : "orchestrator";
+    return {
+      lastProgressAt,
+      lastNoteAt: newest.createdAt,
+      stall: {
+        stage,
+        since: oldest.createdAt,
+        cause: cause.success ? cause.data : "no-activity",
+        taskId: typeof newest.data.taskId === "string" ? newest.data.taskId : null,
+        minutes: typeof newest.data.minutes === "number" ? newest.data.minutes : 0,
+        lastProgressAt,
+      },
+    };
+  }
+
+  /**
+   * "맡긴 일" (AP-D034): the person's goals with the tasks they became, each with its latest review
+   * verdicts and run, so the person sees how a goal was divided and where it is. A goal with no
+   * task yet shows only while it is new and an orchestrator took it.
+   */
+  listJobs(actor: Actor): AgentJob[] {
+    if (actor.kind !== "human") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only the person reads their jobs.");
+    }
+    const goals = this.#store.listHumanGoals(40);
+    const work = this.#store.listGoalWork(goals.map((goal) => goal.id));
+    const now = Date.parse(this.#timestamp());
+    const jobs: AgentJob[] = [];
+    for (const goal of goals) {
+      const tasks = work.tasks.filter((item) => item.goalId === goal.id).map((item) => item.task);
+      const delegations = work.delegations
+        .filter((item) => item.goalId === goal.id)
+        .map((item) => item.instruction);
+      const fresh = now - Date.parse(goal.createdAt) < 30 * 60_000;
+      if (tasks.length === 0 && (delegations.length === 0 || !fresh)) continue;
+      const projectIds = [
+        ...new Set(
+          [
+            scopeProjectId(goal.scope),
+            ...tasks.map((task) => task.projectId),
+            ...delegations.map((delegation) => scopeProjectId(delegation.scope)),
+          ].filter((id): id is string => id !== null),
+        ),
+      ];
+      jobs.push({
+        goal,
+        projectIds,
+        delegatedAt: delegations[0]?.createdAt ?? null,
+        tasks: tasks.map((task) => {
+          const verdicts: AgentJob["tasks"][number]["reviews"] = {};
+          for (const review of this.#store.listReviews(task.id)) {
+            verdicts[review.kind] = { verdict: review.verdict, at: review.createdAt };
+          }
+          const runs = this.#store.listRuns(task.id);
+          return { task, reviews: verdicts, latestRun: runs.at(-1) ?? null };
+        }),
+      });
+      if (jobs.length === 12) break;
+    }
+    return jobs;
+  }
+
+  /** Projects with open tasks, for the stall check. */
+  listProjectsWithOpenTasks(actor: Actor): string[] {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only Naru checks for stalls.");
+    }
+    return this.#store.listProjectsWithOpenTasks();
+  }
+
   /** Cleaned-up agents, for the person's screens to name them in old records (AP-D033). */
   listRetiredAgentSessions(actor: Actor): AgentSession[] {
     if (actor.kind === "agent") {
@@ -2544,4 +2735,20 @@ const RETIRABLE_PROCESS_STATUSES: ReadonlySet<SharedProcess["status"]> = new Set
 
 function retiredAgent(): AgentPlatformError {
   return new AgentPlatformError("AGENT_INVALID_STATE", "This agent was cleaned up.");
+}
+
+/** One goal the person handed over and the work it became (AP-D034). */
+export interface AgentJob {
+  readonly goal: Instruction;
+  readonly projectIds: readonly string[];
+  /** When an orchestrator first passed it on. */
+  readonly delegatedAt: string | null;
+  readonly tasks: readonly {
+    readonly task: AgentTask;
+    /** The latest verdict of each review kind. */
+    readonly reviews: Partial<
+      Record<Review["kind"], { readonly verdict: Review["verdict"]; readonly at: string }>
+    >;
+    readonly latestRun: Run | null;
+  }[];
 }

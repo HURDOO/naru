@@ -303,8 +303,36 @@ export const AgentEventTypeSchema = z.enum([
   "shared_process.updated",
   "shared_process.hold_started",
   "shared_process.hold_released",
+  /** Naru saw no progress on open work (AP-D034): first the orchestrator, then the person. */
+  "project.stalled",
 ]);
 export type AgentEventType = z.infer<typeof AgentEventTypeSchema>;
+
+/** Why open work stands still (AP-D034); the person's screens word it. */
+export const StallCauseSchema = z.enum([
+  "orchestrator-down",
+  "no-review",
+  "assignee-down",
+  "unassigned",
+  "assignee-idle",
+  "blocked",
+  "no-activity",
+]);
+export type StallCause = z.infer<typeof StallCauseSchema>;
+
+/** A project whose open work stands still, as the screens show it (AP-D034). */
+export const ProjectStallSchema = z.strictObject({
+  /** `orchestrator`: Naru woke the orchestrator; `person`: it is still stuck, so the person sees it. */
+  stage: z.enum(["orchestrator", "person"]),
+  since: Timestamp,
+  cause: StallCauseSchema,
+  taskId: Id.nullable(),
+  /** Minutes without progress when it was last noticed. */
+  minutes: z.number().int().nonnegative(),
+  /** The last progress before it stood still, so screens can count up from it. */
+  lastProgressAt: Timestamp.nullable(),
+});
+export type ProjectStall = z.infer<typeof ProjectStallSchema>;
 
 const EventDataValue = z.union([z.string().max(200), z.number(), z.boolean(), z.null()]);
 /** Events carry references and enums only; content stays in its domain row (AP-D002). */
@@ -595,6 +623,17 @@ export const AgentRuntimeStateSchema = z.strictObject({
   children: z
     .array(z.strictObject({ childRef: z.string().min(1).max(200), startedAt: Timestamp }))
     .max(64),
+  /** When the running turn began (AP-D034); absent from older servers. */
+  turnStartedAt: Timestamp.nullable().optional(),
+  /** The tool call the running turn makes now, from the runtime; never stored (AP-D026). */
+  activity: z
+    .strictObject({
+      tool: z.string().min(1).max(80),
+      target: z.string().max(200).nullable(),
+      since: Timestamp,
+    })
+    .nullable()
+    .optional(),
 });
 export type AgentRuntimeState = z.infer<typeof AgentRuntimeStateSchema>;
 

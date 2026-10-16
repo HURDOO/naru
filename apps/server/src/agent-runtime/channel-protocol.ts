@@ -38,6 +38,15 @@ export const RuntimeEventSchema = z.discriminatedUnion("type", [
     sessionAllow: z.boolean().optional(),
   }),
   z.strictObject({ type: z.literal("approval-resolved"), requestId: Id }),
+  /**
+   * A tool call starting (AP-D026, AP-D034): its name and a short target (a path, a command's
+   * start), shown live as "what it is doing now". Naru keeps only the latest one in memory.
+   */
+  z.strictObject({
+    type: z.literal("tool-activity"),
+    tool: z.string().min(1).max(80),
+    target: z.string().max(200).nullable(),
+  }),
   z.strictObject({
     type: z.literal("child-started"),
     childRef: Id,

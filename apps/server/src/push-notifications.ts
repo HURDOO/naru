@@ -6,10 +6,12 @@ import type {
   PushConfiguration,
   PushHandoffPayload,
   PushNotificationPayload,
+  PushStallPayload,
 } from "@naru/contracts";
 import {
   PushClearPayloadSchema,
   PushHandoffPayloadSchema,
+  PushStallPayloadSchema,
   PushNotificationPayloadSchema,
 } from "@naru/contracts";
 import webPush, {
@@ -46,6 +48,11 @@ export interface PushNotificationService {
     readonly projectId: string;
     readonly handoffId: string;
     readonly kind: PushHandoffPayload["handoffKind"];
+  }): void;
+  /** Open work stands still after its orchestrator was woken (AP-D034). */
+  notifyStall?(input: {
+    readonly projectId: string;
+    readonly cause: PushStallPayload["cause"];
   }): void;
   close(): Promise<void>;
 }
@@ -169,16 +176,46 @@ export class WebPushNotificationService implements PushNotificationService {
     this.#track(this.#deliverHandoff(payload));
   }
 
+  notifyStall(input: {
+    readonly projectId: string;
+    readonly cause: PushStallPayload["cause"];
+  }): void {
+    if (this.config === undefined) return;
+    const eventId = randomUUID();
+    const inactivityDelayMinutes = this.repository.getPushInactivityDelayMinutes();
+    if (this.hasRecentlyActiveClient(inactivityDelayMinutes)) {
+      this.eventSink?.("info", "push.suppressed", {
+        eventId,
+        projectId: input.projectId,
+        eventKind: "stall",
+        reason: "active_client",
+        inactivityDelayMinutes,
+      });
+      return;
+    }
+    const payload = PushStallPayloadSchema.parse({
+      version: 1,
+      type: "stall",
+      eventId,
+      projectId: input.projectId,
+      cause: input.cause,
+    });
+    this.#track(this.#deliverHandoff(payload, `stall-${input.projectId}`));
+  }
+
   async close(): Promise<void> {
     await Promise.allSettled([...this.#pending]);
   }
 
-  async #deliverHandoff(payload: PushHandoffPayload): Promise<void> {
+  async #deliverHandoff(
+    payload: PushHandoffPayload | PushStallPayload,
+    topic: string = (payload as PushHandoffPayload).handoffId,
+  ): Promise<void> {
     await Promise.all(
       this.repository.listActivePushSubscriptionRecords().map(async (subscription) => {
         try {
           // Its own topic: a later clear for the project must not replace an undelivered handoff.
-          await this.#send(subscription, payload, payload.handoffId, "high");
+          await this.#send(subscription, payload, topic, "high");
           this.eventSink?.("info", "push.delivered", {
             eventId: payload.eventId,
             subscriptionId: subscription.id,
@@ -241,7 +278,7 @@ export class WebPushNotificationService implements PushNotificationService {
 
   async #send(
     subscription: PushSubscriptionDeliveryRecord,
-    payload: PushNotificationPayload | PushClearPayload | PushHandoffPayload,
+    payload: PushNotificationPayload | PushClearPayload | PushHandoffPayload | PushStallPayload,
     projectId: string,
     urgency: "normal" | "high",
   ): Promise<void> {

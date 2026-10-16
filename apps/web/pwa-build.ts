@@ -291,6 +291,10 @@ async function handlePush(event) {
     await showHandoffNotification(payload);
     return;
   }
+  if (isPushStallPayload(payload)) {
+    await showStallNotification(payload);
+    return;
+  }
   if (!isPushPayload(payload)) return;
 
   const tag = "naru:project:" + payload.projectId;
@@ -339,6 +343,35 @@ async function showHandoffNotification(payload) {
     renotify: false,
     data: payload,
   });
+}
+
+// One alert per project: a newer stall of the same project replaces the older one.
+async function showStallNotification(payload) {
+  const tag = "naru:stall:" + payload.projectId;
+  const existing = await self.registration.getNotifications({ tag });
+  if (existing.some((notification) => notification.data?.eventId === payload.eventId)) return;
+  const summary = await loadPushProjectSummary(payload.projectId);
+  const projectName = normalizedProjectName(summary?.projectName) ?? "Naru";
+  await self.registration.showNotification(projectName + " · 진행이 멈췄습니다", {
+    body: stallBody(payload.cause),
+    badge: appPath("/icons/naru-192.png"),
+    icon: appPath("/icons/naru-192.png"),
+    tag,
+    renotify: false,
+    data: payload,
+  });
+}
+
+function stallBody(cause) {
+  return {
+    "orchestrator-down": "오케스트레이터가 꺼져 있습니다.",
+    "no-review": "검증 단계인데 리뷰가 시작되지 않았습니다.",
+    "assignee-down": "맡은 에이전트가 꺼져 있습니다.",
+    unassigned: "아무도 맡지 않은 작업이 있습니다.",
+    "assignee-idle": "맡은 에이전트가 움직이지 않습니다.",
+    blocked: "막힌 작업이 있습니다.",
+    "no-activity": "맡긴 일에 진행이 없습니다.",
+  }[cause];
 }
 
 function handoffBody(kind) {
@@ -448,7 +481,8 @@ function isNotificationCount(value) {
 
 async function openNotificationTarget(payload) {
   const handoff = isPushHandoffPayload(payload);
-  if (!handoff && !isPushPayload(payload)) return;
+  const stall = isPushStallPayload(payload);
+  if (!handoff && !stall && !isPushPayload(payload)) return;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   const client = windows.find((candidate) => {
     try {
@@ -460,7 +494,10 @@ async function openNotificationTarget(payload) {
   });
   if (client) {
     await client.focus();
-    client.postMessage({ type: handoff ? "NARU_PUSH_HANDOFF" : "NARU_PUSH_EVENT", payload });
+    client.postMessage({
+      type: handoff ? "NARU_PUSH_HANDOFF" : stall ? "NARU_PUSH_STALL" : "NARU_PUSH_EVENT",
+      payload,
+    });
     return;
   }
 
@@ -468,6 +505,8 @@ async function openNotificationTarget(payload) {
   url.searchParams.set("naruProject", payload.projectId);
   if (handoff) {
     url.searchParams.set("naruHandoff", payload.handoffId);
+  } else if (stall) {
+    url.searchParams.set("naruStall", payload.eventId);
   } else {
     url.searchParams.set("naruPane", payload.paneId);
     url.searchParams.set("naruEvent", payload.eventId);
@@ -492,6 +531,27 @@ function isPushHandoffPayload(value) {
       "terminal-control",
       "security-or-external",
     ].includes(value.handoffKind)
+  );
+}
+
+function isPushStallPayload(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.keys(value).length === 5 &&
+    value.version === 1 &&
+    value.type === "stall" &&
+    isUuid(value.eventId) &&
+    isUuid(value.projectId) &&
+    [
+      "orchestrator-down",
+      "no-review",
+      "assignee-down",
+      "unassigned",
+      "assignee-idle",
+      "blocked",
+      "no-activity",
+    ].includes(value.cause)
   );
 }
 

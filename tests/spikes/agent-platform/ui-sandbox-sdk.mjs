@@ -7,6 +7,9 @@
 //   WORK (worker): edits, a test run, a test artifact, progress, review status
 //   APPROVE: asks the person to allow a command; ASK: asks for a product decision
 //   DEMO: starts a shared process and asks for a manual test; SLOW: a long turn
+//   with PLAN (AP-D034): QUIET workers never ask (the team can stall), LIVE workers stay on one
+//   tool call for a while, MISDELEGATE sends a review the wrong way and records the refusal,
+//   FINISH marks every task done at once
 /* global setTimeout, AbortController */
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
@@ -202,14 +205,35 @@ async function plan(options, goal, origin, projectId) {
   const register = await task("passkey 등록", "회원이 passkey를 등록할 수 있게 한다", first?.id, [
     screen?.id,
   ]);
-  await task("통합 테스트", "화면, API, 등록을 함께 검증한다", reviewer?.id, [
+  const integration = await task("통합 테스트", "화면, API, 등록을 함께 검증한다", reviewer?.id, [
     api?.id,
     register?.id,
   ]);
   await act(options, "update_task", { task_id: screen?.id, expected_revision: 1, status: "done" });
+  if (goal.includes("FINISH")) {
+    for (const item of [api, register, integration]) {
+      await act(options, "update_task", {
+        task_id: item?.id,
+        expected_revision: 1,
+        status: "done",
+      });
+    }
+    answer("나눈 일을 모두 끝냈습니다.");
+    return;
+  }
+  const quiet = goal.includes("QUIET");
+  const live = goal.includes("LIVE") ? " LIVE" : "";
   for (const [work, agent, text] of [
-    [api, second, "세션 API를 맡아 줘. 세션은 30분 동안 쓰지 않으면 만료돼야 해. WORK APPROVE"],
-    [register, first, "passkey 등록을 맡아 줘. 비밀번호 로그인은 새로 만들지 마. WORK ASK"],
+    [
+      api,
+      second,
+      `세션 API를 맡아 줘. 세션은 30분 동안 쓰지 않으면 만료돼야 해. WORK${quiet ? "" : " APPROVE"}${live}`,
+    ],
+    [
+      register,
+      first,
+      `passkey 등록을 맡아 줘. 비밀번호 로그인은 새로 만들지 마. WORK${quiet ? "" : " ASK"}${live}`,
+    ],
   ]) {
     await act(options, "start_run", {
       task_id: work?.id,
@@ -226,6 +250,18 @@ async function plan(options, goal, origin, projectId) {
       project_id: projectId,
       agent_session_id: agent?.id,
       verbatim: text,
+      origin_user_instruction_id: origin.id,
+    });
+  }
+  if (goal.includes("MISDELEGATE")) {
+    // The mistake seen on a real team: a review sent as a task-scoped delegate reaches the
+    // assignee, not the reviewer. Naru now refuses it instead of dropping the reviewer.
+    await act(options, "delegate", {
+      scope_kind: "task",
+      project_id: projectId,
+      task_id: screen?.id,
+      agent_session_id: reviewer?.id,
+      verbatim: "로그인 화면 정리를 리뷰해 줘",
       origin_user_instruction_id: origin.id,
     });
   }
@@ -318,6 +354,24 @@ export function query({ prompt, options }) {
         const projectId = latest?.scope.projectId ?? origin.scope.projectId;
         await plan(options, goal, origin, projectId);
       } else if (goal.includes("WORK")) {
+        if (goal.includes("LIVE")) {
+          // Streamed the way the SDK does, so Naru shows the call while it runs (AP-D034).
+          yield {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: `toolu_${randomUUID().replaceAll("-", "").slice(0, 20)}`,
+                  name: "Edit",
+                  input: { file_path: "src/session.ts" },
+                },
+              ],
+            },
+          };
+          await sleep(45_000);
+        }
         await work(options, goal);
         if (goal.includes("ASK")) {
           const projectId = latest?.scope.projectId ?? null;

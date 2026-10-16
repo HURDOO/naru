@@ -55,6 +55,8 @@ export type AgentRuntimeEvent =
       readonly parentRef: string;
     }
   | { readonly type: "child-ended"; readonly childRef: string }
+  /** A tool call starting: name and short target, shown live and never stored (AP-D026). */
+  | { readonly type: "tool-activity"; readonly tool: string; readonly target: string | null }
   | { readonly type: "exited"; readonly reason: "stopped" | "crashed" };
 
 export interface HistoryPage {

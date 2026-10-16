@@ -4,6 +4,7 @@ import { useAgentApp } from "./agent-context";
 import { approvalKindLabel, processStatusLabel } from "./agent-labels";
 import { ago, type InboxItem, inboxKindLabel } from "./agent-model";
 import { Icon, Sheet } from "./agent-ui";
+import { stallAge, stallText } from "./jobs-model";
 
 /** One thing that waits for the person, answerable in place when it is a yes/no (AP-D022). */
 export function InboxCard({ item }: { readonly item: InboxItem }): React.JSX.Element {
@@ -71,6 +72,47 @@ export function InboxCard({ item }: { readonly item: InboxItem }): React.JSX.Ele
           <button className="ag-link" type="button" onClick={() => app.openChat(item.agent.id)}>
             대화 보기
           </button>
+        </div>
+      </article>
+    );
+  }
+  if (item.kind === "stall") {
+    const orchestrator = item.orchestrator;
+    return (
+      <article
+        className="ag-inbox-card"
+        data-kind="stall"
+        aria-label={`${inboxKindLabel(item)}: ${app.projectName(item.projectId)}`}
+      >
+        <header>
+          <span className="ag-inbox-kind">{inboxKindLabel(item)}</span>
+          <span className="ag-inbox-when">{stallAge(item.stall, app.now)}</span>
+        </header>
+        <h3>{app.projectName(item.projectId)}</h3>
+        <p>
+          {stallText(item.stall.cause)}
+          {item.task === undefined ? "" : ` · ${item.task.title}`}
+        </p>
+        <p className="ag-muted">오케스트레이터를 한 번 깨웠지만 아직 움직임이 없습니다.</p>
+        <div className="ag-inbox-actions">
+          <button
+            className="ag-button"
+            data-variant="primary"
+            type="button"
+            disabled={!app.mutationAllowed}
+            onClick={() =>
+              void app.act("오케스트레이터에게 다시 확인시켰습니다.", () =>
+                app.api.nudgeProject(item.projectId),
+              )
+            }
+          >
+            오케스트레이터에게 확인시키기
+          </button>
+          {orchestrator !== undefined && (
+            <button className="ag-link" type="button" onClick={() => app.openChat(orchestrator.id)}>
+              대화 보기
+            </button>
+          )}
         </div>
       </article>
     );

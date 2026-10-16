@@ -89,6 +89,8 @@ export class AgentPlatformStore {
     readonly projectId: string | null;
     readonly taskId: string | null;
     readonly agentSessionId: string | null;
+    /** Also what the person said directly to any agent of the project (orchestrators). */
+    readonly agentWords?: boolean;
   }): Instruction[] {
     const rows = this.#database
       .prepare(
@@ -99,13 +101,14 @@ export class AgentPlatformStore {
              OR (i.scope_kind = 'project' AND i.project_id = @projectId)
              OR (i.scope_kind = 'task' AND i.task_id = @taskId)
              OR (i.scope_kind = 'agent' AND i.agent_session_id = @agentSessionId)
+             OR (@agentWords = 1 AND i.scope_kind = 'agent' AND i.project_id IS @projectId)
            )
            AND NOT EXISTS (
              SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id
            )
          ORDER BY i.created_at, i.rowid`,
       )
-      .all(target) as InstructionRow[];
+      .all({ ...target, agentWords: target.agentWords === true ? 1 : 0 }) as InstructionRow[];
     return rows.map(instructionFromRow);
   }
 
@@ -1036,6 +1039,81 @@ export class AgentPlatformStore {
         event.createdAt,
       );
     return { ...event, seq: Number(result.lastInsertRowid) };
+  }
+
+  /** The newest events of one project only (no global ones), newest first. */
+  latestProjectEvents(projectId: string, limit: number): AgentEvent[] {
+    return (
+      this.#database
+        .prepare("SELECT * FROM agent_events WHERE project_id = ? ORDER BY seq DESC LIMIT ?")
+        .all(projectId, limit) as EventRow[]
+    ).map(eventFromRow);
+  }
+
+  /** The person's goals (global or project scope), newest first, still in force (AP-D034). */
+  listHumanGoals(limit: number): Instruction[] {
+    return (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_instructions AS i
+           WHERE i.author_kind = 'human' AND i.scope_kind IN ('global', 'project')
+             AND i.forgotten_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id)
+           ORDER BY i.created_at DESC, i.rowid DESC LIMIT ?`,
+        )
+        .all(limit) as InstructionRow[]
+    ).map(instructionFromRow);
+  }
+
+  /** Tasks and agent delegations that serve the given goals, directly or through a delegation. */
+  listGoalWork(goalIds: readonly string[]): {
+    readonly tasks: { readonly goalId: string; readonly task: AgentTask }[];
+    readonly delegations: { readonly goalId: string; readonly instruction: Instruction }[];
+  } {
+    if (goalIds.length === 0) return { tasks: [], delegations: [] };
+    const marks = goalIds.map(() => "?").join(", ");
+    const delegations = (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_instructions
+           WHERE author_kind = 'agent' AND origin_user_instruction_id IN (${marks})
+           ORDER BY created_at, rowid`,
+        )
+        .all(...goalIds) as InstructionRow[]
+    ).map(instructionFromRow);
+    const goalOf = new Map<string, string>(goalIds.map((id) => [id, id]));
+    for (const delegation of delegations) {
+      if (delegation.originUserInstructionId !== null) {
+        goalOf.set(delegation.id, delegation.originUserInstructionId);
+      }
+    }
+    const origins = [...goalOf.keys()];
+    const tasks = (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_tasks WHERE origin_instruction_id IN (${origins.map(() => "?").join(", ")})
+           ORDER BY created_at, rowid`,
+        )
+        .all(...origins) as TaskRow[]
+    ).map((row) => this.#taskFromRow(row));
+    return {
+      tasks: tasks.map((task) => ({ goalId: goalOf.get(task.originInstructionId)!, task })),
+      delegations: delegations.map((instruction) => ({
+        goalId: instruction.originUserInstructionId!,
+        instruction,
+      })),
+    };
+  }
+
+  /** Projects with open tasks, for the stall check (AP-D034). */
+  listProjectsWithOpenTasks(): string[] {
+    return this.#database
+      .prepare(
+        `SELECT DISTINCT project_id FROM agent_tasks
+         WHERE status IN ('pending', 'ready', 'running', 'blocked', 'review') ORDER BY project_id`,
+      )
+      .pluck()
+      .all() as string[];
   }
 
   /** Events after `afterSeq`; a project filter still includes global (null project) events. */

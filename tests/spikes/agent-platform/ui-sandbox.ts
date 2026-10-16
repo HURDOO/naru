@@ -6,6 +6,7 @@
  *
  * Run (Node 24) after `pnpm build`: node --import tsx tests/spikes/agent-platform/ui-sandbox.ts
  * A goal like "@sample PLAN 로그인을 passkey로" in the control room builds a whole team.
+ * SANDBOX_STALL_MINUTES=1 makes a quiet team ("@sample PLAN QUIET …") stall within minutes.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,6 +19,9 @@ const SDK = readFileSync(new URL("./ui-sandbox-sdk.mjs", import.meta.url), "utf8
 const stack = await startNaruStack({
   sdkSource: SDK,
   ...(process.env.SANDBOX_PORT === undefined ? {} : { port: Number(process.env.SANDBOX_PORT) }),
+  ...(process.env.SANDBOX_STALL_MINUTES === undefined
+    ? {}
+    : { stallMinutes: Number(process.env.SANDBOX_STALL_MINUTES) }),
 });
 process.stdout.write(
   `SANDBOX ${stack.origin} password ${stack.password} project ${join(stack.projectRoot, "sample")}\n`,

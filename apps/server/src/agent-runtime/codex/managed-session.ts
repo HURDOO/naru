@@ -340,6 +340,10 @@ export class CodexManagedSession {
       case "item/started":
       case "item/completed": {
         const item = asRecord(record?.item);
+        if (method === "item/started") {
+          const activity = codexActivity(item ?? undefined);
+          if (activity !== null) this.#emit({ type: "tool-activity", ...activity });
+        }
         if (item?.type !== "subAgentActivity" || typeof item.agentThreadId !== "string") return;
         if (item.kind === "started" && !this.#children.has(item.agentThreadId)) {
           this.#children.add(item.agentThreadId);
@@ -461,4 +465,35 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+/** "What it is doing now" for a Codex item (AP-D026): commands, file changes and tool calls. */
+export function codexActivity(
+  item: Record<string, unknown> | undefined,
+): { readonly tool: string; readonly target: string | null } | null {
+  if (item === undefined) return null;
+  const short = (value: unknown): string | null => {
+    if (typeof value !== "string" || value.trim() === "") return null;
+    const text = value.replace(/\s+/gu, " ").trim();
+    return text.length > 200 ? `${text.slice(0, 199)}…` : text;
+  };
+  switch (item.type) {
+    case "commandExecution":
+      return { tool: "Bash", target: short(item.command) };
+    case "fileChange": {
+      const changes = Array.isArray(item.changes) ? (item.changes as { path?: unknown }[]) : [];
+      return { tool: "Edit", target: short(changes[0]?.path) };
+    }
+    case "mcpToolCall": {
+      const name = (value: unknown) => (typeof value === "string" ? value : "");
+      return {
+        tool: `${name(item.server) || "mcp"} ${name(item.tool)}`.trim().slice(0, 80),
+        target: null,
+      };
+    }
+    case "webSearch":
+      return { tool: "WebSearch", target: short(item.query) };
+    default:
+      return null;
+  }
 }

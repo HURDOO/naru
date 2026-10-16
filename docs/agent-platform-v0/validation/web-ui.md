@@ -167,3 +167,50 @@
   작업자 2 체크를 뺌 → "1개 정리" → 리뷰어만 관제실 목록과 작업공간 목록에서 사라지고, 작업자 2는 남아 이름이
   그대로다. page error 없음.
 - 한계: 휴대폰 관제실에는 에이전트 목록이 없어 정리 버튼도 없다. 1440·768에서 쓴다.
+
+# AP-D034 검증: 멈춘 일 알아차리기, 맡긴 일 카드, 위임 확인
+
+- 날짜: 2026-10-16. 격리 sandbox(`SANDBOX_STALL_MINUTES=1`, 임시 Host·DB, 가짜 runtime)와 Playwright
+  Chromium. 운영 instance와 테스트 앱은 건드리지 않았다. 검사 script는 `.local/ap-t22/`(git 밖)의 `jobs.mjs`,
+  `jobs-finished.mjs`, `pane-menu.mjs`다.
+- sandbox stand-in에 목표 낱말을 더했다(`ui-sandbox-sdk.mjs`):
+  - `QUIET`: 묻지 않는 작업자. 팀이 멈출 수 있다.
+  - `LIVE`: 도구 호출 하나를 stream으로 보내고 45초 머문다.
+  - `MISDELEGATE`: 리뷰를 task scope로 리뷰어에게 보낸다.
+  - `FINISH`: 작업을 모두 끝낸다.
+
+| 항목                                                                                            | 근거                                                    | 상태     |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------- |
+| scope와 다른 `delegate` 인자 거부, 사람이 끈 에이전트에게 위임 거부                             | `agent-platform-hitl.test.ts`                           | **PASS** |
+| 잘못 보낸 리뷰가 리뷰어에게도 작업자에게도 가지 않음                                            | 1440 화면 흐름(`MISDELEGATE`, 에이전트별 지시 기록)     | **PASS** |
+| 오케스트레이터가 사람이 프로젝트 에이전트에게 직접 한 말을 읽음                                 | `agent-platform-hitl.test.ts`                           | **PASS** |
+| 작은 이벤트로 프로젝트 오케스트레이터를 깨우지 않음, 자기 등록은 깨움                           | `agent-platform-hitl.test.ts`, `agent-platform-wakeups` | **PASS** |
+| 재시작 뒤와 지시할 때 꺼진 에이전트 다시 실행(10분에 한 번), 사람이 끈·잡은 에이전트는 그대로   | `agent-platform-hitl.test.ts`                           | **PASS** |
+| 멈춤: 오케스트레이터 먼저, 그다음 사람, 진행하면 사라짐, 확인시키기 뒤 다시 오케스트레이터      | `agent-platform-hitl.test.ts`, `agent-platform-http`    | **PASS** |
+| 사람이 기다리는 것이 있거나 일하는 중이면 멈춤으로 보지 않음, 원인 고르기                       | `agent-platform-hitl.test.ts`                           | **PASS** |
+| 멈춘 팀이 관제실 "진행 멈춤"과 카드 배너에 원인·경과("2분째 그대로")와 함께 보임                | 1440 화면(`QUIET`, 의도 계약 승인 뒤 약 3분)            | **PASS** |
+| 카드의 "오케스트레이터에게 확인시키기" 뒤 배너가 사라짐                                         | 1440 화면                                               | **PASS** |
+| 기기 알림: 프로젝트마다 하나, 잘못된 payload 무시, 누르면 관제실(`NARU_PUSH_STALL`·`naruStall`) | `pwa-build.test.ts`                                     | **PASS** |
+| 맡긴 일 카드: 큰 그림 단계, "작업 4개 중 1개 완료", 의존 순서 번호, "2·3번이 끝나면 시작합니다" | 1440 화면, `jobs-model.test.ts`                         | **PASS** |
+| "지금" 줄과 에이전트 목록에 실행 중인 도구("Edit · src/session.ts")                             | 1440 화면(`LIVE`), Claude·Codex 변환은 hitl 테스트      | **PASS** |
+| 끝난 일은 접혀 있고, 펼치면 단계가 모두 완료, 목표를 두 번 쓰지 않음                            | 1440 화면(`FINISH`)                                     | **PASS** |
+| 에이전트 Pane 메뉴에 "Pane 끄기" 없음(내 Pane에는 있음), API도 409                              | 1440 화면, `agent-platform-http.test.ts`                | **PASS** |
+| 768px, 360px(휴대폰은 지금 하는 일만, "나눈 일 4개 모두 보기"), 360×520 동적 viewport           | 화면, 가로 넘침 검사                                    | **PASS** |
+| Tab으로 작업 줄에 닿고 focus outline이 보이며 Enter로 흐름 화면을 염                            | 1440 화면                                               | **PASS** |
+| page error 없음, lint, typecheck, format, vitest 전체(1037)                                     | 명령 결과                                               | **PASS** |
+| 기존 화면                                                                                       | `pnpm test:e2e` 29개 중 27 통과, 실패 2개는 아래        | **PASS** |
+
+- e2e 실패 2개는 AP-T22 1단계 때와 같은 기존 불안정이다. `terminal-stability`는 단독 재실행에서 통과했고,
+  `mobile-output-copy`는 변경 전 코드에서도 실패한다.
+- 고친 것(검증 중 발견):
+  - "확인시키기"를 눌러도 배너가 남음: 사람에게 알린 기록이 하나라도 있으면 사람 단계로 봤다. 가장 새 기록이
+    단계를 정하게 고쳤다.
+  - "1분째 그대로"처럼 경과가 짧게 나옴: 마지막 이벤트(멈춤 기록, 상태 보고 포함)부터 셌다. 마지막 진행부터
+    세고, board가 `lastProgressAt`을 주어 화면이 계속 센다.
+  - 360px에서 단계 줄이 5px 넘침: 단계가 줄어들지 못했다.
+  - 기다리는 작업의 "작업" 칸이 진행 중처럼 파랬음, 의존 번호가 "3·2번"으로 나옴.
+- 확인하지 못한 것:
+  - 실제 Claude·Codex에서 "지금" 줄: stand-in stream과 변환 단위 테스트로만 확인했다.
+  - 실제 기기의 멈춤 알림: service worker 단위 테스트로만 확인했다.
+  - 실제 모델 오케스트레이터가 지침대로 한국어로 답하고 `project.stalled`에 움직이는지: 테스트 앱에서 본다
+    (MANUAL_TESTS 12).

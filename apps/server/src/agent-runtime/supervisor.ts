@@ -39,6 +39,8 @@ const SYSTEM = { kind: "system" } as const;
 const HISTORY_TIMEOUT_MS = 15_000;
 /** Longer than the runner's longest reconnect backoff (5 s). */
 const DISCONNECT_GRACE_MS = 15_000;
+/** An agent Naru started again on its own is not started again before this (AP-D034). */
+const RELAUNCH_COOLDOWN_MS = 10 * 60_000;
 /** How long a switched-to form may take to report the resumed conversation. */
 const RESUME_TIMEOUT_MS = 60_000;
 
@@ -91,6 +93,13 @@ interface ManagedRuntime {
   resumeTimer: NodeJS.Timeout | null;
   /** Resolved when a writer switch settles (active or recovery-required). */
   readonly switchWaiters: (() => void)[];
+  /** When the running turn began, and the tool call it makes now (AP-D034); memory only. */
+  turnStartedAt: string | null;
+  activity: {
+    readonly tool: string;
+    readonly target: string | null;
+    readonly since: string;
+  } | null;
 }
 
 /**
@@ -109,6 +118,9 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   #startupTimer: NodeJS.Timeout | null = null;
   readonly #disconnectGraceMs: number;
   readonly #attention: ((agentSessionId: string, required: boolean) => void) | undefined;
+  readonly #autoRelaunch: boolean;
+  readonly #relaunchedAt = new Map<string, number>();
+  readonly #unsubscribeCore: () => void;
 
   constructor(options: {
     readonly core: AgentPlatformCore;
@@ -121,13 +133,28 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     readonly disconnectGraceMs?: number;
     /** Shows that an agent waits for the person's approval, and that it stopped waiting. */
     readonly attention?: (agentSessionId: string, required: boolean) => void;
+    /**
+     * Starts agents again that went down on their own (AP-D034): after a restart, and when another
+     * agent hands work to one that is not running. A person's stop is never undone.
+     */
+    readonly autoRelaunch?: boolean;
   }) {
     this.#disconnectGraceMs = options.disconnectGraceMs ?? DISCONNECT_GRACE_MS;
     this.#attention = options.attention;
+    this.#autoRelaunch = options.autoRelaunch ?? false;
     this.#core = options.core;
     this.#launcher = options.launcher;
     this.#channelSocketPath = options.channelSocketPath;
     this.#planFor = options.planFor;
+    this.#unsubscribeCore = this.#autoRelaunch
+      ? options.core.subscribe((event) => {
+          // An agent's delegation to an agent that is down would wait unseen; start the recipient.
+          if (event.type !== "instruction.created" || event.actor.kind !== "agent") return;
+          for (const agent of this.#core.instructionRecipients(SYSTEM, event.subjectId)) {
+            this.#relaunchIfDown(agent);
+          }
+        })
+      : () => undefined;
   }
 
   useWakeups(wakeups: OrchestratorWakeups): void {
@@ -190,6 +217,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       launchMode: agent.launchMode,
       pendingApprovals: this.pendingApprovals(agentSessionId),
       children: [...runtime.children].map(([childRef, startedAt]) => ({ childRef, startedAt })),
+      turnStartedAt: runtime.gate.turnActive ? runtime.turnStartedAt : null,
+      activity: runtime.gate.turnActive ? runtime.activity : null,
     };
   }
 
@@ -453,6 +482,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           if (isPaneRunning(agent.paneId)) continue;
         }
         this.#markUnknown(agent.id, runtime ?? this.#runtime(agent.id, agent.runtimeSessionRef));
+        // It was running when Naru or its Host went down: bring it back (AP-D034).
+        this.#relaunchIfDown(this.#core.getAgentSession(SYSTEM, agent.id));
       }
     }, this.#disconnectGraceMs);
     timer.unref();
@@ -471,8 +502,22 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     );
   }
 
+  /**
+   * Launches an agent that is down on its own (unknown or failed), at most once per cooldown so a
+   * runtime that dies right away does not loop. Held, stopped and cleaned-up agents stay as they are.
+   */
+  #relaunchIfDown(agent: AgentSession): void {
+    if (!this.#autoRelaunch || agent.retiredAt || agent.humanHoldSince !== null) return;
+    if (agent.status !== "unknown" && agent.status !== "failed") return;
+    const now = Date.now();
+    if (now - (this.#relaunchedAt.get(agent.id) ?? 0) < RELAUNCH_COOLDOWN_MS) return;
+    this.#relaunchedAt.set(agent.id, now);
+    void this.launch(agent.id).catch(() => undefined); // a failed launch marks the agent failed
+  }
+
   /** Releases timers when this Naru process shuts down; runners keep running. */
   close(): void {
+    this.#unsubscribeCore();
     if (this.#startupTimer !== null) clearTimeout(this.#startupTimer);
     this.#startupTimer = null;
     for (const runtime of this.#runtimes.values()) {
@@ -504,11 +549,22 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         });
         this.#trackWakeups(agentSessionId);
         return;
+      case "tool-activity":
+        runtime.activity = {
+          tool: event.tool,
+          target: event.target,
+          since: new Date().toISOString(),
+        };
+        return;
       case "turn-started":
+        runtime.turnStartedAt = new Date().toISOString();
+        runtime.activity = null;
         this.#transition(agentSessionId, runtime, { type: "turn-started" });
         this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "active" });
         return;
       case "turn-ended":
+        runtime.turnStartedAt = null;
+        runtime.activity = null;
         this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "idle" });
         // May finish a quiescing switch, which then stops this runner.
         this.#transition(agentSessionId, runtime, { type: "turn-ended" });
@@ -692,6 +748,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         disconnectTimer: null,
         resumeTimer: null,
         switchWaiters: [],
+        turnStartedAt: null,
+        activity: null,
       };
       this.#runtimes.set(agentSessionId, runtime);
     }

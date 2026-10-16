@@ -17,7 +17,7 @@ import { AgentChat } from "./AgentChat";
 import { DecisionSheet } from "./AgentInbox";
 import { Icon, type IconName } from "./agent-ui";
 import { PHONE, useMedia } from "./agent-dom";
-import { ApiFailure, type AgentBoard, type NaruApi } from "./api";
+import { ApiFailure, type AgentBoard, type AgentJob, type AgentWorking, type NaruApi } from "./api";
 import { ControlRoom } from "./ControlRoom";
 import { FlowView } from "./FlowView";
 import "./agent-app.css";
@@ -79,6 +79,7 @@ export function AgentApp({
 }: AgentAppProps): React.JSX.Element {
   const phone = useMedia(PHONE);
   const [board, setBoard] = useState<AgentBoard | null>(null);
+  const [jobs, setJobs] = useState<readonly AgentJob[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
@@ -125,8 +126,14 @@ export function AgentApp({
 
   const refresh = useCallback(async () => {
     try {
-      const [next] = await Promise.all([api.agentBoard(), loadEvents()]);
+      const [next, nextJobs] = await Promise.all([
+        api.agentBoard(),
+        // A server without jobs (before AP-D034) still shows the rest.
+        api.agentJobs().catch(() => null),
+        loadEvents(),
+      ]);
       setBoard(next);
+      if (nextJobs !== null) setJobs(nextJobs);
       setNow(Date.now());
       setError(null);
     } catch (failure) {
@@ -146,6 +153,16 @@ export function AgentApp({
   const agents = useMemo(() => (board === null ? [] : boardAgents(board)), [board]);
   const inbox = useMemo(() => (board === null ? [] : inboxItems(board)), [board]);
   const waiting = useMemo(() => waitingAgentIds(inbox), [inbox]);
+  const working = useMemo(() => {
+    const map = new Map<string, AgentWorking>();
+    for (const entry of [
+      ...(board?.projects.flatMap((project) => project.working ?? []) ?? []),
+      ...(board?.globalWorking ?? []),
+    ]) {
+      map.set(entry.agentSessionId, entry);
+    }
+    return map;
+  }, [board]);
 
   useEffect(() => {
     if (board !== null) onWaitingChange?.(inbox.length);
@@ -213,6 +230,8 @@ export function AgentApp({
       currentProjectId,
       agents,
       inbox,
+      jobs,
+      working,
       identity: (agent: AgentSession) =>
         identities.get(agent.id) ?? agentIdentity(agent, named, projectName),
       agentById,
@@ -242,6 +261,7 @@ export function AgentApp({
     events,
     identities,
     inbox,
+    jobs,
     mutationAllowed,
     named,
     now,
@@ -250,11 +270,12 @@ export function AgentApp({
     projectName,
     projects,
     waiting,
+    working,
   ]);
 
   const decision = inbox.find(
     (item): item is Extract<InboxItem, { kind: "handoff" | "contract" }> =>
-      item.key === decisionKey && item.kind !== "approval",
+      item.key === decisionKey && (item.kind === "handoff" || item.kind === "contract"),
   );
   const missingDecision =
     decisionKey !== null && board !== null && decision === undefined && initialHandoffId !== null;

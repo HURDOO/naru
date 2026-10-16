@@ -104,8 +104,10 @@ describe("agent view model", () => {
     ).toBe("메인 오케스트레이터");
   });
 
-  it("puts approvals first, then decisions oldest first, then intent contracts", () => {
+  it("puts approvals first, then stalls, decisions oldest first, then intent contracts", () => {
     const worker = agent(2, { paneId: id(900) });
+    const orchestrator = agent(3, { role: "project-orchestrator" });
+    const reviewing = task(1, { status: "review" });
     const board: AgentBoard = {
       projects: [
         {
@@ -127,13 +129,21 @@ describe("agent view model", () => {
             createdAt: "2026-10-16T01:00:00.000Z",
           },
           activePlan: null,
-          tasks: [],
+          tasks: [reviewing],
           openHandoffs: [],
-          agents: [worker],
+          agents: [worker, orchestrator],
           processes: [],
           pendingApprovals: [
             { agentSessionId: worker.id, requestId: "r1", kind: "command", summary: "pnpm test" },
           ],
+          stall: {
+            stage: "person",
+            since: "2026-10-16T01:50:00.000Z",
+            cause: "no-review",
+            taskId: reviewing.id,
+            minutes: 20,
+            lastProgressAt: "2026-10-16T01:30:00.000Z",
+          },
         },
       ],
       globalAgents: [],
@@ -146,10 +156,12 @@ describe("agent view model", () => {
     const items = inboxItems(board);
     expect(items.map((item) => item.key)).toEqual([
       `approval:${worker.id}:r1`,
+      `stall:${PROJECT}:2026-10-16T01:50:00.000Z`,
       `handoff:${id(501)}`,
       `handoff:${id(502)}`,
       `contract:${id(600)}`,
     ]);
+    expect(items[1]).toMatchObject({ kind: "stall", task: reviewing, orchestrator });
     expect(presenceOf(worker, true)).toBe("waiting");
     expect(agentActivity(worker, "waiting", items, [])).toBe("명령 실행 승인 기다림 · pnpm test");
   });

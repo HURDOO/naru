@@ -1,6 +1,7 @@
 import {
   PushHandoffPayloadSchema,
   PushNotificationPayloadSchema,
+  PushStallPayloadSchema,
   type PushNotificationPayload,
 } from "@naru/contracts";
 import type { NaruApi } from "./api";
@@ -16,6 +17,12 @@ export interface NotificationTarget {
 export interface HandoffNotificationTarget {
   projectId: string;
   handoffId: string;
+}
+
+/** Open agent work stands still (AP-D034): opens the control room, where the job shows why. */
+export interface StallNotificationTarget {
+  projectId: string;
+  eventId: string;
 }
 
 export function browserSupportsPushNotifications(): boolean {
@@ -126,6 +133,41 @@ export function handoffTargetFromLocation(): HandoffNotificationTarget | null {
   const query = parameters.toString();
   window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   return { projectId, handoffId };
+}
+
+export function stallTargetFromLocation(): StallNotificationTarget | null {
+  const parameters = new URLSearchParams(window.location.search);
+  const projectId = parameters.get("naruProject");
+  const eventId = parameters.get("naruStall");
+  if (!isUuid(projectId) || !isUuid(eventId)) return null;
+  parameters.delete("naruProject");
+  parameters.delete("naruStall");
+  const query = parameters.toString();
+  window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+  return { projectId, eventId };
+}
+
+export function listenForStallTargets(
+  listener: (target: StallNotificationTarget) => void,
+): () => void {
+  if (!("serviceWorker" in navigator)) return () => undefined;
+  const receive = (event: MessageEvent<unknown>): void => {
+    if (
+      event.data === null ||
+      typeof event.data !== "object" ||
+      !("type" in event.data) ||
+      event.data.type !== "NARU_PUSH_STALL" ||
+      !("payload" in event.data)
+    ) {
+      return;
+    }
+    const parsed = PushStallPayloadSchema.safeParse(event.data.payload);
+    if (parsed.success) {
+      listener({ projectId: parsed.data.projectId, eventId: parsed.data.eventId });
+    }
+  };
+  navigator.serviceWorker.addEventListener("message", receive);
+  return () => navigator.serviceWorker.removeEventListener("message", receive);
 }
 
 export function listenForHandoffTargets(

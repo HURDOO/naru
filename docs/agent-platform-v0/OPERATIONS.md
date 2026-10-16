@@ -8,12 +8,13 @@
 
 Agent Platform은 기본으로 꺼져 있다. 켜려면 Naru 환경에 다음을 둔다.
 
-| 변수                            | 뜻                                                                          | 기본값 |
-| ------------------------------- | --------------------------------------------------------------------------- | ------ |
-| `NARU_AGENT_PLATFORM`           | `1`이면 켠다                                                                | `0`    |
-| `NARU_CLAUDE_AGENT_SDK_PATH`    | 사용자가 설치한 Claude Agent SDK의 `sdk.mjs`(AP-D012). 관리형 Claude에 필요 | 없음   |
-| `NARU_AGENT_HOLD_IDLE_MS`       | 사람 hold를 입력이 없을 때 자동 반환하는 시간                               | 30분   |
-| `NARU_AGENT_HOLD_DISCONNECT_MS` | controller 기기가 없을 때 hold를 반환하기까지의 유예                        | 5분    |
+| 변수                            | 뜻                                                                                                                  | 기본값 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------ |
+| `NARU_AGENT_PLATFORM`           | `1`이면 켠다                                                                                                        | `0`    |
+| `NARU_CLAUDE_AGENT_SDK_PATH`    | 사용자가 설치한 Claude Agent SDK의 `sdk.mjs`(AP-D012). 관리형 Claude에 필요                                         | 없음   |
+| `NARU_AGENT_HOLD_IDLE_MS`       | 사람 hold를 입력이 없을 때 자동 반환하는 시간                                                                       | 30분   |
+| `NARU_AGENT_HOLD_DISCONNECT_MS` | controller 기기가 없을 때 hold를 반환하기까지의 유예                                                                | 5분    |
+| `NARU_AGENT_STALL_MINUTES`      | 맡긴 일이 진행 없이 이만큼 서 있으면 오케스트레이터를 깨우고, 그만큼 더 지나면 사람에게 알린다(AP-D034). 0이면 끈다 | 10분   |
 
 - 끄기: `NARU_AGENT_PLATFORM=0`으로 재시작한다.
   - v20 table과 기록은 그대로 남는다. 기존 project, 작업공간, TUI는 영향을 받지 않는다.

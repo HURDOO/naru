@@ -258,6 +258,26 @@ export const PushHandoffPayloadSchema = z
   .strict();
 export type PushHandoffPayload = z.infer<typeof PushHandoffPayloadSchema>;
 
+/** Open agent work stands still and the orchestrator did not move it (AP-D034). */
+export const PushStallPayloadSchema = z
+  .object({
+    version: z.literal(1),
+    type: z.literal("stall"),
+    eventId: z.string().uuid(),
+    projectId: z.string().uuid(),
+    cause: z.enum([
+      "orchestrator-down",
+      "no-review",
+      "assignee-down",
+      "unassigned",
+      "assignee-idle",
+      "blocked",
+      "no-activity",
+    ]),
+  })
+  .strict();
+export type PushStallPayload = z.infer<typeof PushStallPayloadSchema>;
+
 export const PUSH_CLEAR_MAX_ALERT_EVENT_IDS = 32;
 
 /** Tells a device to close the listed alerts of a project whose attention states were resolved. */

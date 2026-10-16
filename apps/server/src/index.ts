@@ -38,6 +38,7 @@ import { ProjectCatalogService } from "./project-catalog.js";
 import { ProjectDocumentReader } from "./project-documents.js";
 import { ProjectFileService } from "./project-files.js";
 import { HoldMonitor } from "./agent-runtime/hold-monitor.js";
+import { StallMonitor } from "./agent-platform/stalls.js";
 import { LeaseManager } from "./lease.js";
 import type { NaruSessionFacade } from "./session-facade.js";
 
@@ -185,6 +186,7 @@ if (agentPlatform !== undefined && (agentPanes !== undefined || codexAgentPanes 
       const paneId = agentPlatform.getAgentSession({ kind: "system" }, agentSessionId).paneId;
       if (paneId !== null) supervisor.showAgentAttention?.(paneId, required);
     },
+    autoRelaunch: true,
   });
   runtimeChannel = new RuntimeChannelServer(config.dataDir, managedAgents);
   wakeups = new OrchestratorWakeups(agentPlatform, managedAgents);
@@ -261,8 +263,32 @@ const holdMonitor =
         },
       });
 holdMonitor?.start();
+// Open work that stands still wakes its orchestrator, then reaches the person (AP-D034).
+const stallMonitor =
+  agentPlatform === undefined || managedAgents === undefined
+    ? undefined
+    : new StallMonitor({
+        core: agentPlatform,
+        minutes: config.agentStallMinutes ?? 10,
+        working: (agentSessionId) => {
+          try {
+            return managedAgents.runtimeState(agentSessionId).turnActive;
+          } catch {
+            return false;
+          }
+        },
+        awaitingApproval: (agentSessionId) => {
+          try {
+            return managedAgents.pendingApprovals(agentSessionId).length > 0;
+          } catch {
+            return false;
+          }
+        },
+      });
+stallMonitor?.start();
 const closeAgents = async (): Promise<void> => {
   holdMonitor?.close();
+  stallMonitor?.close();
   sharedProcesses?.close();
   wakeups?.close();
   managedAgents?.close();

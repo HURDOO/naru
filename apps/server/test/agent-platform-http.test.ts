@@ -504,6 +504,114 @@ describe("Agent Platform cleanup (AP-D033)", () => {
   });
 });
 
+describe("Agent Platform stalls, jobs and agent Panes (AP-D034)", () => {
+  it("shows a stall that reached the person, lets them nudge and keeps agent Panes", async () => {
+    const fixture = await createFixture(true);
+    const core = fixture.core!;
+    let ordinal = 950;
+    const key = () => `90000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`;
+    const orchestrator = core.registerAgentSession(
+      { actor: { kind: "human" }, idempotencyKey: key() },
+      {
+        projectId: fixture.projectId,
+        role: "project-orchestrator",
+        runtime: "claude",
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      },
+    ).id;
+    const goal = core.createHumanInstruction(
+      { actor: { kind: "human" }, idempotencyKey: key() },
+      { scope: { kind: "global" }, verbatim: "글 10개 써봐" },
+    );
+    const task = core.createTask(
+      { actor: { kind: "agent", agentSessionId: orchestrator }, idempotencyKey: key() },
+      {
+        projectId: fixture.projectId,
+        title: "글 10개",
+        purpose: "",
+        completionCriteria: [],
+        originInstructionId: goal.id,
+      },
+    );
+    const login = await fixture.login();
+    const read = async <T>(url: string) =>
+      (
+        await fixture.app.inject({ method: "GET", url, headers: { cookie: login.cookie } })
+      ).json<T>();
+    type Board = { projects: { stall: unknown; working: unknown[] }[] };
+    expect((await read<Board>("/api/agent/board")).projects[0]).toMatchObject({
+      stall: null,
+      working: [],
+    });
+    // Only the `person` stage shows: the orchestrator gets the first chance.
+    core.recordStall(
+      { actor: { kind: "system" }, idempotencyKey: key() },
+      {
+        projectId: fixture.projectId,
+        stage: "orchestrator",
+        cause: "unassigned",
+        taskId: task.id,
+        minutes: 11,
+      },
+    );
+    expect((await read<Board>("/api/agent/board")).projects[0]!.stall).toBeNull();
+    core.recordStall(
+      { actor: { kind: "system" }, idempotencyKey: key() },
+      {
+        projectId: fixture.projectId,
+        stage: "person",
+        cause: "unassigned",
+        taskId: task.id,
+        minutes: 21,
+      },
+    );
+    expect((await read<Board>("/api/agent/board")).projects[0]!.stall).toMatchObject({
+      stage: "person",
+      cause: "unassigned",
+      taskId: task.id,
+    });
+
+    const headers = await fixture.controller(login);
+    const nudged = await fixture.app.inject({
+      method: "POST",
+      url: `/api/agent/projects/${fixture.projectId}/nudge`,
+      headers,
+      payload: { idempotencyKey: key() },
+    });
+    expect(nudged.statusCode).toBe(200);
+    const events = core.readEvents({ kind: "human" }, { afterSeq: 0, latest: true, limit: 1 });
+    expect(events[0]).toMatchObject({
+      type: "project.stalled",
+      actor: { kind: "human" },
+      data: { stage: "orchestrator", cause: "unassigned" },
+    });
+    // The nudge hands it back to the orchestrator, so the person's screens stop showing it.
+    expect((await read<Board>("/api/agent/board")).projects[0]!.stall).toBeNull();
+
+    const jobs = await read<{
+      jobs: { goal: { id: string }; tasks: { task: { id: string } }[] }[];
+    }>("/api/agent/jobs");
+    expect(jobs.jobs).toMatchObject([
+      { goal: { id: goal.id }, tasks: [{ task: { id: task.id } }] },
+    ]);
+
+    // An agent's Pane is stopped or cleaned up, not closed.
+    const pane = fixture.repository.createAgentPane(orchestrator, "Claude orchestrator");
+    const version = fixture.repository.getWorkspace(fixture.projectId).version;
+    const closed = await fixture.app.inject({
+      method: "DELETE",
+      url: `/api/panes/${pane.id}`,
+      headers,
+      payload: { workspaceVersion: version },
+    });
+    expect(closed.statusCode).toBe(409);
+    expect(closed.json()).toMatchObject({ code: "AGENT_INVALID_STATE" });
+    expect(fixture.repository.getPaneContext(pane.id)).toBeDefined();
+  });
+});
+
 describe("Agent Platform intent contract approval", () => {
   it("shows a proposal until the user approves it with the device lease", async () => {
     const fixture = await createFixture(true);

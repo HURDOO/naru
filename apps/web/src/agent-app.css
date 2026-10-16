@@ -904,6 +904,389 @@ button.ag-chip:hover:not(:disabled) {
   margin-left: auto;
 }
 
+/* 맡긴 일 (AP-D034) */
+
+.ag-jobs,
+.ag-job-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ag-jobs {
+  gap: 14px;
+}
+
+.ag-job {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.ag-job[data-stalled="true"] {
+  border-color: color-mix(in srgb, var(--ag-amber) 45%, var(--line));
+}
+
+.ag-job-head {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ag-job-goal {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.ag-job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ag-job-track {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+}
+
+.ag-job-stages {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.ag-job-stages li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ag-job-stages li + li {
+  flex: 1 1 auto;
+}
+
+/* The line into a step, colored once the work got that far. */
+.ag-job-stages li + li::before {
+  width: 18px;
+  min-width: 6px;
+  height: 2px;
+  flex: 1 1 auto;
+  margin-right: 2px;
+  border-radius: 1px;
+  background: var(--line-strong);
+  content: "";
+}
+
+.ag-job-stages li[data-state="done"],
+.ag-job-stages li[data-state="current"] {
+  color: var(--muted);
+}
+
+.ag-job-stages li[data-state="done"]::before,
+.ag-job-stages li[data-state="current"]::before {
+  background: color-mix(in srgb, var(--green) 70%, transparent);
+}
+
+.ag-job-stages li[data-state="current"] {
+  color: var(--text);
+  font-weight: 750;
+}
+
+.ag-job-stage-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+[data-state="done"] > .ag-job-stage-dot {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+[data-state="current"] > .ag-job-stage-dot {
+  border-color: var(--blue);
+  background: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 28%, transparent);
+}
+
+.ag-job-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ag-job-stall {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ag-amber) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ag-amber) 8%, transparent);
+  font-size: 12.5px;
+}
+
+.ag-job-stall > .ag-icon {
+  color: var(--ag-amber);
+}
+
+.ag-job-stall p {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.ag-job-stall strong {
+  color: var(--ag-amber);
+}
+
+.ag-job-stall-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.ag-job-tasks-wrap {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ag-job-tasks-wrap > .ag-link {
+  align-self: flex-start;
+}
+
+.ag-job-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ag-job-tasks {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ag-job-task {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.ag-job-task:hover {
+  background: var(--panel-raised);
+}
+
+.ag-job-task[data-current="true"] {
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line));
+  background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+
+.ag-job-num {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--panel-raised);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+[data-current="true"] > .ag-job-num {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+[data-stage="done"] > .ag-job-num {
+  border-color: transparent;
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+.ag-job-task-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ag-job-task-title {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+[data-stage="done"] .ag-job-task-title,
+[data-stage="cancelled"] .ag-job-task-title {
+  color: var(--muted);
+}
+
+.ag-job-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.ag-job-steps {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.ag-job-steps > [data-state] {
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--subtle);
+  background: color-mix(in srgb, var(--subtle) 10%, transparent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.ag-job-steps > [data-state="done"] {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+}
+
+.ag-job-steps > [data-state="current"] {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+}
+
+.ag-job-steps > [data-state="failed"] {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.ag-job-now {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ag-job-now[data-live="true"] {
+  color: var(--text);
+}
+
+.ag-job-now-tag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+[data-live="true"] > .ag-job-now-tag {
+  border-color: color-mix(in srgb, var(--blue) 50%, transparent);
+  color: var(--blue);
+}
+
+.ag-job-now-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-job-done {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.ag-job-done > summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12.5px;
+  list-style: none;
+}
+
+.ag-job-done > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ag-job-done > summary > .ag-icon {
+  color: var(--green);
+}
+
+.ag-job-done-goal {
+  min-width: 0;
+  flex: 1 1 200px;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The summary already names the goal. */
+.ag-job-done .ag-job-goal {
+  display: none;
+}
+
+.ag-job-done > .ag-job {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 12px 12px;
+}
+
 /* Task graph */
 
 .ag-graph-scroll {
@@ -1237,6 +1620,15 @@ button.ag-chip:hover:not(:disabled) {
 
 .ag-agent-row[data-presence="waiting"] .ag-agent-activity {
   color: var(--accent);
+}
+
+.ag-agent-live {
+  overflow: hidden;
+  color: var(--blue);
+  font-family: var(--ag-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ag-agent-time {
@@ -3005,6 +3397,30 @@ button.ag-tool-call:hover {
 
   .ag-section-head h2 {
     font-size: 15px;
+  }
+
+  .ag-job {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .ag-job-stages {
+    width: 100%;
+  }
+
+  .ag-job-stages li {
+    gap: 4px;
+    font-size: 11.5px;
+  }
+
+  .ag-job-stages li + li::before {
+    width: 12px;
+    min-width: 4px;
+  }
+
+  .ag-job-task {
+    gap: 8px;
+    padding: 9px 8px;
   }
 
   .ag-inbox-actions .ag-button {

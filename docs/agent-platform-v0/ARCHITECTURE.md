@@ -323,3 +323,36 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   `POST /api/agent/cleanup`을 부른다. Core `cleanup`이 모든 항목을 먼저 확인한 뒤 항목마다 idempotent
   command로 `retired_at`을 남기고(`agent_session.updated`/`shared_process.updated`, `retired: true`), route가
   남은 Pane을 닫는다. store의 목록 조회는 정리된 행을 빼고, board는 이름을 위해 `retiredAgents`를 따로 준다.
+
+### 6.6.3 멈춘 일 알아차리기와 맡긴 일 카드 (AP-D034)
+
+- 위임 확인: `tools.ts`의 `delegate`는 scope와 다른 인자를 받으면 바로 거부한다. Core `instructionRecipients`가
+  지시를 받을 에이전트를 정하고, 모두 사람이 끈 상태면 지시를 만들지 않는다.
+- 사람 말 공유: store `listApplicableHumanInstructions`의 `agentWords`로 오케스트레이터는 그 프로젝트
+  에이전트에게 사람이 직접 한 agent scope 지시도 받는다.
+- 다시 실행: `ManagedAgentSupervisor`의 `autoRelaunch`(index.ts에서 켬)가 `reconcileAfterStart` 뒤와 에이전트가 쓴
+  `instruction.created`의 받는 쪽이 꺼져 있을 때 다시 실행한다. 에이전트마다 `RELAUNCH_COOLDOWN_MS`(10분)에 한
+  번이다.
+- 실시간 활동: runtime 채널 이벤트 `tool-activity {tool, target}`.
+  - Claude runner는 stream의 마지막 `tool_use`에서(`toolActivity`), Codex는 `item/started`에서(`codexActivity`)
+    보낸다.
+  - supervisor는 차례마다 `turnStartedAt`과 `activity`를 메모리에만 두고 차례가 끝나면 지운다.
+  - board가 프로젝트별 `working`과 `globalWorking`으로 준다.
+- 멈춤: `agent-platform/stalls.ts`의 `StallMonitor`가 60초마다 열린 작업이 있는 프로젝트를 본다.
+  - Core `projectProgress`는 최근 이벤트를 거꾸로 읽는다. 런타임 상태 보고와 멈춤 기록을 건너뛰고 처음 만난
+    이벤트가 마지막 진행(`lastProgressAt`)이다. 그 뒤의 `project.stalled` 기록이 지금의 멈춤이다. 단계는 가장 새
+    기록, `since`는 가장 오래된 기록에서 온다.
+  - 사람을 기다리는 것(열린 handoff, 승인 전 의도 계약, hold, 도구 승인)이나 일하는 에이전트가 있으면 건너뛴다.
+  - 진행 없이 `minutes`가 지나면 stage `orchestrator`를 기록한다(오케스트레이터 wakeup). 마지막 기록부터 다시
+    `minutes`가 지나면 `person`을 기록한다. `stallCause`가 작업 상태와 에이전트 상태로 원인을 고른다.
+  - board의 `stall`은 stage `person`일 때만 준다. `POST /api/agent/projects/:id/nudge`는 사람 actor의
+    `orchestrator` 기록이다.
+  - `person` 기록은 `WebPushNotificationService.notifyStall`로 기기에 간다. payload는 ID와 원인뿐이다
+    (`PushStallPayload`). service worker는 프로젝트마다 알림 하나(`naru:stall:<projectId>`)를 두고, 누르면
+    `NARU_PUSH_STALL` 메시지나 `naruStall` 주소로 관제실을 연다.
+- 맡긴 일: `GET /api/agent/jobs`는 Core `listJobs`다. 사람의 최근 목표 40개 가운데 작업이 있거나, 30분 안에
+  오케스트레이터가 받은 목표를 12개까지 준다. 작업마다 리뷰 종류별 최신 결과와 최신 Run을 붙인다.
+  - web: `AgentApp`이 board와 함께 3초마다 읽어 context의 `jobs`와 `working`으로 준다.
+  - `jobs-model.ts`(순수 함수)가 큰 그림 단계, 작업 번호(의존 순서), 작업별 작업·검증·병합, "지금" 줄을
+    정한다. `JobCards.tsx`가 그린다.
+  - 받은함 항목 `stall`은 승인 다음, 결정 앞에 둔다. 에이전트 목록 줄에는 실행 중인 도구가 한 줄 더 붙는다.

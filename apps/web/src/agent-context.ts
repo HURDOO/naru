@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentSession, AgentTaskDetail } from "@naru/contracts/naru-agent/v1";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { AgentIdentity, InboxItem, Presence } from "./agent-model";
-import type { AgentBoard, NaruApi } from "./api";
+import type { AgentBoard, AgentJob, AgentWorking, NaruApi } from "./api";
 
 /** What every agent screen reads and does, provided once by AgentApp (AP-D022). */
 export interface AgentAppContextValue {
@@ -15,6 +15,10 @@ export interface AgentAppContextValue {
   readonly currentProjectId: string;
   readonly agents: readonly AgentSession[];
   readonly inbox: readonly InboxItem[];
+  /** The person's goals and the tasks they became (AP-D034). */
+  readonly jobs: readonly AgentJob[];
+  /** Agents whose turn runs now, by agent session id (AP-D034). */
+  readonly working: ReadonlyMap<string, AgentWorking>;
   identity(agent: AgentSession): AgentIdentity;
   agentById(agentSessionId: string | null): AgentSession | undefined;
   projectName(projectId: string | null): string;

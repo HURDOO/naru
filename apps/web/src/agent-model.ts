@@ -4,6 +4,7 @@ import type {
   AgentTask,
   Handoff,
   IntentContract,
+  ProjectStall,
   SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
 import { approvalKindLabel, handoffKindLabel, roleName } from "./agent-labels";
@@ -190,6 +191,15 @@ export type InboxItem =
       readonly requester: AgentSession | undefined;
     }
   | {
+      /** Open work that stands still after Naru woke the orchestrator (AP-D034). */
+      readonly kind: "stall";
+      readonly key: string;
+      readonly projectId: string;
+      readonly stall: ProjectStall;
+      readonly task: AgentTask | undefined;
+      readonly orchestrator: AgentSession | undefined;
+    }
+  | {
       readonly kind: "contract";
       readonly key: string;
       readonly projectId: string;
@@ -198,8 +208,8 @@ export type InboxItem =
     };
 
 /**
- * Approvals first (an agent is stopped on them right now), then decisions oldest first, then
- * intent contracts waiting for approval.
+ * Approvals first (an agent is stopped on them right now), then work that stands still, then
+ * decisions oldest first, then intent contracts waiting for approval.
  */
 export function inboxItems(board: AgentBoard): InboxItem[] {
   const agents = boardAgents(board);
@@ -217,6 +227,18 @@ export function inboxItems(board: AgentBoard): InboxItem[] {
       projectId: agent.projectId,
       agent,
       approval,
+    });
+  }
+  for (const project of board.projects) {
+    const stall = project.stall;
+    if (stall === undefined || stall === null) continue;
+    items.push({
+      kind: "stall",
+      key: `stall:${project.projectId}:${stall.since}`,
+      projectId: project.projectId,
+      stall,
+      task: project.tasks.find((task) => task.id === stall.taskId),
+      orchestrator: project.agents.find((agent) => agent.role === "project-orchestrator"),
     });
   }
   for (const handoff of [...board.openHandoffs].sort((left, right) =>
@@ -277,6 +299,8 @@ export function inboxKindLabel(item: InboxItem): string {
       return "의도 계약 승인";
     case "handoff":
       return askKindLabel(item.handoff.kind);
+    case "stall":
+      return "진행 멈춤";
   }
 }
 
