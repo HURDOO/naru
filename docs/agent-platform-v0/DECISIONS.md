@@ -672,3 +672,14 @@
 - 화면 범위: 세로 목록과 새 위쪽 메뉴는 agent API를 제공하는 server(`NARU_AGENT_PLATFORM=1`)에서만 켠다.
   AP-T17·T20 화면과 같은 조건이다. 그렇지 않은 server는 지금 가로 탭 화면을 그대로 쓴다. 가로 탭 화면을
   언제 없앨지는 본선 병합 때 정한다.
+
+## AP-D032. 새 프로젝트는 기본 작업공간대로 Pane을 만들어 실행한다
+
+- 상태: accepted (2026-10-16, 사용자 결정). AP-T22 2단계에서 구현한다.
+- 배경: AP-T22 1단계는 새 프로젝트의 Pane을 지금처럼 `NARU_DEFAULT_AGENT_PANE_KIND`대로 만든다(Codex instance는
+  Main Codex, Quick Codex, Dev Terminal). 그래서 "기본" 작업공간의 Claude 자리는 비고 Quick Codex는 목록에만
+  있었다.
+- 결정: 새 프로젝트는 기본 작업공간(왼쪽 Claude, 오른쪽 메인 Codex, 아래 터미널)에 맞춰 세 Pane을 만들고
+  실행한다.
+- 구현 때 정할 것(제안 기본값): 실행 파일이 설정되지 않은 런타임의 자리는 빈 자리로 남기고 실행하지 않는다.
+  이미 있는 프로젝트의 Pane은 바꾸지 않는다(AP-D029).

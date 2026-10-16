@@ -411,7 +411,11 @@
     §6.6.2. agent API가 있는 server에서만 켠다.
   - 검증: [validation/web-ui.md](validation/web-ui.md)의 AP-T22 1단계. lint, typecheck, vitest 전체 통과.
   - 남음:
-    - 2단계: 대화를 에이전트 Pane으로, 맡긴 일 작업공간.
+    - 2단계: 대화를 에이전트 Pane으로, 맡긴 일 작업공간, 새 프로젝트를 기본 작업공간대로 만들어 실행
+      (AP-D032).
     - 내 Pane에 대한 쓰기 요청과 허락(AP-D030): 새 MCP 경로가 필요하다.
     - 편집의 배치 틀 고르기.
-    - 테스트 앱 반영: 배포 때 v21 마이그레이션 승인이 필요하다.
+  - 테스트 앱 반영: 2026-10-16 사용자 승인으로 naru-next를 build `41be1ad`로 올렸다(receipt 7). contracts·domain이
+    바뀌어 그 instance의 Host·Gateway·Naru가 모두 재시작했고, 에이전트는 다시 실행해야 한다. DB는 v21로
+    마이그레이션했고(업그레이드 전 자동 백업), 프로젝트 넷 모두 "내 배치"와 "기본"이 생겼다. status healthy,
+    doctor 25/25. 운영 `/naru`는 그대로다.
