@@ -332,7 +332,8 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   에이전트에게 사람이 직접 한 agent scope 지시도 받는다.
 - 다시 실행: `ManagedAgentSupervisor`의 `autoRelaunch`(index.ts에서 켬)가 `reconcileAfterStart` 뒤와 에이전트가 쓴
   `instruction.created`의 받는 쪽이 꺼져 있을 때 다시 실행한다. 에이전트마다 `RELAUNCH_COOLDOWN_MS`(10분)에 한
-  번이다.
+  번이다. Claude runner는 이어 띄울 대화에 저장된 메시지가 없으면 새 대화로 시작한다(`resumableRef`).
+  차례를 한 번도 받지 않은 에이전트는 ID만 있고 저장된 대화가 없다.
 - 실시간 활동: runtime 채널 이벤트 `tool-activity {tool, target}`.
   - Claude runner는 stream의 마지막 `tool_use`에서(`toolActivity`), Codex는 `item/started`에서(`codexActivity`)
     보낸다.

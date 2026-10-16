@@ -5,7 +5,7 @@ import {
   type NaruMessage,
   type RunnerPlan,
 } from "./agent-runtime/channel-protocol.js";
-import { ClaudeRunner } from "./agent-runtime/claude/runner.js";
+import { ClaudeRunner, resumableRef } from "./agent-runtime/claude/runner.js";
 import { loadClaudeSdk } from "./agent-runtime/claude/sdk-port.js";
 import { RunnerChannelClient } from "./agent-runtime/runner-channel.js";
 
@@ -99,9 +99,14 @@ async function start(plan: RunnerPlan): Promise<void> {
   starting = true;
   try {
     const sdk = await loadClaudeSdk(plan.sdkEntry);
+    const resumeRef = await resumableRef(sdk, plan.resumeRef);
+    if (resumeRef !== plan.resumeRef) {
+      console_("no saved conversation to resume · starting a new one");
+    }
     // Claude inherits the Host's environment policy; the plan adds to it, never the reverse.
     runner = new ClaudeRunner(sdk, {
       ...plan,
+      resumeRef,
       environment: { ...inheritedEnvironment(), ...plan.environment },
     });
     runner.onEvent((event) => {

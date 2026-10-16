@@ -214,3 +214,11 @@
   - 실제 기기의 멈춤 알림: service worker 단위 테스트로만 확인했다.
   - 실제 모델 오케스트레이터가 지침대로 한국어로 답하고 `project.stalled`에 움직이는지: 테스트 앱에서 본다
     (MANUAL_TESTS 12).
+- 테스트 앱 적용 뒤(build `naru-next-edc95b4`, DB v22, doctor 25/25): 재시작 직전 떠 있던 에이전트 6개를 Naru가
+  다시 실행했다. 그중 리뷰어 하나는 3초 만에 끝나 `failed`가 됐다.
+  - 원인: 한 번도 차례를 받지 않은 에이전트였다. Claude는 대화에 ID를 먼저 붙이고 첫 차례에야 저장한다. 그래서
+    저장된 대화가 없는 ID를 이어 띄우려다 Claude가 바로 끝났다. SDK `getSessionMessages`로 확인하니 그 ID는
+    메시지 0개, 살아 있는 리뷰어는 1개 이상이었다.
+  - 고침: Claude runner는 이어 띄우기 전에 그 대화에 저장된 메시지가 있는지 보고, 없으면 새 대화로 시작한다
+    (`resumableRef`). 읽기에 실패하면 전처럼 이어 띄운다. `agent-runtime-claude-runner.test.ts`.
+  - 이 수정은 다음 테스트 앱 업그레이드에 들어간다.

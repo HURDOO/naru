@@ -4,6 +4,7 @@ import {
   approvalSummary,
   ClaudeRunner,
   type ClaudeRunnerPlan,
+  resumableRef,
 } from "../src/agent-runtime/claude/runner.js";
 import type {
   ClaudeCanUseTool,
@@ -178,6 +179,28 @@ describe("Claude SDK runner", () => {
     // `init` with the same conversation is not reported twice.
     expect(events.filter((event) => event.type === "conversation-ready")).toHaveLength(1);
     await runner.stop();
+  });
+
+  it("starts a new conversation when the one to resume was never saved", async () => {
+    const saved = (count: number | Error): ClaudeSdkPort => ({
+      query: () => {
+        throw new Error("not used");
+      },
+      getSessionMessages: (sessionId, options) => {
+        expect({ sessionId, ...options }).toEqual({ sessionId: "session-resumed", limit: 1 });
+        return count instanceof Error
+          ? Promise.reject(count)
+          : Promise.resolve(Array.from({ length: count }, () => ({})));
+      },
+    });
+    // An agent that never had a turn: Claude named the conversation but saved nothing.
+    await expect(resumableRef(saved(0), "session-resumed")).resolves.toBeNull();
+    await expect(resumableRef(saved(1), "session-resumed")).resolves.toBe("session-resumed");
+    // A failed read is no evidence that nothing was saved.
+    await expect(resumableRef(saved(new Error("fixture")), "session-resumed")).resolves.toBe(
+      "session-resumed",
+    );
+    await expect(resumableRef(saved(0), null)).resolves.toBeNull();
   });
 
   it("holds a tool call for a Naru approval and reports failures and interrupts honestly", async () => {

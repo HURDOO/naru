@@ -283,6 +283,21 @@ export class ClaudeRunner {
   }
 }
 
+/**
+ * The conversation a launch can resume. Claude names a conversation before it saves anything, so an
+ * agent that never had a turn keeps a ref with nothing behind it, and resuming that ends the runtime
+ * at once. Such an agent starts a new conversation instead. A failed read proves nothing; resume.
+ */
+export async function resumableRef(
+  port: ClaudeSdkPort,
+  resumeRef: string | null,
+): Promise<string | null> {
+  if (resumeRef === null) return null;
+  // No `dir`: the SDK looks in every project directory, as a resume would find it anywhere.
+  const saved = await port.getSessionMessages(resumeRef, { limit: 1 }).catch(() => null);
+  return saved === null || saved.length > 0 ? resumeRef : null;
+}
+
 /** The last tool call an assistant message makes, if any. */
 function lastToolUse(
   message: ClaudeSdkMessage,
