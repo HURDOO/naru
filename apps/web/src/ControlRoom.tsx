@@ -593,32 +593,52 @@ function CleanupSheet({
 }): React.JSX.Element {
   const app = useAgentApp();
   const [busy, setBusy] = useState(false);
-  const count = agents.length + processes.length;
+  // Every item starts chosen; one the person wants to keep (e.g. to run it again) is unticked.
+  const [skipped, setSkipped] = useState<ReadonlySet<string>>(() => new Set());
+  const chosenAgents = agents.filter((agent) => !skipped.has(agent.id));
+  const chosenProcesses = processes.filter((process) => !skipped.has(process.id));
+  const count = chosenAgents.length + chosenProcesses.length;
+  const toggle = (id: string) =>
+    setSkipped((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const row = (id: string, icon: React.ReactNode, name: string, detail: string) => (
+    <li key={id}>
+      <label>
+        <input type="checkbox" checked={!skipped.has(id)} onChange={() => toggle(id)} />
+        {icon}
+        <span>{name}</span>
+        <span className="ag-muted">{detail}</span>
+      </label>
+    </li>
+  );
   return (
     <Sheet title="꺼진 에이전트 정리" onClose={onClose}>
       <p className="ag-muted">
-        아래 {count}개를 관제실과 작업공간 목록에서 없애고, 남아 있는 Pane을 닫습니다. 지시, 작업,
-        대화 기록은 그대로 남습니다. 정리한 에이전트는 다시 실행하지 않습니다.
+        고른 것을 관제실과 작업공간 목록에서 없애고, 남아 있는 Pane을 닫습니다. 지시, 작업, 대화
+        기록은 그대로 남습니다. 정리한 에이전트는 다시 실행하지 않으니, 계속 쓸 에이전트는 체크를
+        빼세요.
       </p>
       <ul className="ag-cleanup-list">
-        {agents.map((agent) => (
-          <li key={agent.id}>
-            <Avatar identity={app.identity(agent)} size={22} presence={app.presence(agent)} />
-            <span>{app.identity(agent).name}</span>
-            <span className="ag-muted">
-              {app.projectName(agent.projectId)} · {presenceLabel(app.presence(agent))}
-            </span>
-          </li>
-        ))}
-        {processes.map((process) => (
-          <li key={process.id}>
-            <Icon name="terminal" size={18} />
-            <span>{process.purpose}</span>
-            <span className="ag-muted">
-              {app.projectName(process.projectId)} · 프로세스 {processStatusLabel(process.status)}
-            </span>
-          </li>
-        ))}
+        {agents.map((agent) =>
+          row(
+            agent.id,
+            <Avatar identity={app.identity(agent)} size={22} presence={app.presence(agent)} />,
+            app.identity(agent).name,
+            `${app.projectName(agent.projectId)} · ${presenceLabel(app.presence(agent))} · ${ago(agent.updatedAt, app.now)}`,
+          ),
+        )}
+        {processes.map((process) =>
+          row(
+            process.id,
+            <Icon name="terminal" size={18} />,
+            process.purpose,
+            `${app.projectName(process.projectId)} · 프로세스 ${processStatusLabel(process.status)}`,
+          ),
+        )}
       </ul>
       <div className="ag-sheet-actions">
         <button className="ag-button" type="button" onClick={onClose}>
@@ -628,14 +648,14 @@ function CleanupSheet({
           className="ag-button"
           data-variant="primary"
           type="button"
-          disabled={busy || !app.mutationAllowed}
+          disabled={busy || count === 0 || !app.mutationAllowed}
           onClick={() => {
             setBusy(true);
             void app
               .act(`${count}개를 정리했습니다.`, () =>
                 app.api.cleanupAgents(
-                  agents.map((agent) => agent.id),
-                  processes.map((process) => process.id),
+                  chosenAgents.map((agent) => agent.id),
+                  chosenProcesses.map((process) => process.id),
                 ),
               )
               .then((done) => {

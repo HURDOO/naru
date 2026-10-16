@@ -3157,21 +3157,28 @@ button.ag-tool-call:hover {
   list-style: none;
 }
 
-.ag-cleanup-list li {
+.ag-cleanup-list label {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
 }
 
-.ag-cleanup-list li > span:nth-of-type(1),
-.ag-cleanup-list li > span:nth-of-type(2) {
+.ag-cleanup-list input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.ag-cleanup-list label > span:not(.ag-avatar) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ag-cleanup-list li > .ag-muted {
+.ag-cleanup-list label > .ag-muted {
   margin-left: auto;
   font-size: 12px;
 }
