@@ -364,5 +364,6 @@
   - 서버: `GET /api/agent/board`, `GET /api/agent/agents/:id/instructions`(읽기, 추가형).
   - 검증: [validation/web-ui.md](validation/web-ui.md)의 AP-T20. 격리 sandbox에서 관제실 입력부터 팀
     구성, 승인, 결정, 이어받기까지 실제 경로로 확인했다. vitest 전체, lint, typecheck, format 통과.
-  - 남음: 실제 모델 이력의 표시는 테스트 앱(naru-next)에서 사용자가 확인한다(MANUAL_TESTS 10). 테스트
-    앱에 올리는 것은 별도 승인이다.
+  - 테스트 앱 반영: 2026-10-16 사용자 승인으로 naru-next를 build `6482603`으로 upgrade했다(receipt 2). Naru만
+    재시작했고 그 instance의 Host·Gateway와 운영 `/naru`는 그대로다. status healthy, doctor 25/25다.
+  - 남음: 실제 모델 이력의 표시는 테스트 앱에서 사용자가 확인한다(MANUAL_TESTS 10).
