@@ -15,6 +15,7 @@ import type { RunnerPlan } from "../channel-protocol.js";
 import type { RunnerEnvironment, RunnerLauncher } from "../supervisor.js";
 import { orchestrationGuidance } from "../orchestration-skill.js";
 import { naruClaudeHookSettings } from "./hook-settings.js";
+import { cliPermissionMode, personPermissionMode } from "./permission-mode.js";
 
 const SYSTEM = { kind: "system" } as const;
 const TUI_POLL_MS = 200;
@@ -186,6 +187,8 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
         "--mcp-config",
         JSON.stringify({ mcpServers: this.#mcpServers(capability) }),
         "--strict-mcp-config",
+        "--permission-mode",
+        cliPermissionMode(personPermissionMode(context.projectPath)),
       ],
       environment: base.environment,
     };
@@ -212,8 +215,9 @@ export class ClaudeAgentPanes implements AgentPaneLaunchResolver, RunnerLauncher
       }),
       mcpServers: this.#mcpServers(capability),
       instructions: roleInstructions(agent),
-      // No permission mode: Claude starts in the person's own mode (their settings' defaultMode,
-      // else auto), like their own Claude. Naru does not narrow it per role (AP-D023).
+      // The person's own mode, explicitly: a resumed conversation would otherwise keep its old
+      // mode. Naru does not narrow it per role (AP-D023, AP-D024).
+      permissionMode: personPermissionMode(context.projectPath),
       environment: {},
     };
   }

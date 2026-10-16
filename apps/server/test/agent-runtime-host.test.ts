@@ -51,6 +51,7 @@ export function query({ prompt, options }) {
     runtimeToken: options.env.NARU_RUNTIME_TOKEN ?? null,
     bootstrap: options.env.NARU_CLAUDE_HOOK_BOOTSTRAP ?? null,
     guidance: options.systemPrompt.append.includes("## Working through Naru"),
+    permissionMode: options.permissionMode ?? null,
   }) + "\\n");
   async function* run() {
     yield { type: "system", subtype: "init", session_id: options.resume ?? "${SESSION}" };
@@ -365,6 +366,7 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     await second.supervisor.launch(worker);
     await until(() => status() === "idle", "resumed");
     expect(env.sdkCalls().at(-1)).toMatchObject({ resume: SESSION });
+    expect(env.sdkCalls().at(-1)?.permissionMode).toMatch(/^(auto|default|acceptEdits|plan)$/u);
     expect(env.core.getAgentSession(HUMAN, worker).paneId).toBe(pane!.id);
     expect(env.repository.getWorkspace(env.project.id).panes).toHaveLength(4);
     second.supervisor.stop(worker);
@@ -394,6 +396,10 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
       ]),
     );
     expect(tuiArgs?.join(" ")).toContain("--setting-sources user,project,local");
+    // Both forms state the person's own permission mode; a resumed TUI would keep an old one.
+    expect(tuiArgs?.[tuiArgs.indexOf("--permission-mode") + 1]).toMatch(
+      /^(auto|manual|acceptEdits|plan)$/u,
+    );
     // The TUI form gets the same naru-orchestration guidance as the runner.
     expect(tuiArgs?.[tuiArgs.indexOf("--append-system-prompt") + 1]).toContain("## Role: worker");
     expect(() => supervisor.sendTurn(worker, "late", "orchestrator", 1)).toThrow();
@@ -403,6 +409,7 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     expect(back).toMatchObject({ writer: "orchestrator", generation: 3, phase: "active" });
     expect(agent()).toMatchObject({ launchMode: "runner", conversationWriter: "orchestrator" });
     expect(env.sdkCalls().at(-1)).toMatchObject({ resume: SESSION });
+    expect(env.sdkCalls().at(-1)?.permissionMode).toMatch(/^(auto|default|acceptEdits|plan)$/u);
     supervisor.sendTurn(worker, "after the TUI", "orchestrator", back.generation);
     await until(() => agent().status === "idle", "turn after switching back");
 

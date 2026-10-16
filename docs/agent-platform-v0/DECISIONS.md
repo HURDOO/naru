@@ -496,3 +496,20 @@
 - 계약: `AgentApprovalDecision`에 `approve-session`, 승인 대기 항목에 `sessionAllow`를 더한다(추가형).
 - 영향: 승인 요청이 크게 줄어든다. auto 모드의 판단 모델이 위험하다고 본 동작은 에이전트에게 거부로
   돌아가고, 에이전트가 사람에게 넘길지 판단한다.
+
+## AP-D024. 사용자 권한 모드를 Naru가 읽어 명시적으로 넘긴다
+
+- 상태: accepted (2026-10-16). AP-D023의 구현 방법을 바로잡는다. 결정의 내용(사용자 자신의 모드)은 같다.
+- 배경: AP-D023은 권한 모드를 넘기지 않으면 Claude가 사용자 설정이나 auto로 시작한다고 보았다. 실제
+  SDK로 확인하니 아니었다(`experiments/naru-agent-spikes/auto-mode-probe`, 저장소 밖).
+  - 새 세션에 auto를 넘기면 auto로 시작한다. 명령 3개를 묻지 않았다.
+  - 이어 가는(resume) 세션에 모드를 넘기지 않으면 그 대화의 이전 모드(default)를 그대로 쓴다.
+  - 이어 가는 세션에 auto를 넘기면 auto가 된다.
+  - 테스트 앱의 에이전트는 모두 이어 가는 세션이라 계속 default였고, 승인을 계속 물었다.
+- 결정:
+  - Naru가 사용자 모드를 읽어 runner와 TUI 양쪽에 명시적으로 넘긴다. 읽는 순서는 project의
+    `.claude/settings.local.json`, `.claude/settings.json`, 사용자 `~/.claude/settings.json`의
+    `permissions.defaultMode`이고, 없으면 auto다. CLI의 `manual`은 SDK의 `default`와 같다.
+  - `bypassPermissions`는 Naru가 적용하지 않는다. `dontAsk`는 Host가 실행하는 runner의 plan이 아직
+    받지 않는다. 둘 다 알 수 없는 값과 같이 auto로 둔다.
+  - 이미 떠 있는 에이전트는 다시 시작할 때 새 모드를 받는다.
