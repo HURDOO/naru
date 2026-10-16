@@ -1,7 +1,7 @@
 import type { AgentSession } from "@naru/contracts/naru-agent/v1";
 import { useState } from "react";
 import { useAgentApp } from "./agent-context";
-import { clock, presenceLabel, type Tone } from "./agent-model";
+import { clock, presenceLabel, projectOrchestrator, type Tone } from "./agent-model";
 import { Avatar, Icon, Pill } from "./agent-ui";
 import type { AgentJob, AgentJobTask, AgentWorking } from "./api";
 import {
@@ -112,7 +112,7 @@ function JobCard({
     job.projectIds.includes(project.projectId),
   );
   const orchestrators = projects
-    .map((project) => project.agents.find((agent) => agent.role === "project-orchestrator"))
+    .map((project) => projectOrchestrator(project))
     .filter((agent): agent is AgentSession => agent !== undefined);
   const main = app.board.globalAgents.find((agent) => agent.role === "main-orchestrator");
   const managers = orchestrators.length > 0 ? orchestrators : main === undefined ? [] : [main];
@@ -380,7 +380,7 @@ function StallBanner({
   const app = useAgentApp();
   const stall = project.stall;
   if (stall === undefined || stall === null) return null;
-  const orchestrator = project.agents.find((agent) => agent.role === "project-orchestrator");
+  const orchestrator = projectOrchestrator(project);
   const task = job.tasks.find((entry) => entry.task.id === stall.taskId)?.task;
   const number = task === undefined ? undefined : numbers.get(task.id);
   return (

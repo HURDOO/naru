@@ -51,6 +51,12 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
    두 번 처리되지 않는다(INV-07).
 5. orchestrator wakeup은 자기 cursor 이후의 이벤트를 범위(global 또는 project)로 걸러 한 묶음으로
    전달한다. 사람이 hold 중인 대상은 AP-D005를 따른다.
+   - 받는 쪽(AP-D037, `wakeups.ts`의 `relevantTo`): 프로젝트 오케스트레이터는 자기 프로젝트 이벤트만 받고
+     지시는 자기와 프로젝트에 온 것만 받는다. 메인은 전체·자기 지시, 자기 질문의 답, 자기 hold, 프로젝트
+     오케스트레이터의 실패·멈춤·상태 모름만 받는다. 작업자·리뷰어는 Core `eventConcernsAgent`로 자기 일만 받는다.
+     store의 프로젝트 이벤트 조회는 전체 이벤트를 함께 돌려주므로 여기서 거른다.
+   - cursor는 차례가 끝난 것을 볼 때 옮긴다(최소 한 번 전달). 보낸 위치는 `orchestrator-sent:<id>` cursor로 따로
+     남기고, 그 안의 이벤트를 다시 보내면 `resent`로 표시해 깨우기 메시지에 다시 보냈다고 적는다.
 
 ## 4. 행위자와 권한
 

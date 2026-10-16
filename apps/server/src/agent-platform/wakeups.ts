@@ -15,6 +15,11 @@ export interface WakeupBatch {
   readonly events: readonly AgentEvent[];
   readonly fromSeq: number;
   readonly toSeq: number;
+  /**
+   * Some of these events were sent before and the turn's end was never seen (a restart, or a turn
+   * past the timeout; AP-D037): the agent may have acted on them already.
+   */
+  readonly resent?: boolean;
 }
 
 export interface OrchestratorInvoker {
@@ -36,15 +41,6 @@ export type WakeupState =
   | { readonly kind: "in-flight"; readonly toSeq: number; readonly since: number }
   | { readonly kind: "held" }
   | { readonly kind: "throttled"; readonly until: number };
-
-/** Event types that reach the global main orchestrator; projects stay with their own orchestrator. */
-const MAIN_ORCHESTRATOR_EVENTS: ReadonlySet<AgentEventType> = new Set([
-  "instruction.created",
-  "handoff.requested",
-  "handoff.resolved",
-  "intent_contract.approved",
-  "agent_session.hold_released",
-]);
 
 export class OrchestratorWakeups {
   readonly #core: AgentPlatformCore;
@@ -182,8 +178,18 @@ export class OrchestratorWakeups {
     }
     entry.inFlight = { toSeq, since: now };
     entry.deliveries = [...entry.deliveries.filter((at) => now - at < 3_600_000), now];
+    // Delivery stays at-least-once; a batch sent again after a restart says so.
+    const sent = this.#core.getCursor(sentId(agentSessionId));
+    const resent = events.some((event) => event.seq <= sent);
     try {
-      await this.#invoker.deliver({ orchestrator: session, events, fromSeq: afterSeq, toSeq });
+      await this.#invoker.deliver({
+        orchestrator: session,
+        events,
+        fromSeq: afterSeq,
+        toSeq,
+        ...(resent ? { resent } : {}),
+      });
+      this.#core.advanceCursor(sentId(agentSessionId), toSeq);
     } catch {
       // Not accepted: keep the cursor so the same batch is retried after the interval.
       entry.inFlight = null;
@@ -217,6 +223,11 @@ export function consumerId(agentSessionId: string): string {
   return `orchestrator:${agentSessionId}`;
 }
 
+/** How far events were sent to the agent, whether or not its turn was seen to end. */
+function sentId(agentSessionId: string): string {
+  return `orchestrator-sent:${agentSessionId}`;
+}
+
 /** Runtime liveness states worth a turn; routine active/idle churn is not. */
 const NOTABLE_AGENT_STATES = new Set<unknown>(["failed", "unknown", "stopped"]);
 
@@ -244,6 +255,12 @@ function retired(core: AgentPlatformCore, agentSessionId: string): boolean {
   }
 }
 
+/**
+ * Who wakes for what (AP-D037): every agent only for its own scope. A project orchestrator follows
+ * its own project, never the person's global goals or another project; the main orchestrator follows
+ * what is addressed to it and the project orchestrators it looks after; a working agent only what
+ * is addressed to it.
+ */
 function relevantTo(
   orchestrator: AgentSession,
   event: AgentEvent,
@@ -260,23 +277,44 @@ function relevantTo(
     // The person cleaning an agent up, or bringing it back, is not something to act on; neither is
     // what a cleaned-up agent's runtime reports as it ends.
     if (event.data.retired !== undefined || retired(core, event.subjectId)) return false;
-    return event.subjectId !== orchestrator.id && NOTABLE_AGENT_STATES.has(event.data.status);
+    if (event.subjectId === orchestrator.id || !NOTABLE_AGENT_STATES.has(event.data.status)) {
+      return false;
+    }
+    // Workers are their project orchestrator's; project orchestrators are the main one's.
+    return orchestrator.role === "main-orchestrator"
+      ? roleOf(core, event.subjectId) === "project-orchestrator"
+      : event.projectId === orchestrator.projectId;
   }
-  if (orchestrator.role !== "main-orchestrator") {
+  if (orchestrator.role === "project-orchestrator") {
+    // Its own project only: the person's global goals reach it through the main orchestrator.
+    if (event.projectId !== orchestrator.projectId) return false;
     // Its own registration is its first turn: it reads the work waiting for it.
     if (event.type === "agent_session.registered") return event.subjectId === orchestrator.id;
+    // Instructions to it or its project; words to another agent are that agent's (it reads them).
+    if (event.type === "instruction.created")
+      return core.eventConcernsAgent(event, orchestrator.id);
     if (INFORMATIONAL_EVENTS.has(event.type)) return false;
     if (event.type === "shared_process.updated")
       return NOTABLE_PROCESS_STATES.has(event.data.status);
     return true;
   }
-  // The main orchestrator summarises across projects; it is not woken by every project detail.
+  // The main orchestrator: what is addressed to it, not every project detail or question.
   switch (event.type) {
     case "instruction.created":
-      return event.projectId === null;
+    case "handoff.resolved":
+    case "handoff.cancelled":
+      return core.eventConcernsAgent(event, orchestrator.id);
     case "agent_session.hold_released":
       return event.subjectId === orchestrator.id;
     default:
-      return MAIN_ORCHESTRATOR_EVENTS.has(event.type);
+      return false;
+  }
+}
+
+function roleOf(core: AgentPlatformCore, agentSessionId: string): AgentSession["role"] | null {
+  try {
+    return core.getAgentSession({ kind: "system" }, agentSessionId).role;
+  } catch {
+    return null;
   }
 }

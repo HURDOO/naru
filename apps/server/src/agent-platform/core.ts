@@ -1046,6 +1046,20 @@ export class AgentPlatformCore {
     },
   ): AgentSession {
     const agent = this.#authorize(context.actor, "agent.spawn", input.projectId);
+    // One orchestrator per project (AP-D037): one that is down comes back when work is sent to it.
+    if (
+      agent?.role === "main-orchestrator" &&
+      input.role === "project-orchestrator" &&
+      !this.commandRecorded(context.actor, context.idempotencyKey) &&
+      this.#store
+        .listAgentSessions(input.projectId)
+        .some((session) => session.role === "project-orchestrator")
+    ) {
+      throw new AgentPlatformError(
+        "AGENT_INVALID_STATE",
+        "This project already has an orchestrator. Delegate to it; Naru starts it again if it is down.",
+      );
+    }
     return this.registerAgentSession(context, {
       projectId: input.projectId,
       role: input.role,
@@ -2503,9 +2517,9 @@ export class AgentPlatformCore {
   // Events ---------------------------------------------------------------------------------------
 
   /**
-   * Whether an event is addressed to a working agent (worker, reviewer, specialist): work delegated
-   * to it or its tasks, a change to its task, a review of it, its handoff answered, its hold or its
-   * process handed back. Naru wakes the agent for these; orchestrators follow their whole scope.
+   * Whether an event is addressed to this agent: work delegated to it (an instruction to it, its
+   * task, its project for a project orchestrator, global for the main orchestrator), a change to its
+   * task, a review of it, its handoff answered, its hold or its process handed back (AP-D037).
    */
   eventConcernsAgent(event: AgentEvent, agentSessionId: string): boolean {
     const assignedTo = (taskId: string | null) =>
@@ -2514,7 +2528,13 @@ export class AgentPlatformCore {
       case "instruction.created": {
         const scope = this.#store.getInstruction(event.subjectId)?.scope;
         if (scope?.kind === "agent") return scope.agentSessionId === agentSessionId;
-        return scope?.kind === "task" && assignedTo(scope.taskId);
+        if (scope?.kind === "task") return assignedTo(scope.taskId);
+        // A project's instructions go to its orchestrator, global ones to the main orchestrator.
+        const agent = this.#store.getAgentSession(agentSessionId);
+        if (scope?.kind === "project") {
+          return agent?.role === "project-orchestrator" && agent.projectId === scope.projectId;
+        }
+        return scope?.kind === "global" && agent?.role === "main-orchestrator";
       }
       case "task.created":
       case "task.updated":

@@ -10,6 +10,7 @@ import {
   isLive,
   PRESENCE_ORDER,
   presenceLabel,
+  projectOrchestrator,
   startOfDay,
   taskProgress,
   taskState,
@@ -357,7 +358,7 @@ function Lanes({ compact = false }: { readonly compact?: boolean }): React.JSX.E
 function OrchestratorChip({ project }: { readonly project: AgentBoardProject }): React.JSX.Element {
   const app = useAgentApp();
   const [runtime, setRuntime] = useState<Runtime>("claude");
-  const orchestrator = project.agents.find((agent) => agent.role === "project-orchestrator");
+  const orchestrator = projectOrchestrator(project);
   if (orchestrator !== undefined) {
     const presence = app.presence(orchestrator);
     return (

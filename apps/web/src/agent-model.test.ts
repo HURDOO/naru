@@ -11,6 +11,7 @@ import {
   isLive,
   layoutGraph,
   presenceOf,
+  projectOrchestrator,
   taskState,
   taskWaitingFor,
   timelineRows,
@@ -103,6 +104,28 @@ describe("agent view model", () => {
     expect(
       agentIdentity(agent(4, { role: "main-orchestrator", projectId: null }), all, name).name,
     ).toBe("메인 오케스트레이터");
+  });
+
+  it("tells two orchestrators of one project apart and shows the one working (AP-D037)", () => {
+    const name = () => "blog";
+    const older = agent(1, { role: "project-orchestrator", updatedAt: "2026-10-16T02:00:00.000Z" });
+    const newer = agent(2, { role: "project-orchestrator", updatedAt: "2026-10-16T01:30:00.000Z" });
+    expect(agentIdentity(older, [older], name).name).toBe("blog 오케스트레이터");
+    expect(agentIdentity(older, [older, newer], name).name).toBe("blog 오케스트레이터 1");
+    expect(agentIdentity(newer, [older, newer], name).name).toBe("blog 오케스트레이터 2");
+    // A cleaned-up one no longer counts.
+    const retired = { ...older, retiredAt: "2026-10-16T03:00:00.000Z" };
+    expect(agentIdentity(newer, [retired, newer], name).name).toBe("blog 오케스트레이터");
+
+    expect(projectOrchestrator({ agents: [older] })?.id).toBe(older.id);
+    // The one working now, else the one active most recently.
+    expect(projectOrchestrator({ agents: [older, newer] })?.id).toBe(older.id);
+    expect(
+      projectOrchestrator({
+        agents: [older, newer],
+        working: [{ agentSessionId: newer.id, turnStartedAt: null, activity: null }],
+      })?.id,
+    ).toBe(newer.id);
   });
 
   it("puts approvals first, then stalls, decisions oldest first, intent contracts, finished jobs", () => {

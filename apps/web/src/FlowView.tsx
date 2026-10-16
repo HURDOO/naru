@@ -13,6 +13,7 @@ import {
   ago,
   clock,
   isLive,
+  projectOrchestrator,
   type Tone,
   taskProgress,
   taskState,
@@ -62,7 +63,7 @@ export function FlowView({
     app.board.projects.find((candidate) => candidate.projectId === chosen) ?? emptyProject(chosen);
   const task = project.tasks.find((candidate) => candidate.id === taskId);
   const progress = taskProgress(project.tasks);
-  const orchestrator = project.agents.find((agent) => agent.role === "project-orchestrator");
+  const orchestrator = projectOrchestrator(project);
   const name = app.projectName(project.projectId);
   return (
     <div className="ag-flow" data-drawer={task !== undefined && !phone}>
@@ -613,7 +614,7 @@ function InstructSheet({
   const [text, setText] = useState("");
   const [runtime, setRuntime] = useState<"claude" | "codex">("claude");
   const [busy, setBusy] = useState(false);
-  const orchestrator = project.agents.find((agent) => agent.role === "project-orchestrator");
+  const orchestrator = projectOrchestrator(project);
   return (
     <Sheet title={`${app.projectName(project.projectId)}에 지시`} onClose={onClose}>
       <form

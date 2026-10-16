@@ -832,6 +832,12 @@ export function wakeupText(batch: WakeupBatch): string {
   return [
     "[Naru] New events since your last turn. Read details with the naru tools before acting;",
     "the latest user instruction wins over earlier plans.",
+    ...(batch.resent === true
+      ? [
+          "Naru did not see your last turn end (a restart or a very long turn), so some of these were",
+          "sent before: check the current state and do not repeat what you already did.",
+        ]
+      : []),
     ...lines,
   ].join("\n");
 }

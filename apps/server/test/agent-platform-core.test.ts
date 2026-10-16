@@ -793,8 +793,18 @@ describe("shared processes, holds and spawned agents (AP-D005, AP-D006)", () => 
         }),
       "AGENT_ROLE_DENIED",
     );
+    // One orchestrator per project (AP-D037): the main orchestrator delegates to the existing one.
+    expectCode(
+      () =>
+        fixture.core.spawnAgentSession(fixture.ctx(agent(main)), {
+          projectId: fixture.projectId,
+          role: "project-orchestrator",
+        }),
+      "AGENT_INVALID_STATE",
+    );
+    const other = fixture.repository.createProject("/tmp/naru-core-other", "other");
     const fromMain = fixture.core.spawnAgentSession(fixture.ctx(agent(main)), {
-      projectId: fixture.projectId,
+      projectId: other.id,
       role: "project-orchestrator",
     });
     expect(fromMain.parentAgentSessionId).toBe(main);

@@ -80,8 +80,19 @@ export function agentIdentity(
     return { name: "메인 오케스트레이터", glyph: "◆", color: ORCHESTRATOR_COLOR };
   }
   if (agent.role === "project-orchestrator") {
+    // A project should have one; when it has more (AP-D037), numbers tell them apart.
+    const peers = agents
+      .filter(
+        (peer) => peer.projectId === agent.projectId && peer.role === agent.role && !peer.retiredAt,
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      );
+    const index = peers.findIndex((peer) => peer.id === agent.id);
+    const suffix = peers.length > 1 && index >= 0 ? ` ${index + 1}` : "";
     return {
-      name: `${projectName(agent.projectId)} 오케스트레이터`,
+      name: `${projectName(agent.projectId)} 오케스트레이터${suffix}`,
       glyph: "◆",
       color: ORCHESTRATOR_COLOR,
     };
@@ -246,7 +257,7 @@ export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): I
       projectId: project.projectId,
       stall,
       task: project.tasks.find((task) => task.id === stall.taskId),
-      orchestrator: project.agents.find((agent) => agent.role === "project-orchestrator"),
+      orchestrator: projectOrchestrator(project),
     });
   }
   for (const handoff of [...board.openHandoffs].sort((left, right) =>
@@ -275,7 +286,7 @@ export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): I
       key: `contract:${project.pendingIntentContract.id}`,
       projectId: project.projectId,
       contract: project.pendingIntentContract,
-      orchestrator: project.agents.find((agent) => agent.role === "project-orchestrator"),
+      orchestrator: projectOrchestrator(project),
     });
   }
   for (const job of jobs) {
@@ -288,6 +299,22 @@ export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): I
     });
   }
   return items;
+}
+
+/**
+ * The orchestrator to show for a project. A project should have one (AP-D037); when an older one came
+ * back next to a newer one, the one working now, else the one active most recently.
+ */
+export function projectOrchestrator(
+  project: Pick<AgentBoardProject, "agents" | "working">,
+): AgentSession | undefined {
+  const orchestrators = project.agents.filter((agent) => agent.role === "project-orchestrator");
+  if (orchestrators.length < 2) return orchestrators[0];
+  const working = new Set((project.working ?? []).map((entry) => entry.agentSessionId));
+  return (
+    orchestrators.find((agent) => working.has(agent.id)) ??
+    [...orchestrators].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+  );
 }
 
 /** A handoff kind as a person reads it on a card ("결정 필요", "직접 확인 부탁", …). */

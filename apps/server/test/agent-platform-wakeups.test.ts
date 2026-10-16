@@ -6,6 +6,7 @@ import {
   type OrchestratorInvoker,
   type WakeupBatch,
 } from "../src/agent-platform/wakeups.js";
+import { wakeupText } from "../src/agent-runtime/supervisor.js";
 import { NaruRepository } from "../src/database.js";
 
 const HUMAN: Actor = { kind: "human" };
@@ -208,10 +209,14 @@ describe("orchestrator wakeups", () => {
     expect(fixture.batches[2]!.events.map((event) => event.seq)).toEqual(
       fixture.batches[1]!.events.map((event) => event.seq),
     );
+    // It says so (AP-D037), so the orchestrator checks before doing it again; first sends do not.
+    expect(fixture.batches.map((batch) => batch.resent === true)).toEqual([false, false, true]);
+    expect(wakeupText(fixture.batches[2]!)).toContain("sent before: check the current state");
+    expect(wakeupText(fixture.batches[1]!)).not.toContain("sent before");
     second.close();
   });
 
-  it("wakes the main orchestrator only for cross-project signals", async () => {
+  it("wakes the main orchestrator only for what is addressed to it (AP-D037)", async () => {
     const fixture = setup();
     const wakeups = fixture.wakeups();
     wakeups.register(fixture.main);
@@ -223,7 +228,9 @@ describe("orchestrator wakeups", () => {
       await flush();
     }
     const baseline = fixture.batches.length;
+    const system: Actor = { kind: "system" };
 
+    // Project details, a worker's question and a worker going down are the project's business.
     fixture.core.createTask(fixture.ctx({ kind: "agent", agentSessionId: fixture.orchestrator }), {
       projectId: fixture.projectId,
       title: "project detail",
@@ -231,10 +238,6 @@ describe("orchestrator wakeups", () => {
       completionCriteria: [],
       originInstructionId: fixture.goal,
     });
-    fixture.clock.value += 10_000;
-    await flush();
-    expect(fixture.batches).toHaveLength(baseline);
-
     fixture.core.requestHandoff(fixture.ctx({ kind: "agent", agentSessionId: fixture.worker }), {
       projectId: fixture.projectId,
       kind: "product-decision",
@@ -249,9 +252,82 @@ describe("orchestrator wakeups", () => {
         resumeCondition: "user choice",
       },
     });
+    fixture.core.updateAgentRuntimeState(system, {
+      agentSessionId: fixture.worker,
+      status: "failed",
+    });
+    fixture.clock.value += 10_000;
     await flush();
-    expect(fixture.batches).toHaveLength(baseline + 1);
-    expect(fixture.types(baseline)).toEqual(["handoff.requested"]);
+    expect(fixture.batches).toHaveLength(baseline);
+
+    // The person's goal and a project orchestrator going down are.
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "global" },
+      verbatim: "global goal",
+    });
+    fixture.core.updateAgentRuntimeState(system, {
+      agentSessionId: fixture.orchestrator,
+      status: "unknown",
+    });
+    expect(await fixture.drain(wakeups, fixture.main, baseline)).toEqual([
+      "instruction.created",
+      "agent_session.updated",
+    ]);
+    wakeups.close();
+  });
+
+  it("keeps a project orchestrator to its own project (AP-D037)", async () => {
+    const fixture = setup();
+    const wakeups = fixture.wakeups();
+    wakeups.register(fixture.orchestrator);
+    await flush();
+    fixture.clock.value += 10_000;
+    wakeups.turnCompleted(fixture.orchestrator);
+    await flush();
+    const baseline = fixture.batches.length;
+    const system: Actor = { kind: "system" };
+
+    // The person's global goal is the main orchestrator's; so is the person's word to it, and the
+    // main orchestrator's own state. Another project is another orchestrator's. The person's word to
+    // a worker is the worker's.
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "global" },
+      verbatim: "global goal",
+    });
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "agent", projectId: null, agentSessionId: fixture.main },
+      verbatim: "to main",
+    });
+    fixture.core.updateAgentRuntimeState(system, {
+      agentSessionId: fixture.main,
+      status: "unknown",
+    });
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "project", projectId: fixture.otherProjectId },
+      verbatim: "other project",
+    });
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: fixture.worker },
+      verbatim: "to the worker",
+    });
+    fixture.clock.value += 10_000;
+    await flush();
+    expect(fixture.batches).toHaveLength(baseline);
+
+    // The main orchestrator's delegation to it and the person's project instruction wake it.
+    fixture.core.delegate(fixture.ctx({ kind: "agent", agentSessionId: fixture.main }), {
+      scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: fixture.orchestrator },
+      verbatim: "plan it",
+      originUserInstructionId: fixture.goal,
+    });
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "project follow-up",
+    });
+    expect(await fixture.drain(wakeups, fixture.orchestrator, baseline)).toEqual([
+      "instruction.created",
+      "instruction.created",
+    ]);
     wakeups.close();
   });
 
@@ -298,6 +374,7 @@ function setup() {
     }).id;
   const main = register("main-orchestrator", null);
   const orchestrator = register("project-orchestrator", project.id);
+  const otherProject = repository.createProject("/tmp/naru-wakeup-other", "other");
   const worker = register("worker", project.id);
   const goal = core.createHumanInstruction(ctx(HUMAN), {
     scope: { kind: "project", projectId: project.id },
@@ -314,6 +391,7 @@ function setup() {
     core,
     ctx,
     projectId: project.id,
+    otherProjectId: otherProject.id,
     main,
     orchestrator,
     worker,
@@ -321,6 +399,17 @@ function setup() {
     clock,
     batches,
     types: (index: number) => batches[index]!.events.map((event) => event.type),
+    /** Ends each delivered turn until nothing is left; the event types delivered since `from`. */
+    drain: async (wakeups: OrchestratorWakeups, agentSessionId: string, from: number) => {
+      for (let round = 0; round < 10; round += 1) {
+        await flush();
+        clock.value += 10_000;
+        wakeups.turnCompleted(agentSessionId);
+        for (const timer of timers.splice(0)) timer();
+      }
+      await flush();
+      return batches.slice(from).flatMap((batch) => batch.events.map((event) => event.type));
+    },
     fireTimers: () => {
       for (const timer of timers.splice(0)) timer();
     },
