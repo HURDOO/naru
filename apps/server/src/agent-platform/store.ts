@@ -524,6 +524,13 @@ export class AgentPlatformStore {
       .run(at, at, id);
   }
 
+  /** A job's reopening brings back the agents its completion cleaned up (AP-D036). */
+  unretireAgentSession(id: string, at: string): void {
+    this.#database
+      .prepare("UPDATE agent_sessions SET retired_at = NULL, updated_at = ? WHERE id = ?")
+      .run(at, id);
+  }
+
   retireSharedProcess(id: string, at: string): void {
     this.#database
       .prepare("UPDATE agent_shared_processes SET retired_at = ?, updated_at = ? WHERE id = ?")
@@ -1058,6 +1065,15 @@ export class AgentPlatformStore {
 
   // Events and idempotency -----------------------------------------------------------------------
 
+  /** Events of one type recorded for the same cause (`correlationId`), oldest first. */
+  listCorrelatedEvents(correlationId: string, type: AgentEvent["type"]): AgentEvent[] {
+    return (
+      this.#database
+        .prepare("SELECT * FROM agent_events WHERE correlation_id = ? AND type = ? ORDER BY seq")
+        .all(correlationId, type) as EventRow[]
+    ).map(eventFromRow);
+  }
+
   appendEvent(event: Omit<AgentEvent, "seq">): AgentEvent {
     const result = this.#database
       .prepare(
@@ -1096,34 +1112,54 @@ export class AgentPlatformStore {
         .prepare(
           `SELECT * FROM agent_instructions AS i
            WHERE i.author_kind = 'human' AND i.scope_kind IN ('global', 'project')
-             AND i.forgotten_at IS NULL
+             AND i.forgotten_at IS NULL AND i.origin_user_instruction_id IS NULL
              AND NOT EXISTS (SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id)
-           ORDER BY i.created_at DESC, i.rowid DESC LIMIT ?`,
+           ORDER BY COALESCE(
+             (SELECT MAX(next.created_at) FROM agent_instructions AS next
+              WHERE next.author_kind = 'human' AND next.origin_user_instruction_id = i.id),
+             i.created_at
+           ) DESC, i.rowid DESC LIMIT ?`,
         )
         .all(limit) as InstructionRow[]
     ).map(instructionFromRow);
   }
 
-  /** Tasks and agent delegations that serve the given goals, directly or through a delegation. */
+  /**
+   * Tasks and agent delegations that serve the given goals, directly or through a delegation, and
+   * the person's later rounds of each goal (AP-D036), whose work belongs to the same goal.
+   */
   listGoalWork(goalIds: readonly string[]): {
     readonly tasks: { readonly goalId: string; readonly task: AgentTask }[];
     readonly delegations: { readonly goalId: string; readonly instruction: Instruction }[];
+    readonly followUps: { readonly goalId: string; readonly instruction: Instruction }[];
   } {
-    if (goalIds.length === 0) return { tasks: [], delegations: [] };
+    if (goalIds.length === 0) return { tasks: [], delegations: [], followUps: [] };
     const marks = goalIds.map(() => "?").join(", ");
-    const delegations = (
+    const followUps = (
       this.#database
         .prepare(
           `SELECT * FROM agent_instructions
-           WHERE author_kind = 'agent' AND origin_user_instruction_id IN (${marks})
+           WHERE author_kind = 'human' AND origin_user_instruction_id IN (${marks})
            ORDER BY created_at, rowid`,
         )
         .all(...goalIds) as InstructionRow[]
     ).map(instructionFromRow);
     const goalOf = new Map<string, string>(goalIds.map((id) => [id, id]));
+    for (const followUp of followUps) goalOf.set(followUp.id, followUp.originUserInstructionId!);
+    const asked = [...goalOf.keys()];
+    const delegations = (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_instructions
+           WHERE author_kind = 'agent'
+             AND origin_user_instruction_id IN (${asked.map(() => "?").join(", ")})
+           ORDER BY created_at, rowid`,
+        )
+        .all(...asked) as InstructionRow[]
+    ).map(instructionFromRow);
     for (const delegation of delegations) {
       if (delegation.originUserInstructionId !== null) {
-        goalOf.set(delegation.id, delegation.originUserInstructionId);
+        goalOf.set(delegation.id, goalOf.get(delegation.originUserInstructionId)!);
       }
     }
     const origins = [...goalOf.keys()];
@@ -1138,10 +1174,91 @@ export class AgentPlatformStore {
     return {
       tasks: tasks.map((task) => ({ goalId: goalOf.get(task.originInstructionId)!, task })),
       delegations: delegations.map((instruction) => ({
+        goalId: goalOf.get(instruction.originUserInstructionId!)!,
+        instruction,
+      })),
+      followUps: followUps.map((instruction) => ({
         goalId: instruction.originUserInstructionId!,
         instruction,
       })),
     };
+  }
+
+  // Jobs (AP-D036) ------------------------------------------------------------------------------
+
+  getJobState(goalId: string): JobState | null {
+    const row = this.#database
+      .prepare("SELECT * FROM agent_jobs WHERE goal_instruction_id = ?")
+      .get(goalId) as JobRow | undefined;
+    return row === undefined ? null : jobStateFromRow(row);
+  }
+
+  listJobStates(goalIds: readonly string[]): JobState[] {
+    if (goalIds.length === 0) return [];
+    return (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_jobs
+           WHERE goal_instruction_id IN (${goalIds.map(() => "?").join(", ")})`,
+        )
+        .all(...goalIds) as JobRow[]
+    ).map(jobStateFromRow);
+  }
+
+  saveJobState(state: JobState): void {
+    this.#database
+      .prepare(
+        `INSERT INTO agent_jobs (goal_instruction_id, round, completed_at, retired_json, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (goal_instruction_id) DO UPDATE SET round = excluded.round,
+           completed_at = excluded.completed_at, retired_json = excluded.retired_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        state.goalId,
+        state.round,
+        state.completedAt,
+        JSON.stringify(state.retiredAgentSessionIds),
+        state.updatedAt,
+      );
+  }
+
+  /** Agents the completion of any job cleaned up, so another job's reopening may bring them back. */
+  listJobRetiredAgentIds(): string[] {
+    const rows = this.#database
+      .prepare("SELECT retired_json FROM agent_jobs")
+      .pluck()
+      .all() as string[];
+    return [...new Set(rows.flatMap((row) => JSON.parse(row) as string[]))];
+  }
+
+  /** Worktrees Naru made for these tasks (AP-D016). */
+  listTaskWorktrees(taskIds: readonly string[]): AgentWorktree[] {
+    if (taskIds.length === 0) return [];
+    return (
+      this.#database
+        .prepare(
+          `SELECT * FROM agent_worktrees WHERE task_id IN (${taskIds.map(() => "?").join(", ")})
+           ORDER BY created_at`,
+        )
+        .all(...taskIds) as WorktreeRow[]
+    ).map(worktreeFromRow);
+  }
+
+  /** Agent Platform rows that live in a project and would go with its Naru connection. */
+  countProjectAgentRecords(projectId: string): number {
+    return this.#database
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM agent_sessions WHERE project_id = ?) +
+           (SELECT COUNT(*) FROM agent_shared_processes WHERE project_id = ?) +
+           (SELECT COUNT(*) FROM agent_instructions WHERE project_id = ?) +
+           (SELECT COUNT(*) FROM agent_tasks WHERE project_id = ?) +
+           (SELECT COUNT(*) FROM agent_events WHERE project_id = ?) +
+           (SELECT COUNT(*) FROM agent_worktrees WHERE parent_project_id = ?)`,
+      )
+      .pluck()
+      .get(projectId, projectId, projectId, projectId, projectId, projectId) as number;
   }
 
   /** Projects with open tasks, for the stall check (AP-D034). */
@@ -1565,6 +1682,34 @@ function reviewFromRow(row: ReviewRow): Review {
     verdict: row.verdict,
     findings: row.findings,
     createdAt: row.created_at,
+  };
+}
+
+/** A job the person completed or reopened (AP-D036); a job without one is open. */
+export interface JobState {
+  readonly goalId: string;
+  readonly round: number;
+  readonly completedAt: string | null;
+  /** The agents its last completion cleaned up. */
+  readonly retiredAgentSessionIds: readonly string[];
+  readonly updatedAt: string;
+}
+
+interface JobRow {
+  goal_instruction_id: string;
+  round: number;
+  completed_at: string | null;
+  retired_json: string;
+  updated_at: string;
+}
+
+function jobStateFromRow(row: JobRow): JobState {
+  return {
+    goalId: row.goal_instruction_id,
+    round: row.round,
+    completedAt: row.completed_at,
+    retiredAgentSessionIds: JSON.parse(row.retired_json) as string[],
+    updatedAt: row.updated_at,
   };
 }
 

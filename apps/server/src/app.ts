@@ -67,6 +67,7 @@ import {
   type AgentRuntimeControl,
   type SharedProcessControl,
 } from "./agent-platform/http-routes.js";
+import { JobLifecycle, type JobLifecycleOptions } from "./agent-runtime/jobs.js";
 import { OPEN_PANE_CONTROL, type PaneControlPolicy } from "./agent-runtime/shared-processes.js";
 import { Observability, safeErrorFields } from "./observability.js";
 import type { ProjectPathPolicy } from "./path-policy.js";
@@ -153,6 +154,8 @@ export interface AppDependencies {
   agentRuntime?: AgentRuntimeControl;
   /** Agents' shared processes (durable Host mode with the Agent Platform). */
   sharedProcesses?: SharedProcessControl;
+  /** Removes merged worktrees when the person completes a job (AP-D036). */
+  agentWorktrees?: JobLifecycleOptions["worktrees"];
   /** Which Panes a person's controller device should control; agent-run Panes wait for a hold. */
   paneControlPolicy?: PaneControlPolicy;
   /** Notes that a person typed into a Pane or wrote to an agent (hold idle timeout, AP-D005). */
@@ -611,6 +614,16 @@ export async function buildApp(
   });
 
   if (dependencies.agentPlatform !== undefined) {
+    // A cleaned-up agent's or process's Pane goes, ending anything left in it.
+    const removeAgentPane = async (paneId: string): Promise<void> => {
+      const context = dependencies.repository.getPaneContext(paneId);
+      if (context === undefined) return;
+      await dependencies.supervisor.remove(paneId);
+      legacyTerminalSizes.delete(paneId);
+      const version = dependencies.repository.getWorkspace(context.pane.projectId).version;
+      dependencies.repository.deletePane(paneId, version);
+      fileDrafts.clearPane(paneId);
+    };
     registerAgentPlatformRoutes(
       app,
       dependencies.agentPlatform,
@@ -627,15 +640,15 @@ export async function buildApp(
       dependencies.sharedProcesses,
       dependencies.noteHumanInput,
       (paneIds) => dependencies.repository.customPaneTitles(paneIds),
-      async (paneId) => {
-        const context = dependencies.repository.getPaneContext(paneId);
-        if (context === undefined) return;
-        await dependencies.supervisor.remove(paneId);
-        legacyTerminalSizes.delete(paneId);
-        const version = dependencies.repository.getWorkspace(context.pane.projectId).version;
-        dependencies.repository.deletePane(paneId, version);
-        fileDrafts.clearPane(paneId);
-      },
+      removeAgentPane,
+      new JobLifecycle({
+        core: dependencies.agentPlatform,
+        ...(dependencies.agentRuntime === undefined ? {} : { runtime: dependencies.agentRuntime }),
+        removePane: removeAgentPane,
+        ...(dependencies.agentWorktrees === undefined
+          ? {}
+          : { worktrees: dependencies.agentWorktrees }),
+      }),
     );
   }
 

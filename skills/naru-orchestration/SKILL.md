@@ -11,6 +11,10 @@ description: How agents work with Naru - user instructions first, managed agents
   act and whenever Naru wakes you. The latest user instruction wins over plans, earlier decisions and
   other agents' reinterpretations. Every `delegate` cites the `origin_user_instruction_id` it
   serves.
+- A user instruction whose `origin_user_instruction_id` names an earlier user instruction is the
+  next round of that goal: the person completed the job and reopened it with this. Read the earlier
+  goal and its tasks, and plan this round as part of the same goal; Naru resumed the workers and
+  reviewers that worked on it.
 - Naru wakes you with a short list of events (references only). Read the details with the naru tools;
   do not poll in a loop.
 - Write everything a person reads (your replies, reports, handoffs, plans) in the language the

@@ -31,7 +31,7 @@ import {
   type SharedProcess,
   type StallCause,
 } from "@naru/contracts/naru-agent/v1";
-import type { AgentPlatformStore } from "./store.js";
+import type { AgentPlatformStore, JobState } from "./store.js";
 
 export class AgentPlatformError extends Error {
   constructor(
@@ -1653,6 +1653,9 @@ export class AgentPlatformCore {
     }
     const goals = this.#store.listHumanGoals(40);
     const work = this.#store.listGoalWork(goals.map((goal) => goal.id));
+    const states = new Map(
+      this.#store.listJobStates(goals.map((goal) => goal.id)).map((state) => [state.goalId, state]),
+    );
     const now = Date.parse(this.#timestamp());
     const jobs: AgentJob[] = [];
     for (const goal of goals) {
@@ -1660,7 +1663,11 @@ export class AgentPlatformCore {
       const delegations = work.delegations
         .filter((item) => item.goalId === goal.id)
         .map((item) => item.instruction);
-      const fresh = now - Date.parse(goal.createdAt) < 30 * 60_000;
+      const followUps = work.followUps
+        .filter((item) => item.goalId === goal.id)
+        .map((item) => item.instruction);
+      const latest = followUps.at(-1)?.createdAt ?? goal.createdAt;
+      const fresh = now - Date.parse(latest) < 30 * 60_000;
       if (tasks.length === 0 && (delegations.length === 0 || !fresh)) continue;
       const projectIds = [
         ...new Set(
@@ -1671,10 +1678,15 @@ export class AgentPlatformCore {
           ].filter((id): id is string => id !== null),
         ),
       ];
+      const state = states.get(goal.id);
       jobs.push({
         goal,
         projectIds,
         delegatedAt: delegations[0]?.createdAt ?? null,
+        followUps,
+        round: state?.round ?? 1,
+        completedAt: state?.completedAt ?? null,
+        cleanedUpAgentSessionIds: state?.completedAt ? state.retiredAgentSessionIds : [],
         tasks: tasks.map((task) => {
           const verdicts: AgentJob["tasks"][number]["reviews"] = {};
           for (const review of this.#store.listReviews(task.id)) {
@@ -1687,6 +1699,250 @@ export class AgentPlatformCore {
       if (jobs.length === 12) break;
     }
     return jobs;
+  }
+
+  /**
+   * What completing a job would clean up (AP-D036): the workers and reviewers that worked on it,
+   * each with why it stays if it does, and the worktrees Naru made for its tasks. Orchestrators are
+   * never part of it; they take many jobs.
+   */
+  jobCompletionPlan(actor: Actor, goalId: string): JobCompletionPlan {
+    this.#requireHuman(actor);
+    const { goal, tasks, delegations } = this.#jobWork(goalId);
+    const linked = new Set<string>();
+    for (const task of tasks) {
+      if (task.assigneeAgentSessionId !== null) linked.add(task.assigneeAgentSessionId);
+      for (const review of this.#store.listReviews(task.id)) {
+        if (review.reviewerAgentSessionId !== null) linked.add(review.reviewerAgentSessionId);
+      }
+    }
+    for (const delegation of delegations) {
+      if (delegation.scope.kind === "agent") linked.add(delegation.scope.agentSessionId);
+    }
+    const ownTaskIds = new Set(tasks.map((task) => task.id));
+    const agents: JobCompletionPlan["agents"][number][] = [];
+    for (const id of linked) {
+      const agent = this.#store.getAgentSession(id);
+      if (agent === null || agent.retiredAt || agent.native) continue;
+      if (agent.role === "main-orchestrator" || agent.role === "project-orchestrator") continue;
+      const projectTasks = agent.projectId === null ? [] : this.#store.listTasks(agent.projectId);
+      // Open work outside this job still needs it: a worker's own task, or anything to review.
+      const otherWork = projectTasks.some(
+        (task) =>
+          !ownTaskIds.has(task.id) &&
+          OPEN_TASK_STATUSES.has(task.status) &&
+          (agent.role === "reviewer" || task.assigneeAgentSessionId === agent.id),
+      );
+      agents.push({
+        agent,
+        keep: agent.humanHoldSince !== null ? "held" : otherWork ? "other-work" : null,
+      });
+    }
+    agents.sort(
+      (left, right) =>
+        ROLE_ORDER.indexOf(left.agent.role) - ROLE_ORDER.indexOf(right.agent.role) ||
+        left.agent.createdAt.localeCompare(right.agent.createdAt),
+    );
+    const worktrees = this.#store.listTaskWorktrees([...ownTaskIds]).map((worktree) => {
+      const task = tasks.find((item) => item.id === worktree.taskId)!;
+      const merge =
+        task.status === "done"
+          ? this.#store
+              .listArtifacts(task.id)
+              .filter((artifact) => artifact.kind === "commit")
+              .at(-1)
+          : undefined;
+      return { worktree, task, mergeCommit: merge?.reference ?? null };
+    });
+    return {
+      goal,
+      openTasks: tasks.filter((task) => OPEN_TASK_STATUSES.has(task.status)).length,
+      agents,
+      worktrees,
+    };
+  }
+
+  /**
+   * The person completes a job (AP-D036). Its open tasks must be finished; the given agents, which
+   * the runtime has already stopped, are recorded stopped and cleaned up, and listed on the job so
+   * that reopening it resumes them.
+   */
+  completeJob(
+    context: CommandContext,
+    input: { readonly goalId: string; readonly retireAgentSessionIds: readonly string[] },
+  ): JobState {
+    this.#requireHuman(context.actor);
+    return this.#command(
+      context,
+      "job.complete",
+      // A retry asks for the same completion even when the agents have been cleaned up since.
+      { goalId: input.goalId },
+      "job",
+      (events) => {
+        const { goal, tasks } = this.#jobWork(input.goalId);
+        const state = this.#store.getJobState(goal.id);
+        if (state?.completedAt) {
+          throw new AgentPlatformError("AGENT_INVALID_STATE", "The job is already completed.");
+        }
+        if (tasks.some((task) => OPEN_TASK_STATUSES.has(task.status))) {
+          throw new AgentPlatformError("AGENT_INVALID_STATE", "The job still has open tasks.");
+        }
+        const now = this.#timestamp();
+        const retired: string[] = [];
+        for (const id of new Set(input.retireAgentSessionIds)) {
+          const agent = this.#requireAgentSession(id);
+          if (agent.retiredAt) continue;
+          if (agent.role === "main-orchestrator" || agent.role === "project-orchestrator") {
+            throw new AgentPlatformError("AGENT_INVALID_STATE", "Orchestrators stay.");
+          }
+          if (agent.humanHoldSince !== null) {
+            throw new AgentPlatformError("AGENT_HELD_BY_HUMAN", "A person holds this agent.");
+          }
+          // The runtime ended it for the completion; a form Naru could not stop is ended with its Pane.
+          const status = RETIRABLE_AGENT_STATUSES.has(agent.status) ? agent.status : "stopped";
+          if (status !== agent.status) {
+            this.#store.updateAgentSession({ ...agent, status, updatedAt: now });
+          }
+          this.#store.retireAgentSession(agent.id, now);
+          retired.push(agent.id);
+          events.push({
+            type: "agent_session.updated",
+            projectId: agent.projectId,
+            subjectId: agent.id,
+            data: { status, retired: true },
+          });
+        }
+        this.#store.saveJobState({
+          goalId: goal.id,
+          round: state?.round ?? 1,
+          completedAt: now,
+          retiredAgentSessionIds: retired,
+          updatedAt: now,
+        });
+        events.push({
+          type: "job.completed",
+          projectId: scopeProjectId(goal.scope),
+          subjectId: goal.id,
+          data: { round: state?.round ?? 1, retired: retired.length },
+        });
+        return goal.id;
+      },
+      (id) => this.#store.getJobState(id)!,
+    );
+  }
+
+  /**
+   * The person reopens a completed job for another round (AP-D036): what they ask next is recorded
+   * verbatim as a user instruction that continues the goal (`originUserInstructionId`), and the
+   * agents the completion cleaned up come back to resume their own conversations.
+   */
+  reopenJob(
+    context: CommandContext,
+    input: { readonly goalId: string; readonly verbatim: string },
+  ): { readonly instruction: Instruction; readonly resumed: AgentSession[] } {
+    this.#requireHuman(context.actor);
+    const instruction = this.#command(
+      context,
+      "job.reopen",
+      input,
+      "instruction",
+      (events) => {
+        const { goal, tasks, delegations } = this.#jobWork(input.goalId);
+        const state = this.#store.getJobState(goal.id);
+        if (!state?.completedAt) {
+          throw new AgentPlatformError("AGENT_INVALID_STATE", "Only a completed job reopens.");
+        }
+        this.#assertScope(goal.scope);
+        const now = this.#timestamp();
+        // Its own cleaned-up agents, and those another job's completion took that worked on it.
+        const cleanedByJobs = new Set(this.#store.listJobRetiredAgentIds());
+        const linked = new Set([
+          ...state.retiredAgentSessionIds,
+          ...tasks.flatMap((task) => [
+            ...(task.assigneeAgentSessionId === null ? [] : [task.assigneeAgentSessionId]),
+            ...this.#store
+              .listReviews(task.id)
+              .map((review) => review.reviewerAgentSessionId)
+              .filter((id): id is string => id !== null),
+          ]),
+          ...delegations.flatMap((delegation) =>
+            delegation.scope.kind === "agent" ? [delegation.scope.agentSessionId] : [],
+          ),
+        ]);
+        const followUp = this.#instruction({
+          scope: goal.scope,
+          author: { kind: "human" },
+          channel: "naru-ui",
+          originUserInstructionId: goal.id,
+          supersedesId: null,
+          verbatim: input.verbatim,
+        });
+        for (const id of linked) {
+          const agent = this.#store.getAgentSession(id);
+          if (agent === null || !agent.retiredAt) continue;
+          if (!state.retiredAgentSessionIds.includes(id) && !cleanedByJobs.has(id)) continue;
+          this.#store.unretireAgentSession(agent.id, now);
+          // Tied to the round's instruction, so a retried reopening finds whom it brought back.
+          events.push({
+            type: "agent_session.updated",
+            projectId: agent.projectId,
+            subjectId: agent.id,
+            correlationId: followUp.id,
+            data: { status: agent.status, retired: false },
+          });
+        }
+        this.#store.saveJobState({
+          goalId: goal.id,
+          round: state.round + 1,
+          completedAt: null,
+          retiredAgentSessionIds: [],
+          updatedAt: now,
+        });
+        events.push({
+          type: "job.reopened",
+          projectId: scopeProjectId(goal.scope),
+          subjectId: goal.id,
+          correlationId: followUp.id,
+          data: { round: state.round + 1 },
+        });
+        events.push(instructionCreated(followUp));
+        return followUp.id;
+      },
+      (id) => this.#requireInstruction(id),
+    );
+    const resumed = this.#store
+      .listCorrelatedEvents(instruction.id, "agent_session.updated")
+      .filter((event) => event.data.retired === false)
+      .map((event) => this.#store.getAgentSession(event.subjectId))
+      .filter((agent): agent is AgentSession => agent !== null && !agent.retiredAt);
+    return { instruction, resumed };
+  }
+
+  /** A person's goal and everything that serves it, across its rounds. */
+  #jobWork(goalId: string): {
+    readonly goal: Instruction;
+    readonly tasks: AgentTask[];
+    readonly delegations: Instruction[];
+  } {
+    const goal = this.#requireInstruction(goalId);
+    if (
+      goal.author.kind !== "human" ||
+      goal.originUserInstructionId !== null ||
+      (goal.scope.kind !== "global" && goal.scope.kind !== "project")
+    ) {
+      throw new AgentPlatformError("AGENT_INVALID_REFERENCE", "This is not a job the person gave.");
+    }
+    const work = this.#store.listGoalWork([goal.id]);
+    return {
+      goal,
+      tasks: work.tasks.map((item) => item.task),
+      delegations: work.delegations.map((item) => item.instruction),
+    };
+  }
+
+  /** Agent Platform rows in a project; a worktree project with any stays connected (AP-D036). */
+  countProjectAgentRecords(projectId: string): number {
+    return this.#store.countProjectAgentRecords(projectId);
   }
 
   /** Projects with open tasks, for the stall check. */
@@ -2757,6 +3013,15 @@ function throwNotFound(what: string): never {
   throw notFound(what);
 }
 
+/** Task states with work still to do; a job completes only without them (AP-D036). */
+const OPEN_TASK_STATUSES: ReadonlySet<AgentTask["status"]> = new Set([
+  "pending",
+  "ready",
+  "running",
+  "blocked",
+  "review",
+]);
+
 /** States in which an agent or process no longer runs, so the person may clean it up (AP-D033). */
 const RETIRABLE_AGENT_STATUSES: ReadonlySet<AgentSession["status"]> = new Set([
   "stopped",
@@ -2772,6 +3037,23 @@ const RETIRABLE_PROCESS_STATUSES: ReadonlySet<SharedProcess["status"]> = new Set
 
 function retiredAgent(): AgentPlatformError {
   return new AgentPlatformError("AGENT_INVALID_STATE", "This agent was cleaned up.");
+}
+
+/** What completing a job would clean up (AP-D036). */
+export interface JobCompletionPlan {
+  readonly goal: Instruction;
+  readonly openTasks: number;
+  readonly agents: readonly {
+    readonly agent: AgentSession;
+    /** Why it stays: a person holds it, or open work outside this job needs it. */
+    readonly keep: "held" | "other-work" | null;
+  }[];
+  readonly worktrees: readonly {
+    readonly worktree: AgentWorktree;
+    readonly task: AgentTask;
+    /** The merge commit, when the task was merged. */
+    readonly mergeCommit: string | null;
+  }[];
 }
 
 /** A decision the person made on what an agent asked; its chat shows it as their words (AP-D035). */
@@ -2797,6 +3079,13 @@ export interface AgentJob {
   readonly projectIds: readonly string[];
   /** When an orchestrator first passed it on. */
   readonly delegatedAt: string | null;
+  /** What the person asked in later rounds, after reopening it (AP-D036). */
+  readonly followUps: readonly Instruction[];
+  readonly round: number;
+  /** When the person completed it; null while open (AP-D036). */
+  readonly completedAt: string | null;
+  /** The agents its completion cleaned up; reopening resumes them. */
+  readonly cleanedUpAgentSessionIds: readonly string[];
   readonly tasks: readonly {
     readonly task: AgentTask;
     /** The latest verdict of each review kind. */

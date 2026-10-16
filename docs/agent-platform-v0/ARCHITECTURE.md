@@ -359,3 +359,31 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   - `jobs-model.ts`(순수 함수)가 큰 그림 단계, 작업 번호(의존 순서), 작업별 작업·검증·병합, "지금" 줄을
     정한다. `JobCards.tsx`가 그린다.
   - 받은함 항목 `stall`은 승인 다음, 결정 앞에 둔다. 에이전트 목록 줄에는 실행 중인 도구가 한 줄 더 붙는다.
+
+### 6.6.4 맡긴 일 완료하기와 다시 열기 (AP-D036)
+
+- 저장: DB v23 `agent_jobs`(`goal_instruction_id`, `round`, `completed_at`, `retired_json`). 다음 라운드의 말은
+  사람 지시이고 `origin_user_instruction_id`가 목표를 가리킨다. store `listHumanGoals`는 이런 지시를 목표에서 빼고
+  최근 라운드 순으로 정렬한다. `listGoalWork`는 라운드 지시와 그것을 인용한 위임·작업을 같은 목표로 묶는다.
+- Core:
+  - `jobCompletionPlan`: 그 일의 작업자·리뷰어와 남길 이유(`held`, `other-work`), Naru가 만든 워크트리와 병합 커밋.
+  - `completeJob`: 열린 작업이 없을 때만 받는다. 넘겨받은 에이전트를 stopped·retired로 기록하고 `job.completed`를
+    남긴다. 재시도는 목표 id만으로 같은 명령이 된다.
+  - `reopenJob`: 라운드 지시를 만들고 에이전트를 되살린다. 되살린 기록은 라운드 지시 id를 `correlationId`로 가져,
+    재시도해도 누구를 되살렸는지 다시 찾는다.
+- `agent-runtime/jobs.ts`의 `JobLifecycle`이 실행 쪽을 맡는다.
+  - 완료: 계획을 읽고 runtime에서 지금 차례 중이거나 승인을 기다리는 에이전트를 남긴다(`working`). Core에 먼저
+    기록하고, 연결된 runner에 stop을 보내 10초까지 연결이 끊기길 기다린 뒤 Pane을 지운다. 끝나지 않은 TUI나 runner는
+    Pane과 함께 끝난다.
+  - 워크트리: `AgentWorkspace.removeMergedWorktree`가 안전 조건(AP-D036)을 확인하고 `worktree remove`·`branch -d`
+    뒤 Naru project 연결을 푼다. 실행 중인 Pane은 Host의 `isRunning`으로 본다.
+  - 다시 열기: 되살린 에이전트 가운데 꺼진 것을 `launch`한다. 계획의 `resumeRef`로 대화를 이어 가고, Claude
+    runner는 저장된 대화가 없으면 새로 시작한다(`resumableRef`).
+- wakeup: `job.completed`·`job.reopened`는 알림만이다. 정리하거나 되살린 기록(`retired`), 정리된 에이전트의
+  상태 보고는 오케스트레이터를 깨우지 않는다. 라운드 지시의 `instruction.created`는 평소처럼 깨운다.
+- web:
+  - `jobs-model.ts`의 `awaitingCompletion`·`jobCompleted`, `stageStates(stage, completed)`. 다시 연 일은 라운드
+    지시 뒤에 움직인 작업이 없으면 "계획"이다.
+  - 받은함 항목 `job`("완료 확인")은 의도 계약 다음, 맨 뒤다.
+  - 완료 확인·결과·다시 열기 창은 `JobSheets.tsx`다. `AgentApp`이 열 때의 일을 붙잡아 두므로, 완료해 받은함에서
+    빠져도 결과 창이 남는다.

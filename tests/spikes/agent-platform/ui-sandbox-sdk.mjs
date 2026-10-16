@@ -12,10 +12,35 @@
 //   FINISH marks every task done at once
 /* global setTimeout, AbortController */
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const SESSION = randomUUID();
+/** Saved conversations, so a resumed agent continues its own as Claude's transcripts let it. */
+const STORE = join(tmpdir(), "naru-ui-sandbox-sdk");
+let session = SESSION;
 const said = [];
+
+/** Like Claude, a conversation is saved from its first prompt on. */
+function remember(message) {
+  said.push(message);
+  try {
+    mkdirSync(STORE, { recursive: true });
+    writeFileSync(join(STORE, `${session}.json`), JSON.stringify(said));
+  } catch {
+    // The sandbox still works without saved history.
+  }
+}
+
+function saved(sessionId) {
+  try {
+    return JSON.parse(readFileSync(join(STORE, `${sessionId}.json`), "utf8"));
+  } catch {
+    return [];
+  }
+}
 /** Instructions already acted on: a later wakeup about other events must not redo them. */
 const handled = new Set();
 
@@ -77,7 +102,7 @@ async function ask(options, command) {
 }
 
 function assistant(content) {
-  said.push({ type: "assistant", message: { role: "assistant", content } });
+  remember({ type: "assistant", message: { role: "assistant", content } });
 }
 
 function think(text) {
@@ -88,7 +113,7 @@ function think(text) {
 function tool(name, input, result, isError = false) {
   const id = `toolu_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
   assistant([{ type: "tool_use", id, name, input }]);
-  said.push({
+  remember({
     type: "user",
     message: {
       role: "user",
@@ -319,11 +344,15 @@ async function work(options, goal) {
 
 export function query({ prompt, options }) {
   const role = roleOf(options);
+  if (options.resume !== undefined) {
+    session = options.resume;
+    said.splice(0, said.length, ...saved(options.resume));
+  }
   async function* run() {
     yield { type: "system", subtype: "init", session_id: options.resume ?? SESSION };
     for await (const message of prompt) {
       const text = message.message.content;
-      said.push({ type: "user", message: { role: "user", content: text } });
+      remember({ type: "user", message: { role: "user", content: text } });
       let goal = text;
       let origin;
       let latest;
@@ -451,6 +480,6 @@ export function query({ prompt, options }) {
   return iterator;
 }
 
-export async function getSessionMessages(_sessionId, { offset = 0, limit = 50 } = {}) {
-  return said.slice(offset, offset + limit);
+export async function getSessionMessages(sessionId, { offset = 0, limit = 50 } = {}) {
+  return (sessionId === session ? said : saved(sessionId)).slice(offset, offset + limit);
 }

@@ -9,9 +9,11 @@ import {
   AgentTurnRequestSchema,
   ApproveIntentContractRequestSchema,
   CleanupAgentsRequestSchema,
+  CompleteJobRequestSchema,
   CreateHumanInstructionRequestSchema,
   CreateManagedAgentRequestSchema,
   IdempotentRequestSchema,
+  ReopenJobRequestSchema,
   ResolveHandoffRequestSchema,
   SetAgentHoldRequestSchema,
   SetProcessHoldRequestSchema,
@@ -22,6 +24,7 @@ import {
   type SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
 import type { HistoryPage } from "../agent-runtime/adapter.js";
+import type { JobLifecycle } from "../agent-runtime/jobs.js";
 import { SupervisorError } from "../agent-runtime/supervisor.js";
 import type { WriterKind } from "../agent-runtime/writer-gate.js";
 import { AgentPlatformError, type AgentPlatformCore } from "./core.js";
@@ -97,10 +100,18 @@ export function registerAgentPlatformRoutes(
   customPaneTitles?: (paneIds: readonly string[]) => Readonly<Record<string, string>>,
   /** Removes a Pane whose agent or process was cleaned up, ending anything left in it. */
   removePane?: (paneId: string) => Promise<void>,
+  /** Completing and reopening jobs (AP-D036). */
+  jobs?: JobLifecycle,
 ): void {
   const mutate = (request: FastifyRequest): void => {
     guards.requireUnsafeRequest(request);
     guards.requireSurfaceController(request);
+  };
+  const requireJobs = (): JobLifecycle => {
+    if (jobs === undefined) {
+      throw new AgentPlatformError("AGENT_RUNTIME_UNAVAILABLE", "Jobs cannot be completed here.");
+    }
+    return jobs;
   };
   const pendingApprovals = (agents: readonly AgentSession[]) =>
     runtime === undefined
@@ -242,6 +253,37 @@ export function registerAgentPlatformRoutes(
   app.get("/api/agent/jobs", (request) => {
     guards.requireSession(request);
     return { jobs: core.listJobs(HUMAN) };
+  });
+
+  /** What completing a job would clean up, for the person to check first (AP-D036). */
+  app.get("/api/agent/jobs/:id/completion", (request) => {
+    guards.requireSession(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    return requireJobs().preview(id);
+  });
+
+  /** The person completes a job: its workers and reviewers and merged worktrees are cleaned up. */
+  app.post("/api/agent/jobs/:id/complete", async (request) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = CompleteJobRequestSchema.parse(request.body);
+    return requireJobs().complete(
+      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+      id,
+      input.keepAgentSessionIds,
+    );
+  });
+
+  /** The person reopens a completed job with what to do next; its sessions resume. */
+  app.post("/api/agent/jobs/:id/reopen", async (request) => {
+    mutate(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = ReopenJobRequestSchema.parse(request.body);
+    return requireJobs().reopen(
+      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+      id,
+      input.verbatim,
+    );
   });
 
   app.get("/api/agent/handoffs", (request) => {

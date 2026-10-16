@@ -313,6 +313,10 @@ export function eventTypeLabel(type: string, status: string | null): string {
       return "프로세스 사람이 개입";
     case "shared_process.hold_released":
       return "프로세스 반환";
+    case "job.completed":
+      return "맡긴 일 완료";
+    case "job.reopened":
+      return "맡긴 일 다시 열기";
     default:
       return "Naru 기록";
   }

@@ -504,6 +504,96 @@ describe("Agent Platform cleanup (AP-D033)", () => {
   });
 });
 
+describe("Agent Platform job completion (AP-D036)", () => {
+  it("previews, completes with the device lease and reopens a job", async () => {
+    const fixture = await createFixture(true);
+    const core = fixture.core!;
+    let ordinal = 1_100;
+    const key = () => `90000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`;
+    const ctx = (actor: Actor) => ({ actor, idempotencyKey: key() });
+    const register = (role: AgentSession["role"]) =>
+      core.registerAgentSession(ctx({ kind: "human" }), {
+        projectId: fixture.projectId,
+        role,
+        runtime: "claude",
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      }).id;
+    const orchestrator = register("project-orchestrator");
+    const worker = register("worker");
+    core.updateAgentRuntimeState({ kind: "system" }, { agentSessionId: worker, status: "idle" });
+    const pane = fixture.repository.createAgentPane(worker, "Claude worker · fixture");
+    const goal = core.createHumanInstruction(ctx({ kind: "human" }), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "태그 페이지",
+    });
+    const task = core.createTask(ctx({ kind: "agent", agentSessionId: orchestrator }), {
+      projectId: fixture.projectId,
+      title: "태그 목록",
+      purpose: "",
+      completionCriteria: [],
+      originInstructionId: goal.id,
+      assigneeAgentSessionId: worker,
+    });
+    const login = await fixture.login();
+    const read = (url: string) =>
+      fixture.app.inject({ method: "GET", url, headers: { cookie: login.cookie } });
+    expect((await read(`/api/agent/jobs/${goal.id}/completion`)).json()).toMatchObject({
+      openTasks: 1,
+      agents: [{ agent: { id: worker }, keep: null }],
+      worktrees: [],
+    });
+    core.updateTask(ctx({ kind: "agent", agentSessionId: orchestrator }), {
+      taskId: task.id,
+      status: "done",
+      expectedRevision: task.revision,
+    });
+
+    const complete = (headers: Record<string, string>) =>
+      fixture.app.inject({
+        method: "POST",
+        url: `/api/agent/jobs/${goal.id}/complete`,
+        headers,
+        payload: { keepAgentSessionIds: [], idempotencyKey: key() },
+      });
+    const withoutLease = await complete({
+      origin,
+      cookie: login.cookie,
+      "x-csrf-token": login.csrfToken,
+    });
+    expect(withoutLease.json()).toMatchObject({ code: "LEASE_REQUIRED" });
+    const headers = await fixture.controller(login);
+    const completed = await complete(headers);
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({
+      retired: [{ id: worker, retiredAt: expect.any(String) as string }],
+      kept: [],
+      worktrees: [],
+      panesKept: 0,
+    });
+    expect(fixture.repository.getPaneContext(pane.id)).toBeUndefined();
+    expect((await read("/api/agent/jobs")).json()).toMatchObject({
+      jobs: [{ goal: { id: goal.id }, round: 1, completedAt: expect.any(String) as string }],
+    });
+
+    const reopened = await fixture.app.inject({
+      method: "POST",
+      url: `/api/agent/jobs/${goal.id}/reopen`,
+      headers,
+      payload: { verbatim: "태그 색도 바꿔 줘", idempotencyKey: key() },
+    });
+    expect(reopened.statusCode).toBe(200);
+    expect(reopened.json()).toMatchObject({
+      instruction: { verbatim: "태그 색도 바꿔 줘", originUserInstructionId: goal.id },
+      resumed: [{ id: worker, retiredAt: null }],
+    });
+    expect((await read("/api/agent/jobs")).json()).toMatchObject({
+      jobs: [{ goal: { id: goal.id }, round: 2, completedAt: null, followUps: [{}] }],
+    });
+  });
+});
+
 describe("Agent Platform stalls, jobs and agent Panes (AP-D034)", () => {
   it("shows a stall that reached the person, lets them nudge and keeps agent Panes", async () => {
     const fixture = await createFixture(true);

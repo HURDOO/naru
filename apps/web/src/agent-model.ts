@@ -9,7 +9,8 @@ import type {
 } from "@naru/contracts/naru-agent/v1";
 import { approvalKindLabel, handoffKindLabel, roleName } from "./agent-labels";
 import { taskLevels } from "./agent-task-graph";
-import type { AgentBoard, AgentBoardProject, AgentPendingApproval } from "./api";
+import type { AgentBoard, AgentBoardProject, AgentJob, AgentPendingApproval } from "./api";
+import { awaitingCompletion } from "./jobs-model";
 
 /**
  * View model for the agent screens (AP-D022): names and colors for agents, what waits for the
@@ -205,13 +206,20 @@ export type InboxItem =
       readonly projectId: string;
       readonly contract: IntentContract;
       readonly orchestrator: AgentSession | undefined;
+    }
+  | {
+      /** Every task of a job is finished; the person completes it (AP-D036). */
+      readonly kind: "job";
+      readonly key: string;
+      readonly projectId: string | null;
+      readonly job: AgentJob;
     };
 
 /**
  * Approvals first (an agent is stopped on them right now), then work that stands still, then
- * decisions oldest first, then intent contracts waiting for approval.
+ * decisions oldest first, then intent contracts waiting for approval, then finished jobs to complete.
  */
-export function inboxItems(board: AgentBoard): InboxItem[] {
+export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): InboxItem[] {
   const agents = boardAgents(board);
   const items: InboxItem[] = [];
   const approvals = [
@@ -270,6 +278,15 @@ export function inboxItems(board: AgentBoard): InboxItem[] {
       orchestrator: project.agents.find((agent) => agent.role === "project-orchestrator"),
     });
   }
+  for (const job of jobs) {
+    if (!awaitingCompletion(job)) continue;
+    items.push({
+      kind: "job",
+      key: `job:${job.goal.id}`,
+      projectId: job.goal.scope.kind === "global" ? null : job.goal.scope.projectId,
+      job,
+    });
+  }
   return items;
 }
 
@@ -301,6 +318,8 @@ export function inboxKindLabel(item: InboxItem): string {
       return askKindLabel(item.handoff.kind);
     case "stall":
       return "진행 멈춤";
+    case "job":
+      return "완료 확인";
   }
 }
 

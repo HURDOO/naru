@@ -305,6 +305,9 @@ export const AgentEventTypeSchema = z.enum([
   "shared_process.hold_released",
   /** Naru saw no progress on open work (AP-D034): first the orchestrator, then the person. */
   "project.stalled",
+  /** The person completed a job, or reopened it for another round (AP-D036). */
+  "job.completed",
+  "job.reopened",
 ]);
 export type AgentEventType = z.infer<typeof AgentEventTypeSchema>;
 
@@ -577,6 +580,21 @@ export const SetProcessHoldRequestSchema = z.strictObject({
 export const CleanupAgentsRequestSchema = z.strictObject({
   agentSessionIds: z.array(Id).max(NARU_AGENT_LIMITS.listItems),
   processIds: z.array(Id).max(NARU_AGENT_LIMITS.listItems),
+  idempotencyKey: IdempotencyKeySchema,
+});
+
+/**
+ * The person completes a job (AP-D036): its workers and reviewers are cleaned up, except those the
+ * person keeps, and its merged worktrees are removed.
+ */
+export const CompleteJobRequestSchema = z.strictObject({
+  keepAgentSessionIds: z.array(Id).max(NARU_AGENT_LIMITS.listItems),
+  idempotencyKey: IdempotencyKeySchema,
+});
+
+/** The person reopens a completed job with what to do next; its sessions resume (AP-D036). */
+export const ReopenJobRequestSchema = z.strictObject({
+  verbatim: z.string().trim().min(1).max(NARU_AGENT_LIMITS.instructionCharacters),
   idempotencyKey: IdempotencyKeySchema,
 });
 

@@ -37,7 +37,11 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function fixture(
-  options: { readonly rootIsRepository?: boolean; readonly personGitConfig?: string } = {},
+  options: {
+    readonly rootIsRepository?: boolean;
+    readonly personGitConfig?: string;
+    readonly paneRunning?: (paneId: string) => boolean;
+  } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "naru-agent-workspace-")));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -93,6 +97,7 @@ async function fixture(
     pathPolicy,
     git: new SystemGitCommandRunner(undefined, 8_000),
     registerProject: (realPath, name) => catalog.register(realPath, name),
+    ...(options.paneRunning === undefined ? {} : { paneRunning: options.paneRunning }),
     ...(options.personGitConfig === undefined
       ? {}
       : { personGitConfigFiles: [join(root, "missing.gitconfig"), options.personGitConfig] }),
@@ -351,6 +356,68 @@ describe("Agent workspace tools (AP-D004 L5/L6, AP-D016)", () => {
       expect.unreachable();
     } catch (error) {
       expect((error as AgentPlatformError).code).toBe("AGENT_HELD_BY_HUMAN");
+    }
+  });
+});
+
+describe("merged worktrees when a job completes (AP-D030, AP-D036)", () => {
+  it("removes a clean, merged worktree and its branch, and keeps anything else", async () => {
+    const running = new Set<string>();
+    const f = await fixture({ paneRunning: (paneId) => running.has(paneId) });
+    const made = async (title: string, slug: string) => {
+      const taskId = f.task(title);
+      const created = await f.workspace.createWorktree(f.ctx(agent(f.orchestrator)), {
+        taskId,
+        slug,
+      });
+      writeFileSync(join(created.path, `${slug}.ts`), "export {};\n");
+      git(created.path, "add", ".");
+      git(created.path, "commit", "--quiet", "-m", slug);
+      f.pass(taskId);
+      const merge = await f.workspace.merge(f.ctx(agent(f.orchestrator)), { taskId });
+      return { ...created, worktree: f.core.findTaskWorktree(taskId, created.branch)!, merge };
+    };
+    const clean = await made("로그인 화면", "login");
+    const untracked = await made("세션 API", "session");
+    const later = await made("소개", "intro");
+    const busy = await made("검색", "search");
+    const terminal = await made("문서", "docs");
+    // A terminal the person runs in a worktree keeps it.
+    running.add(f.repository.getWorkspace(terminal.projectId).panes[0]!.id);
+    writeFileSync(join(untracked.path, "notes.txt"), "not committed\n");
+    writeFileSync(join(later.path, "intro.ts"), "export const more = 1;\n");
+    git(later.path, "commit", "--quiet", "-am", "after the merge");
+    f.core.startSharedProcess(f.ctx(agent(f.worker)), {
+      projectId: busy.projectId,
+      purpose: "dev",
+      command: "true",
+      ports: [],
+      keep: "keep",
+    });
+
+    const removed = await f.workspace.removeMergedWorktree(clean.worktree, clean.merge.reference);
+    expect(removed).toEqual({
+      branch: clean.branch,
+      removed: true,
+      branchDeleted: true,
+      reason: null,
+    });
+    expect(existsSync(clean.path)).toBe(false);
+    expect(git(f.repositoryPath, "branch", "--list", clean.branch)).toBe("");
+    expect(f.repository.getProject(clean.projectId)).toBeUndefined();
+    // The merged work stays in the project; the task keeps its merge commit.
+    expect(existsSync(join(f.repositoryPath, "login.ts"))).toBe(true);
+
+    const reason = async (item: typeof clean) =>
+      (await f.workspace.removeMergedWorktree(item.worktree, item.merge.reference)).reason;
+    expect(await reason(untracked)).toBe("changes");
+    expect(await reason(later)).toBe("unmerged");
+    expect(await reason(busy)).toBe("in-use");
+    expect(await reason(terminal)).toBe("in-use");
+    expect(await reason(clean)).toBe("missing");
+    for (const item of [untracked, later, busy, terminal]) {
+      expect(existsSync(item.path)).toBe(true);
+      expect(git(f.repositoryPath, "branch", "--list", item.branch)).not.toBe("");
     }
   });
 });

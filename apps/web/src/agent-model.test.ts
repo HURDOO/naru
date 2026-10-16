@@ -7,6 +7,7 @@ import {
   cleanupCandidates,
   namedAgents,
   inboxItems,
+  inboxKindLabel,
   isLive,
   layoutGraph,
   presenceOf,
@@ -104,7 +105,7 @@ describe("agent view model", () => {
     ).toBe("메인 오케스트레이터");
   });
 
-  it("puts approvals first, then stalls, decisions oldest first, then intent contracts", () => {
+  it("puts approvals first, then stalls, decisions oldest first, intent contracts, finished jobs", () => {
     const worker = agent(2, { paneId: id(900) });
     const orchestrator = agent(3, { role: "project-orchestrator" });
     const reviewing = task(1, { status: "review" });
@@ -153,14 +154,46 @@ describe("agent view model", () => {
       ],
       globalPendingApprovals: [],
     };
-    const items = inboxItems(board);
+    // A finished job waiting to be completed comes last (AP-D036); an open or completed one not.
+    const goal = {
+      id: id(990),
+      scope: { kind: "project", projectId: PROJECT },
+      author: { kind: "human" },
+      channel: "naru-ui",
+      originUserInstructionId: null,
+      supersedesId: null,
+      verbatim: "태그 페이지",
+      forgottenAt: null,
+      createdAt: "2026-10-16T00:30:00.000Z",
+    } as const;
+    const doneTask = { task: task(9, { status: "done" }), reviews: {}, latestRun: null };
+    const jobs = [
+      { goal, projectIds: [PROJECT], delegatedAt: null, tasks: [doneTask], completedAt: null },
+      {
+        goal: { ...goal, id: id(991) },
+        projectIds: [PROJECT],
+        delegatedAt: null,
+        tasks: [doneTask],
+        completedAt: "2026-10-16T01:00:00.000Z",
+      },
+      {
+        goal: { ...goal, id: id(992) },
+        projectIds: [PROJECT],
+        delegatedAt: null,
+        tasks: [{ ...doneTask, task: task(8, { status: "running" }) }],
+        completedAt: null,
+      },
+    ];
+    const items = inboxItems(board, jobs);
     expect(items.map((item) => item.key)).toEqual([
       `approval:${worker.id}:r1`,
       `stall:${PROJECT}:2026-10-16T01:50:00.000Z`,
       `handoff:${id(501)}`,
       `handoff:${id(502)}`,
       `contract:${id(600)}`,
+      `job:${id(990)}`,
     ]);
+    expect(inboxKindLabel(items[5]!)).toBe("완료 확인");
     expect(items[1]).toMatchObject({ kind: "stall", task: reviewing, orchestrator });
     expect(presenceOf(worker, true)).toBe("waiting");
     expect(agentActivity(worker, "waiting", items, [])).toBe("명령 실행 승인 기다림 · pnpm test");

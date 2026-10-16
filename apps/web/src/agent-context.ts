@@ -28,6 +28,8 @@ export interface AgentAppContextValue {
   openChat(agentSessionId: string): void;
   openFlow(projectId: string, taskId?: string | null): void;
   openDecision(item: InboxItem): void;
+  /** Completes a finished job or reopens a completed one, in a sheet that shows the outcome. */
+  openJob(job: AgentJob, action: "complete" | "reopen"): void;
   /** Shows an agent's or process's Pane in its workspace (TUI, console, terminal). */
   openPane(paneId: string, projectId: string | null): void;
 }

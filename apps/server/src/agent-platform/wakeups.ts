@@ -230,8 +230,19 @@ const INFORMATIONAL_EVENTS: ReadonlySet<AgentEventType> = new Set([
   "run.progress",
   "artifact.published",
   "shared_process.started",
+  // The person closing or reopening a job (AP-D036); a reopening's instruction wakes on its own.
+  "job.completed",
+  "job.reopened",
 ]);
 const NOTABLE_PROCESS_STATES = new Set<unknown>(["failed", "unknown"]);
+
+function retired(core: AgentPlatformCore, agentSessionId: string): boolean {
+  try {
+    return Boolean(core.getAgentSession({ kind: "system" }, agentSessionId).retiredAt);
+  } catch {
+    return false;
+  }
+}
 
 function relevantTo(
   orchestrator: AgentSession,
@@ -246,6 +257,9 @@ function relevantTo(
   // Runtime state reports (system) follow every turn, including the orchestrator's own; waking on
   // them would loop. Only another agent failing, stopping or going silent is worth a turn.
   if (event.type === "agent_session.updated") {
+    // The person cleaning an agent up, or bringing it back, is not something to act on; neither is
+    // what a cleaned-up agent's runtime reports as it ends.
+    if (event.data.retired !== undefined || retired(core, event.subjectId)) return false;
     return event.subjectId !== orchestrator.id && NOTABLE_AGENT_STATES.has(event.data.status);
   }
   if (orchestrator.role !== "main-orchestrator") {

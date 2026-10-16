@@ -1,6 +1,26 @@
 import type { DatabaseMigration } from "../database.js";
 
 /**
+ * v23 (AP-D036): a job the person completed or reopened, keyed by the goal it serves. A job without
+ * a row is open. `retired_json` lists the agents its completion cleaned up, so reopening resumes
+ * exactly those.
+ */
+export const AGENT_JOBS_MIGRATION: DatabaseMigration = {
+  version: 23,
+  migrate(database) {
+    database.exec(`
+      CREATE TABLE agent_jobs (
+        goal_instruction_id TEXT PRIMARY KEY REFERENCES agent_instructions(id) ON DELETE CASCADE,
+        round INTEGER NOT NULL CHECK (round > 0),
+        completed_at TEXT,
+        retired_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+  },
+};
+
+/**
  * v22 (AP-D033): when the person cleaned up an agent or shared process that no longer runs. Rows,
  * events and instructions stay; lists leave cleaned-up ones out.
  */

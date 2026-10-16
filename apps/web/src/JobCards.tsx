@@ -5,8 +5,10 @@ import { clock, presenceLabel, type Tone } from "./agent-model";
 import { Avatar, Icon, Pill } from "./agent-ui";
 import type { AgentJob, AgentJobTask, AgentWorking } from "./api";
 import {
+  awaitingCompletion,
   elapsedLabel,
   JOB_STAGES,
+  jobCompleted,
   jobFinishedAt,
   jobProgress,
   jobStage,
@@ -23,7 +25,8 @@ import {
 
 /**
  * "맡긴 일" (AP-D034): each goal the person handed over, where it is in the big picture, how it was
- * divided and who does what at which step now. Finished goals fold away.
+ * divided and who does what at which step now. A finished goal waits for the person to complete it;
+ * completed goals fold away and can be reopened for another round (AP-D036).
  */
 export function JobCards({
   compact = false,
@@ -31,8 +34,8 @@ export function JobCards({
   readonly compact?: boolean;
 }): React.JSX.Element | null {
   const app = useAgentApp();
-  const open = app.jobs.filter((job) => jobStage(job) !== "done");
-  const finished = app.jobs.filter((job) => jobStage(job) === "done");
+  const open = app.jobs.filter((job) => !jobCompleted(job));
+  const finished = app.jobs.filter((job) => jobCompleted(job));
   if (app.jobs.length === 0) return null;
   return (
     <section className="ag-jobs" aria-labelledby="ag-jobs-title">
@@ -69,6 +72,7 @@ export function JobCards({
                         Date.parse(job.goal.createdAt),
                     )}{" "}
                     걸림
+                    {(job.round ?? 1) > 1 ? ` · ${job.round}라운드` : ""}
                   </span>
                 </summary>
                 <JobCard job={job} compact={compact} />
@@ -95,7 +99,9 @@ function JobCard({
   const app = useAgentApp();
   const [all, setAll] = useState(false);
   const stage = jobStage(job);
-  const states = stageStates(stage);
+  const completed = jobCompleted(job);
+  const awaiting = awaitingCompletion(job);
+  const states = stageStates(stage, completed);
   const progress = jobProgress(job);
   const ordered = orderedTasks(job);
   const numbers = new Map(ordered.map((entry, index) => [entry.task.id, index + 1]));
@@ -142,6 +148,17 @@ function JobCard({
     <article className="ag-job" data-stage={stage} data-stalled={stalled.length > 0}>
       <header className="ag-job-head">
         <h3 className="ag-job-goal">{goalText(job)}</h3>
+        {(job.followUps ?? []).length > 0 && (
+          <ol className="ag-job-rounds" aria-label="이어서 맡긴 것">
+            {(job.followUps ?? []).map((followUp, index) => (
+              <li key={followUp.id}>
+                <span className="ag-job-round-tag">{index + 2}라운드</span>
+                <span className="ag-job-round-text">{followUp.verbatim ?? "잊은 지시"}</span>
+                <span className="ag-muted">{clock(followUp.createdAt)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
         <p className="ag-job-meta">
           <span>
             {clock(job.goal.createdAt)} 맡김 ·{" "}
@@ -178,9 +195,28 @@ function JobCard({
         <p className="ag-job-count">
           {progress.total === 0
             ? "오케스트레이터가 일을 나누는 중입니다"
-            : `작업 ${progress.total}개 중 ${progress.done}개 완료`}
+            : awaiting
+              ? `작업 ${progress.total}개 모두 끝남 · 완료 확인을 기다립니다`
+              : `작업 ${progress.total}개 중 ${progress.done}개 완료`}
         </p>
       </div>
+      {awaiting && (
+        <div className="ag-job-complete" role="status">
+          <Icon name="check" size={16} />
+          <p>
+            <strong>모든 작업이 끝났습니다.</strong> 확인하고 완료하면 이 일을 한 작업자와 리뷰어를
+            정리합니다.
+          </p>
+          <button
+            className="ag-button"
+            data-variant="primary"
+            type="button"
+            onClick={() => app.openJob(job, "complete")}
+          >
+            완료하기
+          </button>
+        </div>
+      )}
       {stalled.map((project) => (
         <StallBanner key={project.projectId} job={job} project={project} numbers={numbers} />
       ))}
@@ -211,6 +247,19 @@ function JobCard({
             </button>
           )}
         </div>
+      )}
+      {typeof job.completedAt === "string" && (
+        <footer className="ag-job-foot">
+          <span className="ag-muted">
+            {clock(job.completedAt)} 완료
+            {(job.cleanedUpAgentSessionIds ?? []).length > 0
+              ? ` · 에이전트 ${(job.cleanedUpAgentSessionIds ?? []).length}개 정리함`
+              : ""}
+          </span>
+          <button className="ag-button" type="button" onClick={() => app.openJob(job, "reopen")}>
+            다시 열기
+          </button>
+        </footer>
       )}
     </article>
   );

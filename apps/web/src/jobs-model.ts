@@ -21,11 +21,18 @@ export const JOB_STAGES: readonly { readonly id: JobStageId; readonly label: str
 
 const ACTIVE = new Set(["pending", "ready", "running", "blocked"]);
 
-/** Where the whole goal is: the earliest step any of its open tasks is still at. */
+/**
+ * Where the whole goal is: the earliest step any of its open tasks is still at. A reopened job is
+ * back at planning until a task moves for the new round (AP-D036).
+ */
 export function jobStage(job: AgentJob): JobStageId {
   const live = job.tasks.filter((entry) => entry.task.status !== "cancelled");
   if (live.length === 0) return "plan";
-  if (live.every((entry) => entry.task.status === "done")) return "done";
+  if (live.every((entry) => entry.task.status === "done")) {
+    const round = job.followUps?.at(-1)?.createdAt;
+    const moved = round === undefined || live.some((entry) => entry.task.updatedAt > round);
+    return moved ? "done" : "plan";
+  }
   if (live.some((entry) => ACTIVE.has(entry.task.status) || entry.task.status === "failed")) {
     return "work";
   }
@@ -33,14 +40,29 @@ export function jobStage(job: AgentJob): JobStageId {
   return reviewing.every(reviewsPassed) ? "merge" : "verify";
 }
 
-export function stageStates(current: JobStageId): Record<JobStageId, StageState> {
+/** The steps before the current one are done; 완료 is done only once the person completed it. */
+export function stageStates(current: JobStageId, completed = true): Record<JobStageId, StageState> {
   const index = JOB_STAGES.findIndex((stage) => stage.id === current);
   return Object.fromEntries(
     JOB_STAGES.map((stage, position) => [
       stage.id,
-      current === "done" || position < index ? "done" : position === index ? "current" : "todo",
+      (current === "done" && completed) || position < index
+        ? "done"
+        : position === index
+          ? "current"
+          : "todo",
     ]),
   ) as Record<JobStageId, StageState>;
+}
+
+/** The person completed it (AP-D036); without completion records a finished job counts as done. */
+export function jobCompleted(job: AgentJob): boolean {
+  return job.completedAt === undefined ? jobStage(job) === "done" : job.completedAt !== null;
+}
+
+/** Every task of the round is finished and the job waits for the person to complete it. */
+export function awaitingCompletion(job: AgentJob): boolean {
+  return job.completedAt === null && jobStage(job) === "done";
 }
 
 export function jobProgress(job: AgentJob): { readonly done: number; readonly total: number } {

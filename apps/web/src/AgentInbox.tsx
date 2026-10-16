@@ -4,7 +4,7 @@ import { useAgentApp } from "./agent-context";
 import { approvalKindLabel, processStatusLabel } from "./agent-labels";
 import { ago, type InboxItem, inboxKindLabel } from "./agent-model";
 import { Icon, Sheet } from "./agent-ui";
-import { stallAge, stallText } from "./jobs-model";
+import { jobProgress, stallAge, stallText } from "./jobs-model";
 
 /** One thing that waits for the person, answerable in place when it is a yes/no (AP-D022). */
 export function InboxCard({ item }: { readonly item: InboxItem }): React.JSX.Element {
@@ -113,6 +113,36 @@ export function InboxCard({ item }: { readonly item: InboxItem }): React.JSX.Ele
               대화 보기
             </button>
           )}
+        </div>
+      </article>
+    );
+  }
+  if (item.kind === "job") {
+    const progress = jobProgress(item.job);
+    return (
+      <article
+        className="ag-inbox-card"
+        data-kind="job"
+        aria-label={`${inboxKindLabel(item)}: ${item.job.goal.verbatim ?? "잊은 지시"}`}
+      >
+        <header>
+          <span className="ag-inbox-kind">{inboxKindLabel(item)}</span>
+          <span className="ag-inbox-when">{ago(item.job.goal.createdAt, app.now)} 맡김</span>
+        </header>
+        <h3>{item.job.goal.verbatim ?? "잊은 지시"}</h3>
+        <p>
+          작업 {progress.total}개가 모두 끝났습니다. 완료하면 이 일을 한 작업자와 리뷰어를
+          정리합니다.
+        </p>
+        <div className="ag-inbox-actions">
+          <button
+            className="ag-button"
+            data-variant="primary"
+            type="button"
+            onClick={() => app.openDecision(item)}
+          >
+            확인하기
+          </button>
         </div>
       </article>
     );

@@ -20,6 +20,7 @@ import { PHONE, useMedia } from "./agent-dom";
 import { ApiFailure, type AgentBoard, type AgentJob, type AgentWorking, type NaruApi } from "./api";
 import { ControlRoom } from "./ControlRoom";
 import { FlowView } from "./FlowView";
+import { JobSheet } from "./JobSheets";
 import "./agent-app.css";
 
 type Screen = "control" | "chat" | "flow";
@@ -80,6 +81,11 @@ export function AgentApp({
   const phone = useMedia(PHONE);
   const [board, setBoard] = useState<AgentBoard | null>(null);
   const [jobs, setJobs] = useState<readonly AgentJob[]>([]);
+  // The job as it was when its sheet opened: completing it takes it out of the inbox (AP-D036).
+  const [jobSheet, setJobSheet] = useState<{
+    readonly job: AgentJob;
+    readonly action: "complete" | "reopen";
+  } | null>(null);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
@@ -151,7 +157,7 @@ export function AgentApp({
   }, [refresh]);
 
   const agents = useMemo(() => (board === null ? [] : boardAgents(board)), [board]);
-  const inbox = useMemo(() => (board === null ? [] : inboxItems(board)), [board]);
+  const inbox = useMemo(() => (board === null ? [] : inboxItems(board, jobs)), [board, jobs]);
   const waiting = useMemo(() => waitingAgentIds(inbox), [inbox]);
   const working = useMemo(() => {
     const map = new Map<string, AgentWorking>();
@@ -249,7 +255,11 @@ export function AgentApp({
         onViewChange?.("flow");
         setDecisionKey(null);
       },
-      openDecision: (item: InboxItem) => setDecisionKey(item.key),
+      openDecision: (item: InboxItem) => {
+        if (item.kind === "job") setJobSheet({ job: item.job, action: "complete" });
+        else setDecisionKey(item.key);
+      },
+      openJob: (job, action) => setJobSheet({ job, action }),
       openPane: onOpenPane,
     };
   }, [
@@ -367,6 +377,14 @@ export function AgentApp({
                 key={decision.key}
                 item={decision}
                 onClose={() => setDecisionKey(null)}
+              />
+            )}
+            {jobSheet !== null && (
+              <JobSheet
+                key={`${jobSheet.action}:${jobSheet.job.goal.id}`}
+                job={jobSheet.job}
+                action={jobSheet.action}
+                onClose={() => setJobSheet(null)}
               />
             )}
           </AgentAppContext.Provider>

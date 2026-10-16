@@ -112,6 +112,39 @@ export interface AgentJob {
   readonly projectIds: readonly string[];
   readonly delegatedAt: string | null;
   readonly tasks: readonly AgentJobTask[];
+  /** What the person asked in later rounds (AP-D036); absent from older servers. */
+  readonly followUps?: readonly Instruction[];
+  readonly round?: number;
+  /** When the person completed it; null while open, absent from older servers. */
+  readonly completedAt?: string | null;
+  /** The agents its completion cleaned up; reopening resumes them. */
+  readonly cleanedUpAgentSessionIds?: readonly string[];
+}
+
+/** Why an agent of a job stays when the job completes (AP-D036). */
+export type JobAgentKeep = "held" | "other-work" | "working" | "person";
+
+/** What completing a job would clean up (`GET /api/agent/jobs/:id/completion`). */
+export interface JobCompletionPreview {
+  readonly openTasks: number;
+  readonly agents: readonly { readonly agent: AgentSession; readonly keep: JobAgentKeep | null }[];
+  readonly worktrees: readonly {
+    readonly branch: string;
+    readonly taskId: string;
+    readonly merged: boolean;
+  }[];
+}
+
+export interface JobCompletionResult {
+  readonly retired: readonly AgentSession[];
+  readonly kept: readonly { readonly agent: AgentSession; readonly keep: JobAgentKeep }[];
+  readonly worktrees: readonly {
+    readonly branch: string;
+    readonly removed: boolean;
+    readonly branchDeleted: boolean;
+    readonly reason: "changes" | "unmerged" | "in-use" | "missing" | "failed" | null;
+  }[];
+  readonly panesKept: number;
 }
 
 export interface AgentJobTask {
@@ -589,6 +622,29 @@ export class NaruApi {
   /** The person's goals and the tasks they became (AP-D034). */
   async agentJobs(): Promise<AgentJob[]> {
     return (await this.#request<{ jobs: AgentJob[] }>("/api/agent/jobs")).jobs;
+  }
+
+  jobCompletion(goalId: string): Promise<JobCompletionPreview> {
+    return this.#request<JobCompletionPreview>(`/api/agent/jobs/${goalId}/completion`);
+  }
+
+  /** The person completes a job; the agents in `keep` stay (AP-D036). */
+  completeJob(goalId: string, keep: readonly string[]): Promise<JobCompletionResult> {
+    return this.#agentWrite(`/api/agent/jobs/${goalId}/complete`, {
+      keepAgentSessionIds: keep,
+      idempotencyKey: key(),
+    });
+  }
+
+  /** The person reopens a completed job with what to do next; its sessions resume. */
+  reopenJob(
+    goalId: string,
+    verbatim: string,
+  ): Promise<{ instruction: Instruction; resumed: AgentSession[]; failed: AgentSession[] }> {
+    return this.#agentWrite(`/api/agent/jobs/${goalId}/reopen`, {
+      verbatim,
+      idempotencyKey: key(),
+    });
   }
 
   /** "오케스트레이터에게 확인시키기": wakes the project's orchestrator to look again (AP-D034). */

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentJob, AgentJobTask, AgentWorking } from "./api";
 import {
   activityLine,
+  awaitingCompletion,
   elapsedLabel,
+  jobCompleted,
   jobFinishedAt,
   jobProgress,
   jobStage,
@@ -126,6 +128,56 @@ describe("job stage (AP-D034)", () => {
         ]),
       ),
     ).toBe("2026-10-16T01:55:00.000Z");
+  });
+});
+
+describe("completing and reopening a job (AP-D036)", () => {
+  const finished = (patch: Partial<AgentJob> = {}): AgentJob => ({
+    ...job([entry(task(1, { status: "done", updatedAt: "2026-10-16T01:30:00.000Z" }))]),
+    completedAt: null,
+    round: 1,
+    followUps: [],
+    ...patch,
+  });
+
+  it("waits for the person once every task is done, and folds once completed", () => {
+    expect(awaitingCompletion(finished())).toBe(true);
+    expect(jobCompleted(finished())).toBe(false);
+    // 완료 is the current step until the person completes it.
+    expect(stageStates("done", false).done).toBe("current");
+    expect(stageStates("done", false).merge).toBe("done");
+    const done = finished({ completedAt: "2026-10-16T01:40:00.000Z" });
+    expect(awaitingCompletion(done)).toBe(false);
+    expect(jobCompleted(done)).toBe(true);
+    expect(awaitingCompletion(job([entry(task(1, { status: "running" }))]))).toBe(false);
+  });
+
+  it("treats a finished job as completed for a server without completion records", () => {
+    const old = job([entry(task(1, { status: "done" }))]);
+    expect(jobCompleted(old)).toBe(true);
+    expect(awaitingCompletion(old)).toBe(false);
+  });
+
+  it("is back at planning after reopening until a task moves for the new round", () => {
+    const round: Instruction = {
+      ...goal,
+      id: id(998),
+      originUserInstructionId: goal.id,
+      verbatim: "태그 색도 바꿔 줘",
+      createdAt: "2026-10-16T01:50:00.000Z",
+    };
+    const reopened = finished({ round: 2, followUps: [round] });
+    expect(jobStage(reopened)).toBe("plan");
+    expect(awaitingCompletion(reopened)).toBe(false);
+    const next = finished({
+      round: 2,
+      followUps: [round],
+      tasks: [
+        entry(task(1, { status: "done", updatedAt: "2026-10-16T01:30:00.000Z" })),
+        entry(task(2, { status: "running", updatedAt: "2026-10-16T01:55:00.000Z" })),
+      ],
+    });
+    expect(jobStage(next)).toBe("work");
   });
 });
 

@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { Artifact } from "@naru/contracts/naru-agent/v1";
+import type { AgentWorktree, Artifact } from "@naru/contracts/naru-agent/v1";
 import {
   AgentPlatformError,
   type AgentPlatformCore,
@@ -26,6 +26,8 @@ export interface AgentWorkspaceOptions {
    * merge commit's identity is read from them; the project's own identity comes first.
    */
   readonly personGitConfigFiles?: readonly string[];
+  /** Whether a Pane's session runs now; a worktree with one running stays (AP-D036). */
+  readonly paneRunning?: (paneId: string) => boolean;
   /** Throws when the path is not a readable document or file inside the project. */
   readonly checkViewPath: (
     projectPath: string,
@@ -152,6 +154,76 @@ export class AgentWorkspace {
           ? `${branch} was already in ${target}`
           : `${branch} → ${target} (merge commit)`,
     });
+  }
+
+  /**
+   * Removes a merged task's worktree and branch when its job completes (AP-D030, AP-D036): only a
+   * worktree Naru made, with nothing uncommitted or untracked, whose branch is in the merge commit
+   * and whose project has no running Pane and no Agent Platform record. Anything else stays, with the reason.
+   * Remote repositories are never touched.
+   */
+  async removeMergedWorktree(
+    worktree: AgentWorktree,
+    mergeCommit: string,
+  ): Promise<WorktreeRemoval> {
+    const { core, repository } = this.#options;
+    const branch = worktree.branch;
+    const kept = (reason: NonNullable<WorktreeRemoval["reason"]>): WorktreeRemoval => ({
+      branch,
+      removed: false,
+      branchDeleted: false,
+      reason,
+    });
+    const project = repository.getProject(worktree.projectId);
+    const parent = repository.getProject(worktree.parentProjectId);
+    if (project === undefined || parent === undefined) return kept("missing");
+    if (!/^[A-Za-z0-9._/-]+$/u.test(branch) || branch.startsWith("-") || branch.includes("..")) {
+      return kept("failed");
+    }
+    if (!/^[0-9a-f]{7,64}$/u.test(mergeCommit)) return kept("unmerged");
+    // Every project has Pane records; one that runs (a terminal or agent in the worktree) counts.
+    const running = this.#options.paneRunning ?? (() => false);
+    if (
+      repository.getWorkspace(project.id).panes.some((pane) => running(pane.id)) ||
+      core.countProjectAgentRecords(project.id) > 0
+    ) {
+      return kept("in-use");
+    }
+    let root: string;
+    try {
+      root = this.#approvedRoot(parent.path);
+      this.#approvedRoot(project.path);
+    } catch {
+      return kept("failed");
+    }
+    try {
+      const changes = await this.#git(project.path, root, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+      ]);
+      if (changes.trim() !== "") return kept("changes");
+      const merged = await this.#git(parent.path, root, [
+        "merge-base",
+        "--is-ancestor",
+        `refs/heads/${branch}`,
+        mergeCommit,
+      ]).then(
+        () => true,
+        () => false,
+      );
+      if (!merged) return kept("unmerged");
+      // Without --force: git itself refuses a worktree that is not clean.
+      await this.#git(parent.path, root, ["worktree", "remove", project.path]);
+    } catch {
+      return kept("failed");
+    }
+    const branchDeleted = await this.#git(parent.path, root, ["branch", "-d", branch]).then(
+      () => true,
+      () => false,
+    );
+    repository.deleteProject(project.id);
+    return { branch, removed: true, branchDeleted, reason: null };
   }
 
   /**
@@ -292,6 +364,20 @@ export class AgentWorkspace {
       );
     }
   }
+}
+
+/** What became of a merged task's worktree when its job completed (AP-D036). */
+export interface WorktreeRemoval {
+  readonly branch: string;
+  readonly removed: boolean;
+  /** `git branch -d` refuses a branch that is not merged into the checked-out branch. */
+  readonly branchDeleted: boolean;
+  /**
+   * Why it stays: uncommitted or untracked work (`changes`), commits not in the merge
+   * (`unmerged`), a Pane or Naru record in its project (`in-use`), already gone (`missing`), or git
+   * refused (`failed`).
+   */
+  readonly reason: "changes" | "unmerged" | "in-use" | "missing" | "failed" | null;
 }
 
 /** Naru's own git never runs repository code: hooks would run in the server with its bare env. */

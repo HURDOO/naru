@@ -209,6 +209,7 @@ const agentWorkspace =
         pathPolicy,
         git: new SystemGitCommandRunner(undefined, AGENT_GIT_TIMEOUT_MS),
         registerProject: (realPath, name) => projectCatalog.register(realPath, name),
+        paneRunning: (paneId) => supervisor.isRunning(paneId),
         // Merge commits carry the person's git identity, as their own agent's merge would (AP-D019).
         personGitConfigFiles: [
           join(homedir(), ".gitconfig"),
@@ -308,6 +309,7 @@ try {
     supervisor,
     ...(agentPlatform === undefined ? {} : { agentPlatform }),
     ...(managedAgents === undefined ? {} : { agentRuntime: managedAgents }),
+    ...(agentWorkspace === undefined ? {} : { agentWorktrees: agentWorkspace }),
     ...(sharedProcesses === undefined
       ? {}
       : { sharedProcesses, paneControlPolicy: sharedProcesses }),
