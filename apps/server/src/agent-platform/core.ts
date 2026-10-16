@@ -958,6 +958,7 @@ export class AgentPlatformCore {
         const session = this.#requireAgentSession(input.agentSessionId);
         const now = this.#timestamp();
         if (input.held === (session.humanHoldSince !== null)) return session.id;
+        if (input.held && session.retiredAt) throw retiredAgent();
         this.#store.updateAgentSession({
           ...session,
           humanHoldSince: input.held ? now : null,
@@ -1265,7 +1266,7 @@ export class AgentPlatformCore {
     }
     const token = randomBytes(32).toString("base64url");
     this.#store.transaction(() => {
-      this.#requireAgentSession(agentSessionId);
+      if (this.#requireAgentSession(agentSessionId).retiredAt) throw retiredAgent();
       this.#store.replaceRuntimeLaunch(agentSessionId, capabilityDigest(token), this.#timestamp());
     });
     return token;
@@ -1466,6 +1467,140 @@ export class AgentPlatformCore {
   listAgentSessions(actor: Actor, projectId: string | null): AgentSession[] {
     this.#authorize(actor, "state.read", projectId);
     return this.#store.listAgentSessions(projectId);
+  }
+
+  /** Cleaned-up agents, for the person's screens to name them in old records (AP-D033). */
+  listRetiredAgentSessions(actor: Actor): AgentSession[] {
+    if (actor.kind === "agent") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only the person reads cleaned-up agents.");
+    }
+    return this.#store.listRetiredAgentSessions();
+  }
+
+  /**
+   * The person cleans up an agent that no longer runs (AP-D033): it leaves every list and cannot be
+   * launched or messaged again; its instructions, events, tasks and runs stay.
+   */
+  retireAgentSession(
+    context: CommandContext,
+    input: { readonly agentSessionId: string },
+  ): AgentSession {
+    if (context.actor.kind !== "human") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only the person cleans up agents.");
+    }
+    return this.#command(
+      context,
+      "agent_session.retire",
+      input,
+      "agent_session",
+      (events) => {
+        const session = this.#requireAgentSession(input.agentSessionId);
+        if (session.retiredAt) return session.id;
+        if (!RETIRABLE_AGENT_STATUSES.has(session.status) || session.humanHoldSince !== null) {
+          throw new AgentPlatformError(
+            "AGENT_INVALID_STATE",
+            "Only an agent that no longer runs and is not held can be cleaned up.",
+          );
+        }
+        this.#store.retireAgentSession(session.id, this.#timestamp());
+        events.push({
+          type: "agent_session.updated",
+          projectId: session.projectId,
+          subjectId: session.id,
+          data: { status: session.status, retired: true },
+        });
+        return session.id;
+      },
+      (id) => this.#requireAgentSession(id),
+    );
+  }
+
+  /**
+   * Cleans up several at once: every one is checked first, so a running agent in the list changes
+   * nothing. Each item is its own idempotent command under a key derived from the request's.
+   */
+  cleanup(
+    context: CommandContext,
+    input: { readonly agentSessionIds: readonly string[]; readonly processIds: readonly string[] },
+  ): { readonly agents: AgentSession[]; readonly processes: SharedProcess[] } {
+    if (context.actor.kind !== "human") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only the person cleans up agents.");
+    }
+    for (const id of input.agentSessionIds) {
+      const session = this.#requireAgentSession(id);
+      if (
+        !session.retiredAt &&
+        (!RETIRABLE_AGENT_STATUSES.has(session.status) || session.humanHoldSince !== null)
+      ) {
+        throw new AgentPlatformError(
+          "AGENT_INVALID_STATE",
+          "Only agents that no longer run and are not held can be cleaned up.",
+        );
+      }
+    }
+    for (const id of input.processIds) {
+      const process = this.#requireSharedProcess(id);
+      if (
+        !process.retiredAt &&
+        (!RETIRABLE_PROCESS_STATUSES.has(process.status) || process.humanHoldSince !== null)
+      ) {
+        throw new AgentPlatformError(
+          "AGENT_INVALID_STATE",
+          "Only processes that have ended and are not held can be cleaned up.",
+        );
+      }
+    }
+    const item = (id: string): CommandContext => ({
+      actor: context.actor,
+      idempotencyKey: createHash("sha256")
+        .update(context.idempotencyKey)
+        .update("\0")
+        .update(id)
+        .digest("hex"),
+    });
+    return {
+      agents: input.agentSessionIds.map((id) =>
+        this.retireAgentSession(item(id), { agentSessionId: id }),
+      ),
+      processes: input.processIds.map((id) =>
+        this.retireSharedProcess(item(id), { processId: id }),
+      ),
+    };
+  }
+
+  /** The person cleans up a shared process that has ended (AP-D033). */
+  retireSharedProcess(
+    context: CommandContext,
+    input: { readonly processId: string },
+  ): SharedProcess {
+    if (context.actor.kind !== "human") {
+      throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only the person cleans up processes.");
+    }
+    return this.#command(
+      context,
+      "shared_process.retire",
+      input,
+      "shared_process",
+      (events) => {
+        const process = this.#requireSharedProcess(input.processId);
+        if (process.retiredAt) return process.id;
+        if (!RETIRABLE_PROCESS_STATUSES.has(process.status) || process.humanHoldSince !== null) {
+          throw new AgentPlatformError(
+            "AGENT_INVALID_STATE",
+            "Only a process that has ended and is not held can be cleaned up.",
+          );
+        }
+        this.#store.retireSharedProcess(process.id, this.#timestamp());
+        events.push({
+          type: "shared_process.updated",
+          projectId: process.projectId,
+          subjectId: process.id,
+          data: { status: process.status, retired: true },
+        });
+        return process.id;
+      },
+      (id) => this.#requireSharedProcess(id),
+    );
   }
 
   getHandoff(actor: Actor, handoffId: string): Handoff {
@@ -2222,6 +2357,7 @@ export class AgentPlatformCore {
         return;
       case "agent": {
         const session = this.#requireAgentSession(scope.agentSessionId);
+        if (session.retiredAt) throw retiredAgent();
         if (session.projectId !== scope.projectId) {
           throw new AgentPlatformError("AGENT_INVALID_REFERENCE", "Agent scope project mismatch.");
         }
@@ -2391,4 +2527,21 @@ function notFound(what: string): AgentPlatformError {
 
 function throwNotFound(what: string): never {
   throw notFound(what);
+}
+
+/** States in which an agent or process no longer runs, so the person may clean it up (AP-D033). */
+const RETIRABLE_AGENT_STATUSES: ReadonlySet<AgentSession["status"]> = new Set([
+  "stopped",
+  "failed",
+  "unknown",
+]);
+const RETIRABLE_PROCESS_STATUSES: ReadonlySet<SharedProcess["status"]> = new Set([
+  "exited",
+  "failed",
+  "stopped",
+  "unknown",
+]);
+
+function retiredAgent(): AgentPlatformError {
+  return new AgentPlatformError("AGENT_INVALID_STATE", "This agent was cleaned up.");
 }

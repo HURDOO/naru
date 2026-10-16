@@ -1,9 +1,10 @@
-import type { AgentSession } from "@naru/contracts/naru-agent/v1";
+import type { AgentSession, SharedProcess } from "@naru/contracts/naru-agent/v1";
 import { type FormEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAgentApp } from "./agent-context";
 import {
   agentActivity,
   ago,
+  cleanupCandidates,
   clock,
   EVENT_FIRST_PAGE,
   isLive,
@@ -527,6 +528,9 @@ function InboxColumn({ limit }: { readonly limit?: number }): React.JSX.Element 
 
 function Roster(): React.JSX.Element {
   const app = useAgentApp();
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const stale = cleanupCandidates(app.board);
+  const staleCount = stale.agents.length + stale.processes.length;
   const tasks = app.board.projects.flatMap((project) => project.tasks);
   const ordered = [...app.agents].sort(
     (left, right) =>
@@ -541,7 +545,24 @@ function Roster(): React.JSX.Element {
         <span className="ag-muted">
           {app.agents.length}명 · {working}명 일하는 중
         </span>
+        {staleCount > 0 && (
+          <button
+            className="ag-link ag-grow-left"
+            type="button"
+            disabled={!app.mutationAllowed}
+            onClick={() => setCleanupOpen(true)}
+          >
+            꺼진 에이전트 정리 {staleCount}
+          </button>
+        )}
       </header>
+      {cleanupOpen && (
+        <CleanupSheet
+          agents={stale.agents}
+          processes={stale.processes}
+          onClose={() => setCleanupOpen(false)}
+        />
+      )}
       {ordered.length === 0 ? (
         <EmptyNote icon="bell">아직 에이전트가 없습니다.</EmptyNote>
       ) : (
@@ -555,6 +576,92 @@ function Roster(): React.JSX.Element {
       )}
     </section>
   );
+}
+
+/**
+ * "꺼진 에이전트 정리" (AP-D033): shows exactly what goes away before anything does. Records stay;
+ * the lists and their Panes go.
+ */
+function CleanupSheet({
+  agents,
+  processes,
+  onClose,
+}: {
+  readonly agents: readonly AgentSession[];
+  readonly processes: readonly SharedProcess[];
+  readonly onClose: () => void;
+}): React.JSX.Element {
+  const app = useAgentApp();
+  const [busy, setBusy] = useState(false);
+  const count = agents.length + processes.length;
+  return (
+    <Sheet title="꺼진 에이전트 정리" onClose={onClose}>
+      <p className="ag-muted">
+        아래 {count}개를 관제실과 작업공간 목록에서 없애고, 남아 있는 Pane을 닫습니다. 지시, 작업,
+        대화 기록은 그대로 남습니다. 정리한 에이전트는 다시 실행하지 않습니다.
+      </p>
+      <ul className="ag-cleanup-list">
+        {agents.map((agent) => (
+          <li key={agent.id}>
+            <Avatar identity={app.identity(agent)} size={22} presence={app.presence(agent)} />
+            <span>{app.identity(agent).name}</span>
+            <span className="ag-muted">
+              {app.projectName(agent.projectId)} · {presenceLabel(app.presence(agent))}
+            </span>
+          </li>
+        ))}
+        {processes.map((process) => (
+          <li key={process.id}>
+            <Icon name="terminal" size={18} />
+            <span>{process.purpose}</span>
+            <span className="ag-muted">
+              {app.projectName(process.projectId)} · 프로세스 {processStatusLabel(process.status)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="ag-sheet-actions">
+        <button className="ag-button" type="button" onClick={onClose}>
+          취소
+        </button>
+        <button
+          className="ag-button"
+          data-variant="primary"
+          type="button"
+          disabled={busy || !app.mutationAllowed}
+          onClick={() => {
+            setBusy(true);
+            void app
+              .act(`${count}개를 정리했습니다.`, () =>
+                app.api.cleanupAgents(
+                  agents.map((agent) => agent.id),
+                  processes.map((process) => process.id),
+                ),
+              )
+              .then((done) => {
+                setBusy(false);
+                if (done) onClose();
+              });
+          }}
+        >
+          {count}개 정리
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+function processStatusLabel(status: SharedProcess["status"]): string {
+  switch (status) {
+    case "exited":
+      return "끝남";
+    case "failed":
+      return "실패";
+    case "stopped":
+      return "멈춤";
+    default:
+      return "확인 필요";
+  }
 }
 
 export function AgentRow({

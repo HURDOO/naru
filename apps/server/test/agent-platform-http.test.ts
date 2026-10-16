@@ -435,6 +435,75 @@ describe("Agent Platform control room reads", () => {
   });
 });
 
+describe("Agent Platform cleanup (AP-D033)", () => {
+  it("cleans up a stopped agent with the device lease and removes its Pane", async () => {
+    const fixture = await createFixture(true);
+    const core = fixture.core!;
+    let ordinal = 900;
+    const key = () => `90000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`;
+    const register = (role: AgentSession["role"]) =>
+      core.registerAgentSession(
+        { actor: { kind: "human" }, idempotencyKey: key() },
+        {
+          projectId: fixture.projectId,
+          role,
+          runtime: "claude",
+          native: false,
+          observation: "transcript",
+          conversationWriter: "orchestrator",
+        },
+      ).id;
+    const orchestrator = register("project-orchestrator");
+    const worker = register("worker");
+    const pane = fixture.repository.createAgentPane(worker, "Claude worker · fixture");
+    core.updateAgentRuntimeState({ kind: "system" }, { agentSessionId: worker, status: "unknown" });
+    const login = await fixture.login();
+    const body = { agentSessionIds: [worker], processIds: [], idempotencyKey: key() };
+
+    const withoutLease = await fixture.app.inject({
+      method: "POST",
+      url: "/api/agent/cleanup",
+      headers: { origin, cookie: login.cookie, "x-csrf-token": login.csrfToken },
+      payload: body,
+    });
+    expect(withoutLease.json()).toMatchObject({ code: "LEASE_REQUIRED" });
+
+    const headers = await fixture.controller(login);
+    const cleaned = await fixture.app.inject({
+      method: "POST",
+      url: "/api/agent/cleanup",
+      headers,
+      payload: body,
+    });
+    expect(cleaned.statusCode).toBe(200);
+    expect(cleaned.json()).toMatchObject({
+      agents: [{ id: worker, retiredAt: expect.any(String) as string }],
+      processes: [],
+      panesKept: 0,
+    });
+    expect(fixture.repository.getPaneContext(pane.id)).toBeUndefined();
+
+    const board = (
+      await fixture.app.inject({
+        method: "GET",
+        url: "/api/agent/board",
+        headers: { cookie: login.cookie },
+      })
+    ).json<{ projects: { agents: { id: string }[] }[]; retiredAgents: { id: string }[] }>();
+    expect(board.projects[0]!.agents.map((agent) => agent.id)).toEqual([orchestrator]);
+    expect(board.retiredAgents.map((agent) => agent.id)).toEqual([worker]);
+
+    const running = await fixture.app.inject({
+      method: "POST",
+      url: "/api/agent/cleanup",
+      headers,
+      payload: { agentSessionIds: [orchestrator], processIds: [], idempotencyKey: key() },
+    });
+    expect(running.statusCode).toBe(409);
+    expect(running.json()).toMatchObject({ code: "AGENT_INVALID_STATE" });
+  });
+});
+
 describe("Agent Platform intent contract approval", () => {
   it("shows a proposal until the user approves it with the device lease", async () => {
     const fixture = await createFixture(true);

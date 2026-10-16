@@ -4,6 +4,8 @@ import {
   agentActivity,
   agentIdentity,
   ago,
+  cleanupCandidates,
+  namedAgents,
   inboxItems,
   isLive,
   layoutGraph,
@@ -267,5 +269,58 @@ describe("agent view model", () => {
     expect(ago("2026-10-16T01:59:30.000Z", now)).toBe("방금");
     expect(ago("2026-10-16T01:48:00.000Z", now)).toBe("12분");
     expect(ago("2026-10-15T23:00:00.000Z", now)).toBe("3시간");
+  });
+});
+
+describe("cleaning up agents (AP-D033)", () => {
+  it("offers only agents and processes that no longer run and nobody holds", () => {
+    const process = (n: number, status: "running" | "exited" | "failed", held = false) => ({
+      id: id(400 + n),
+      projectId: PROJECT,
+      taskId: null,
+      runId: null,
+      agentSessionId: null,
+      purpose: `dev ${n}`,
+      command: "pnpm dev",
+      ports: [],
+      keep: "run" as const,
+      paneId: null,
+      humanHoldSince: held ? "2026-10-16T02:00:00.000Z" : null,
+      status,
+      exitCode: null,
+      createdAt: "2026-10-16T01:00:00.000Z",
+      updatedAt: "2026-10-16T01:00:00.000Z",
+    });
+    const board: AgentBoard = {
+      projects: [
+        {
+          projectId: PROJECT,
+          intentContract: null,
+          pendingIntentContract: null,
+          activePlan: null,
+          tasks: [],
+          openHandoffs: [],
+          agents: [
+            agent(1, { status: "unknown" }),
+            agent(2, { status: "active" }),
+            agent(3, { status: "stopped", humanHoldSince: "2026-10-16T02:00:00.000Z" }),
+            agent(4, { status: "failed" }),
+          ],
+          processes: [process(1, "running"), process(2, "exited"), process(3, "failed", true)],
+          pendingApprovals: [],
+        },
+      ],
+      globalAgents: [agent(5, { role: "main-orchestrator", projectId: null, status: "idle" })],
+      openHandoffs: [],
+      globalPendingApprovals: [],
+      retiredAgents: [agent(6, { status: "stopped", retiredAt: "2026-10-16T03:00:00.000Z" })],
+    };
+    const candidates = cleanupCandidates(board);
+    expect(candidates.agents.map((item) => item.id)).toEqual([id(1), id(4)]);
+    expect(candidates.processes.map((item) => item.id)).toEqual([id(402)]);
+    // Numbers count cleaned-up agents too, so the remaining ones keep their names.
+    const named = namedAgents(board);
+    expect(named.map((item) => item.id)).toContain(id(6));
+    expect(agentIdentity(agent(4), named, () => "alpha").name).toBe("작업자 4");
   });
 });

@@ -971,6 +971,7 @@ describe("database migrations", () => {
         { version: 19 },
         { version: 20 },
         { version: 21 },
+        { version: 22 },
       ]);
       expect(database.prepare("SELECT * FROM project_groups").get()).toMatchObject({
         id: "11111111-1111-4111-8111-111111111111",

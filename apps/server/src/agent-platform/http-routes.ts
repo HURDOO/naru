@@ -8,6 +8,7 @@ import {
   AgentInterruptRequestSchema,
   AgentTurnRequestSchema,
   ApproveIntentContractRequestSchema,
+  CleanupAgentsRequestSchema,
   CreateHumanInstructionRequestSchema,
   CreateManagedAgentRequestSchema,
   IdempotentRequestSchema,
@@ -94,6 +95,8 @@ export function registerAgentPlatformRoutes(
   noteHumanInput?: (target: { readonly agentSessionId: string }) => void,
   /** Names the person gave to agents' Panes (AP-D029), so every screen shows the same name. */
   customPaneTitles?: (paneIds: readonly string[]) => Readonly<Record<string, string>>,
+  /** Removes a Pane whose agent or process was cleaned up, ending anything left in it. */
+  removePane?: (paneId: string) => Promise<void>,
 ): void {
   const mutate = (request: FastifyRequest): void => {
     guards.requireUnsafeRequest(request);
@@ -163,7 +166,32 @@ export function registerAgentPlatformRoutes(
       openHandoffs: overview.openHandoffs,
       globalPendingApprovals: pendingApprovals(overview.globalAgents),
       paneNames: customPaneTitles?.(paneIds) ?? {},
+      // Cleaned-up agents still name the tasks and runs they did (AP-D033).
+      retiredAgents: core.listRetiredAgentSessions(HUMAN),
     };
+  });
+
+  /**
+   * "꺼진 에이전트 정리" (AP-D033): agents and processes that no longer run leave the lists, and
+   * their Panes are removed. Records stay.
+   */
+  app.post("/api/agent/cleanup", async (request) => {
+    mutate(request);
+    const input = CleanupAgentsRequestSchema.parse(request.body);
+    const cleaned = core.cleanup(
+      { actor: HUMAN, idempotencyKey: input.idempotencyKey },
+      { agentSessionIds: input.agentSessionIds, processIds: input.processIds },
+    );
+    let panesKept = 0;
+    for (const paneId of [...cleaned.agents, ...cleaned.processes].map((item) => item.paneId)) {
+      if (paneId === null || removePane === undefined) continue;
+      try {
+        await removePane(paneId);
+      } catch {
+        panesKept += 1; // the record is cleaned up; the person can still close the Pane
+      }
+    }
+    return { ...cleaned, panesKept };
   });
 
   app.get("/api/agent/handoffs", (request) => {

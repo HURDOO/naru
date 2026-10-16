@@ -195,6 +195,8 @@ export const AgentSessionSchema = z.strictObject({
   paneId: Id.nullable(),
   /** `runner`: Chat through the SDK runner. `tui`: the runtime's own TUI in the Pane (AP-D011). */
   launchMode: AgentLaunchModeSchema,
+  /** When the person cleaned up this stopped agent (AP-D033); its records stay. Absent before. */
+  retiredAt: Timestamp.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -470,6 +472,8 @@ export const SharedProcessSchema = z.strictObject({
   humanHoldSince: Timestamp.nullable(),
   status: SharedProcessStatusSchema,
   exitCode: z.number().int().nullable(),
+  /** When the person cleaned up this ended process (AP-D033). Absent before. */
+  retiredAt: Timestamp.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -538,6 +542,13 @@ export type CreateManagedAgentRequest = z.infer<typeof CreateManagedAgentRequest
 /** A person takes over (or returns) an agent's shared process terminal (AP-D005, A09). */
 export const SetProcessHoldRequestSchema = z.strictObject({
   held: z.boolean(),
+  idempotencyKey: IdempotencyKeySchema,
+});
+
+/** Cleans up agents and shared processes that no longer run (AP-D033). */
+export const CleanupAgentsRequestSchema = z.strictObject({
+  agentSessionIds: z.array(Id).max(NARU_AGENT_LIMITS.listItems),
+  processIds: z.array(Id).max(NARU_AGENT_LIMITS.listItems),
   idempotencyKey: IdempotencyKeySchema,
 });
 

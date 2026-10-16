@@ -1,6 +1,20 @@
 import type { DatabaseMigration } from "../database.js";
 
 /**
+ * v22 (AP-D033): when the person cleaned up an agent or shared process that no longer runs. Rows,
+ * events and instructions stay; lists leave cleaned-up ones out.
+ */
+export const AGENT_CLEANUP_MIGRATION: DatabaseMigration = {
+  version: 22,
+  migrate(database) {
+    database.exec(`
+      ALTER TABLE agent_sessions ADD COLUMN retired_at TEXT;
+      ALTER TABLE agent_shared_processes ADD COLUMN retired_at TEXT;
+    `);
+  },
+};
+
+/**
  * v20: Agent Platform domain tables (docs/agent-platform-v0/ARCHITECTURE.md §2). Additive only; no
  * existing Project, Pane or Session row changes. Verbatim text lives only in agent_instructions and
  * handoff resolutions (AP-D002); events carry references and enums.

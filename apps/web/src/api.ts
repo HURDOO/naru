@@ -97,6 +97,8 @@ export interface AgentBoard {
   readonly globalPendingApprovals: AgentPendingApproval[];
   /** Names the person gave agents' Panes, by Pane id (AP-D029); absent from older servers. */
   readonly paneNames?: Readonly<Record<string, string>>;
+  /** Cleaned-up agents, to name them in old records (AP-D033); absent from older servers. */
+  readonly retiredAgents?: AgentSession[];
 }
 
 /** Who asked an agent what, verbatim, and the user instructions those requests serve. */
@@ -645,6 +647,18 @@ export class NaruApi {
     return this.#agentWrite(`/api/agent/handoffs/${handoffId}/resolve`, {
       decision,
       ...(chosenOption === null ? {} : { chosenOption }),
+      idempotencyKey: key(),
+    });
+  }
+
+  /** Cleans up agents and processes that no longer run (AP-D033); their Panes are removed. */
+  cleanupAgents(
+    agentSessionIds: readonly string[],
+    processIds: readonly string[],
+  ): Promise<{ agents: AgentSession[]; processes: SharedProcess[]; panesKept: number }> {
+    return this.#agentWrite("/api/agent/cleanup", {
+      agentSessionIds,
+      processIds,
       idempotencyKey: key(),
     });
   }

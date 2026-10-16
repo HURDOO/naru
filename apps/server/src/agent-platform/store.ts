@@ -486,18 +486,45 @@ export class AgentPlatformStore {
     return row === undefined ? null : agentSessionFromRow(row);
   }
 
-  /** Sessions of one project, or the global ones when projectId is null. */
+  /** Sessions of one project, or the global ones when projectId is null; never cleaned-up ones. */
   listAgentSessions(projectId: string | null): AgentSession[] {
     const rows = (
       projectId === null
         ? this.#database
-            .prepare("SELECT * FROM agent_sessions WHERE project_id IS NULL ORDER BY created_at")
+            .prepare(
+              `SELECT * FROM agent_sessions WHERE project_id IS NULL AND retired_at IS NULL
+               ORDER BY created_at`,
+            )
             .all()
         : this.#database
-            .prepare("SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY created_at")
+            .prepare(
+              `SELECT * FROM agent_sessions WHERE project_id = ? AND retired_at IS NULL
+               ORDER BY created_at`,
+            )
             .all(projectId)
     ) as AgentSessionRow[];
     return rows.map(agentSessionFromRow);
+  }
+
+  /** Cleaned-up sessions (AP-D033), so records that name them still show who they were. */
+  listRetiredAgentSessions(): AgentSession[] {
+    return (
+      this.#database
+        .prepare("SELECT * FROM agent_sessions WHERE retired_at IS NOT NULL ORDER BY created_at")
+        .all() as AgentSessionRow[]
+    ).map(agentSessionFromRow);
+  }
+
+  retireAgentSession(id: string, at: string): void {
+    this.#database
+      .prepare("UPDATE agent_sessions SET retired_at = ?, updated_at = ? WHERE id = ?")
+      .run(at, at, id);
+  }
+
+  retireSharedProcess(id: string, at: string): void {
+    this.#database
+      .prepare("UPDATE agent_shared_processes SET retired_at = ?, updated_at = ? WHERE id = ?")
+      .run(at, at, id);
   }
 
   listAgentProjectIds(): string[] {
@@ -615,7 +642,8 @@ export class AgentPlatformStore {
             .all(filter.runId)
         : this.#database
             .prepare(
-              "SELECT * FROM agent_shared_processes WHERE project_id = ? ORDER BY created_at",
+              `SELECT * FROM agent_shared_processes WHERE project_id = ? AND retired_at IS NULL
+               ORDER BY created_at`,
             )
             .all(filter.projectId ?? "")
     ) as SharedProcessRow[];
@@ -1300,6 +1328,7 @@ interface AgentSessionRow {
   status: AgentSession["status"];
   pane_id: string | null;
   launch_mode: AgentSession["launchMode"];
+  retired_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1319,6 +1348,7 @@ function agentSessionFromRow(row: AgentSessionRow): AgentSession {
     status: row.status,
     paneId: row.pane_id,
     launchMode: row.launch_mode,
+    retiredAt: row.retired_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1338,6 +1368,7 @@ interface SharedProcessRow {
   human_hold_since: string | null;
   status: SharedProcess["status"];
   exit_code: number | null;
+  retired_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1357,6 +1388,7 @@ function sharedProcessFromRow(row: SharedProcessRow): SharedProcess {
     humanHoldSince: row.human_hold_since,
     status: row.status,
     exitCode: row.exit_code,
+    retiredAt: row.retired_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

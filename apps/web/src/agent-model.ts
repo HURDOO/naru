@@ -4,6 +4,7 @@ import type {
   AgentTask,
   Handoff,
   IntentContract,
+  SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
 import { approvalKindLabel, handoffKindLabel, roleName } from "./agent-labels";
 import { taskLevels } from "./agent-task-graph";
@@ -34,6 +35,38 @@ export interface AgentIdentity {
 /** Every agent on the board, project agents first, each with its project id. */
 export function boardAgents(board: AgentBoard): AgentSession[] {
   return [...board.projects.flatMap((project) => project.agents), ...board.globalAgents];
+}
+
+/**
+ * The board's agents and the cleaned-up ones (AP-D033). Names are numbered over all of them, so
+ * cleaning up "작업자 1" never renames "작업자 2".
+ */
+export function namedAgents(board: AgentBoard): AgentSession[] {
+  return [...boardAgents(board), ...(board.retiredAgents ?? [])];
+}
+
+/** Agents and agents' processes that no longer run and nobody holds: what cleanup removes. */
+export function cleanupCandidates(board: AgentBoard): {
+  readonly agents: AgentSession[];
+  readonly processes: SharedProcess[];
+} {
+  return {
+    agents: boardAgents(board).filter(
+      (agent) =>
+        (agent.status === "stopped" || agent.status === "failed" || agent.status === "unknown") &&
+        agent.humanHoldSince === null,
+    ),
+    processes: board.projects
+      .flatMap((project) => project.processes)
+      .filter(
+        (process) =>
+          (process.status === "exited" ||
+            process.status === "failed" ||
+            process.status === "stopped" ||
+            process.status === "unknown") &&
+          process.humanHoldSince === null,
+      ),
+  };
 }
 
 export function agentIdentity(

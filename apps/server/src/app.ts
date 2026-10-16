@@ -619,6 +619,15 @@ export async function buildApp(
       dependencies.sharedProcesses,
       dependencies.noteHumanInput,
       (paneIds) => dependencies.repository.customPaneTitles(paneIds),
+      async (paneId) => {
+        const context = dependencies.repository.getPaneContext(paneId);
+        if (context === undefined) return;
+        await dependencies.supervisor.remove(paneId);
+        legacyTerminalSizes.delete(paneId);
+        const version = dependencies.repository.getWorkspace(context.pane.projectId).version;
+        dependencies.repository.deletePane(paneId, version);
+        fileDrafts.clearPane(paneId);
+      },
     );
   }
 

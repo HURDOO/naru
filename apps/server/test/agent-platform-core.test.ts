@@ -865,6 +865,88 @@ describe("shared processes, holds and spawned agents (AP-D005, AP-D006)", () => 
   });
 });
 
+describe("cleaning up agents that no longer run (AP-D033)", () => {
+  it("hides stopped agents and ended processes, keeps records and refuses running ones", () => {
+    const fixture = platform();
+    const { orchestrator, worker, reviewer } = fixture.team();
+    const goal = fixture.goal();
+    fixture.core.delegate(fixture.ctx(agent(orchestrator)), {
+      scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: worker },
+      verbatim: "작업을 맡아 줘.",
+      originUserInstructionId: goal,
+    });
+    fixture.core.updateAgentRuntimeState(SYSTEM, { agentSessionId: worker, status: "unknown" });
+    fixture.core.updateAgentRuntimeState(SYSTEM, { agentSessionId: reviewer, status: "active" });
+    const process = fixture.core.startSharedProcess(fixture.ctx(agent(worker)), {
+      projectId: fixture.projectId,
+      purpose: "dev server",
+      command: "pnpm dev",
+      ports: [],
+      keep: "keep",
+    });
+    fixture.core.updateSharedProcessState(SYSTEM, { processId: process.id, status: "exited" });
+
+    // A running agent in the request changes nothing.
+    expectCode(
+      () =>
+        fixture.core.cleanup(fixture.ctx(HUMAN), {
+          agentSessionIds: [worker, reviewer],
+          processIds: [process.id],
+        }),
+      "AGENT_INVALID_STATE",
+    );
+    expect(fixture.core.getAgentSession(HUMAN, worker).retiredAt).toBeNull();
+    expectCode(
+      () =>
+        fixture.core.cleanup(fixture.ctx(agent(orchestrator)), {
+          agentSessionIds: [worker],
+          processIds: [],
+        }),
+      "AGENT_ROLE_DENIED",
+    );
+
+    const context = fixture.ctx(HUMAN);
+    const cleaned = fixture.core.cleanup(context, {
+      agentSessionIds: [worker],
+      processIds: [process.id],
+    });
+    expect(cleaned.agents[0]!.retiredAt).toEqual(expect.any(String));
+    expect(cleaned.processes[0]!.retiredAt).toEqual(expect.any(String));
+    // The same request again applies once.
+    expect(
+      fixture.core.cleanup(context, { agentSessionIds: [worker], processIds: [process.id] }),
+    ).toEqual(cleaned);
+
+    const listed = fixture.core.listAgentSessions(HUMAN, fixture.projectId).map((item) => item.id);
+    expect(listed).toEqual([orchestrator, reviewer]);
+    expect(fixture.core.listSharedProcesses(HUMAN, fixture.projectId)).toEqual([]);
+    expect(fixture.core.listRetiredAgentSessions(HUMAN).map((item) => item.id)).toEqual([worker]);
+    // Records stay: the instruction to the worker is still there.
+    expect(fixture.core.getAgentInstructions(HUMAN, worker).instructions).toHaveLength(1);
+
+    // A cleaned-up agent cannot be messaged, launched or held again.
+    expectCode(
+      () =>
+        fixture.core.delegate(fixture.ctx(agent(orchestrator)), {
+          scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: worker },
+          verbatim: "다시 맡아 줘.",
+          originUserInstructionId: goal,
+        }),
+      "AGENT_INVALID_STATE",
+    );
+    expectCode(() => fixture.core.issueRuntimeLaunchToken(HUMAN, worker), "AGENT_INVALID_STATE");
+    expectCode(
+      () =>
+        fixture.core.setHumanHold(fixture.ctx(HUMAN), {
+          agentSessionId: worker,
+          held: true,
+          reason: "takeover",
+        }),
+      "AGENT_INVALID_STATE",
+    );
+  });
+});
+
 function platform() {
   const repository = new NaruRepository(":memory:");
   const project = repository.createProject("/tmp/naru-agent-project", "agent-project");

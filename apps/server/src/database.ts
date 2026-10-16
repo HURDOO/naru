@@ -52,7 +52,7 @@ import {
 } from "@naru/domain";
 import { AppError } from "./errors.js";
 import { createPreMigrationBackupIfNeeded } from "./database-backup.js";
-import { AGENT_PLATFORM_MIGRATION } from "./agent-platform/migration.js";
+import { AGENT_CLEANUP_MIGRATION, AGENT_PLATFORM_MIGRATION } from "./agent-platform/migration.js";
 import { AgentPlatformStore } from "./agent-platform/store.js";
 import { CLAUDE_AGENT_LAUNCH_PROFILE, CODEX_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
 import { WORKSPACE_VIEWS_MIGRATION, WorkspaceViewStore } from "./workspace-views.js";
@@ -760,6 +760,7 @@ export const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
   },
   AGENT_PLATFORM_MIGRATION,
   WORKSPACE_VIEWS_MIGRATION,
+  AGENT_CLEANUP_MIGRATION,
 ];
 
 export function runDatabaseMigrations(

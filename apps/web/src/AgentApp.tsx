@@ -6,6 +6,7 @@ import {
   type AgentIdentity,
   agentIdentity,
   boardAgents,
+  namedAgents,
   EVENT_FIRST_PAGE,
   type InboxItem,
   inboxItems,
@@ -157,16 +158,18 @@ export function AgentApp({
         : (projects.find((project) => project.id === projectId)?.name ?? "알 수 없는 프로젝트"),
     [projects],
   );
+  // Cleaned-up agents (AP-D033) still name what they did, and keep everyone's numbers stable.
+  const named = useMemo(() => (board === null ? [] : namedAgents(board)), [board]);
   const identities = useMemo(() => {
     const map = new Map<string, AgentIdentity>();
-    for (const agent of agents) {
-      const identity = agentIdentity(agent, agents, projectName);
+    for (const agent of named) {
+      const identity = agentIdentity(agent, named, projectName);
       // A name the person gave the agent's Pane shows here too (AP-D029).
-      const named = agent.paneId === null ? undefined : board?.paneNames?.[agent.paneId];
-      map.set(agent.id, named === undefined ? identity : { ...identity, name: named });
+      const custom = agent.paneId === null ? undefined : board?.paneNames?.[agent.paneId];
+      map.set(agent.id, custom === undefined ? identity : { ...identity, name: custom });
     }
     return map;
-  }, [agents, board, projectName]);
+  }, [board, named, projectName]);
 
   // An alert names the agent's Pane: open its chat once the board that binds it has loaded.
   const pendingPane = useRef(initialAgentPaneId);
@@ -199,7 +202,7 @@ export function AgentApp({
   const value = useMemo<AgentAppContextValue | null>(() => {
     if (board === null) return null;
     const agentById = (agentSessionId: string | null) =>
-      agentSessionId === null ? undefined : agents.find((agent) => agent.id === agentSessionId);
+      agentSessionId === null ? undefined : named.find((agent) => agent.id === agentSessionId);
     return {
       api,
       board,
@@ -211,7 +214,7 @@ export function AgentApp({
       agents,
       inbox,
       identity: (agent: AgentSession) =>
-        identities.get(agent.id) ?? agentIdentity(agent, agents, projectName),
+        identities.get(agent.id) ?? agentIdentity(agent, named, projectName),
       agentById,
       projectName,
       presence: (agent: AgentSession) => presenceOf(agent, waiting.has(agent.id)),
@@ -240,6 +243,7 @@ export function AgentApp({
     identities,
     inbox,
     mutationAllowed,
+    named,
     now,
     onOpenPane,
     onViewChange,

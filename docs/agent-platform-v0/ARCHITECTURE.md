@@ -319,3 +319,7 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
     `/api/agent/processes/:id/hold`)를 쓴다.
 - 새로 고침: 작업공간 화면은 5초마다(창이 보일 때, focus를 받을 때) 작업공간과 agent board를 다시 읽는다.
   이 기기에서 저장하지 않은 변경이 있으면 건너뛴다.
+- 꺼진 에이전트 정리(AP-D033): 관제실 에이전트 목록의 "꺼진 에이전트 정리 N"이
+  `POST /api/agent/cleanup`을 부른다. Core `cleanup`이 모든 항목을 먼저 확인한 뒤 항목마다 idempotent
+  command로 `retired_at`을 남기고(`agent_session.updated`/`shared_process.updated`, `retired: true`), route가
+  남은 Pane을 닫는다. store의 목록 조회는 정리된 행을 빼고, board는 이름을 위해 `retiredAgents`를 따로 준다.

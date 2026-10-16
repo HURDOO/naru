@@ -13,7 +13,7 @@ import {
   viewPaneIds,
   viewPaneNode,
 } from "@naru/domain";
-import { agentIdentity, boardAgents, isLive } from "./agent-model";
+import { agentIdentity, boardAgents, isLive, namedAgents } from "./agent-model";
 import type { AgentBoard } from "./api";
 export type { WorkspaceSelection } from "./workspace-selection";
 
@@ -50,13 +50,13 @@ export function paneOwners(
 ): ReadonlyMap<string, PaneOwner> {
   const owners = new Map<string, PaneOwner>();
   if (board === null) return owners;
-  const agents = boardAgents(board);
-  for (const agent of agents) {
+  const named = namedAgents(board);
+  for (const agent of boardAgents(board)) {
     if (agent.paneId === null) continue;
     owners.set(agent.paneId, {
       kind: "agent",
       agent,
-      name: board.paneNames?.[agent.paneId] ?? agentIdentity(agent, agents, projectName).name,
+      name: board.paneNames?.[agent.paneId] ?? agentIdentity(agent, named, projectName).name,
       held: agent.humanHoldSince !== null,
     });
   }
