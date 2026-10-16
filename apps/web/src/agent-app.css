@@ -2088,6 +2088,78 @@ button.ag-tool-call:hover {
   font-size: 12.5px;
 }
 
+.ag-ask-card {
+  display: flex;
+  align-self: stretch;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.ag-ask-card[data-state="closed"],
+.ag-ask-card[data-state="failed"] {
+  border-color: var(--line-strong);
+  background: var(--panel-soft);
+}
+
+.ag-ask-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.ag-ask-card-head .ag-icon {
+  color: var(--accent);
+}
+
+.ag-ask-card[data-state="closed"] .ag-ask-card-head .ag-icon {
+  color: var(--subtle);
+}
+
+.ag-ask-card-question {
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.ag-ask-card-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ag-ask-card-options li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.ag-ask-card-options span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.ag-ask-card-recommend {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ag-ask-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
 .ag-approval {
   display: flex;
   flex-direction: column;

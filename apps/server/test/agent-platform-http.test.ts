@@ -560,6 +560,46 @@ describe("Agent Platform managed runtime API", () => {
     expect((await post(`/api/agent/agents/${agent.id}/turns`, turn)).statusCode).toBe(202);
     expect((await post(`/api/agent/agents/${agent.id}/turns`, turn)).statusCode).toBe(202);
     expect(runtime.turns).toEqual([turn.text]);
+
+    // An open question of this agent rides along on the person's next turn as a marked Naru note,
+    // so the agent can withdraw it once answered; the person's words are recorded as typed.
+    const question = core.requestHandoff(
+      {
+        actor: { kind: "agent", agentSessionId: agent.id },
+        idempotencyKey: "91000000-0000-4000-8000-000000000020",
+      },
+      {
+        projectId: fixture.projectId,
+        kind: "product-decision",
+        payload: {
+          reason: "등록 화면을 어디에 둘까요?",
+          blockingTaskIds: [],
+          independentWorkToContinue: [],
+          options: [],
+          recommendation: "설정 안에",
+          risks: [],
+          preparedEnvironment: [],
+          resumeCondition: "결정",
+        },
+      },
+    );
+    await post(`/api/agent/agents/${agent.id}/turns`, {
+      text: "설정 안에 둬.",
+      generation: 2,
+      idempotencyKey: "91000000-0000-4000-8000-000000000021",
+    });
+    expect(runtime.turns.at(-1)).toContain(
+      "설정 안에 둬.\n\n[Naru] Your question to the person is still open",
+    );
+    expect(runtime.turns.at(-1)).toContain(question.id);
+    expect(
+      core
+        .getApplicableInstructions(
+          { kind: "human" },
+          { projectId: fixture.projectId, agentSessionId: agent.id },
+        )
+        .map((instruction) => instruction.verbatim),
+    ).toContain("설정 안에 둬.");
     // The person answers approvals whoever writes (AP-D017); an old generation is ignored.
     await post(`/api/agent/agents/${agent.id}/approvals/request-1`, {
       decision: "approve",

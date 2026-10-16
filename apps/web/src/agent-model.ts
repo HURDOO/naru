@@ -218,6 +218,23 @@ export function inboxItems(board: AgentBoard): InboxItem[] {
   return items;
 }
 
+/** A handoff kind as a person reads it on a card ("결정 필요", "직접 확인 부탁", …). */
+export function askKindLabel(kind: string): string {
+  switch (kind) {
+    case "manual-test":
+      return "직접 확인 부탁";
+    case "terminal-control":
+      return "터미널 입력 부탁";
+    case "product-decision":
+      return "결정 필요";
+    case "design-deviation":
+    case "security-or-external":
+      return handoffKindLabel(kind);
+    default:
+      return "질문";
+  }
+}
+
 /** The short label at the top of an Inbox card. */
 export function inboxKindLabel(item: InboxItem): string {
   switch (item.kind) {
@@ -226,16 +243,7 @@ export function inboxKindLabel(item: InboxItem): string {
     case "contract":
       return "의도 계약 승인";
     case "handoff":
-      switch (item.handoff.kind) {
-        case "manual-test":
-          return "직접 확인 부탁";
-        case "terminal-control":
-          return "터미널 입력 부탁";
-        case "product-decision":
-          return "결정 필요";
-        default:
-          return handoffKindLabel(item.handoff.kind);
-      }
+      return askKindLabel(item.handoff.kind);
   }
 }
 

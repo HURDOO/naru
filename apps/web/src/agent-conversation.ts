@@ -47,7 +47,28 @@ export type ConversationBlock =
       readonly key: string;
       readonly text: string;
       readonly details: string[];
-    };
+    }
+  | AskBlock;
+
+/** The agent asked the person something through Naru; shown in full, never folded. */
+export interface AskBlock {
+  readonly kind: "ask";
+  readonly key: string;
+  /** Handoff kind (`product-decision`, `manual-test`, `design-deviation`, …). */
+  readonly handoffKind: string;
+  readonly reason: string;
+  readonly options: readonly { readonly label: string; readonly description: string }[];
+  readonly recommendation: string;
+  /** The handoff Naru recorded, once the call returned it. */
+  handoffId: string | null;
+  failed: boolean;
+}
+
+/** Naru tools that put a question to the person, and the handoff kind each implies. */
+const ASK_TOOLS: Readonly<Record<string, string | null>> = {
+  request_human_handoff: null,
+  propose_design_change: "design-deviation",
+};
 
 export interface ConversationContext {
   readonly instructions: readonly Instruction[];
@@ -55,6 +76,8 @@ export interface ConversationContext {
 }
 
 const WAKEUP_HEADER = "[Naru] New events since your last turn";
+/** Server `OPEN_QUESTION_NOTE`: Naru's reminder appended to a person's chat turn. */
+const OPEN_QUESTION_NOTE = "\n\n[Naru] Your question to the person is still open";
 const WAKEUP_LINE = /^- #\d+ ([a-z_.]+) subject=([0-9a-f-]{36}) actor=(\w+)(.*)$/u;
 const OUTPUT_LIMIT = 4_000;
 
@@ -77,6 +100,7 @@ class Builder {
   readonly #context: ConversationContext;
   readonly #used = new Set<string>();
   readonly #calls = new Map<string, ToolCall>();
+  readonly #asks = new Map<string, AskBlock>();
   #next = 0;
 
   constructor(context: ConversationContext) {
@@ -116,6 +140,12 @@ class Builder {
         this.#thinking(typeof part.thinking === "string" ? part.thinking : "");
       } else if (part.type === "redacted_thinking") this.#thinking("");
       else if (part.type === "tool_use" && typeof part.name === "string") {
+        const asked = naruAsk(part.name, asRecord(part.input) ?? {}, this.#key("ask"));
+        if (asked !== null) {
+          if (typeof part.id === "string") this.#asks.set(part.id, asked);
+          this.blocks.push(asked);
+          continue;
+        }
         const call = claudeToolCall(
           typeof part.id === "string" ? part.id : this.#key("tool"),
           part.name,
@@ -181,6 +211,19 @@ class Builder {
         case "mcpToolCall": {
           const server = typeof item.server === "string" ? item.server : "";
           const tool = typeof item.tool === "string" ? item.tool : "";
+          const asked =
+            server === "naru"
+              ? naruAsk(`mcp__naru__${tool}`, asRecord(item.arguments) ?? {}, this.#key("ask"))
+              : null;
+          if (asked !== null) {
+            asked.failed = item.status === "failed" || item.error != null;
+            const result = asRecord(item.result);
+            asked.handoffId = handoffIdIn(
+              resultText(result?.content) || JSON.stringify(result?.structuredContent ?? null),
+            );
+            this.blocks.push(asked);
+            break;
+          }
           this.#tool({
             id,
             kind: server === "naru" ? "naru" : "other",
@@ -254,7 +297,9 @@ class Builder {
   }
 
   #userText(raw: string, at: string | null): void {
-    const text = raw.trim();
+    // Naru's reminder of an open question rides on the person's turn; it is not what they said.
+    const note = raw.indexOf(OPEN_QUESTION_NOTE);
+    const text = (note === -1 ? raw : raw.slice(0, note)).trim();
     if (text === "" || isSystemText(text)) return;
     if (text.startsWith(WAKEUP_HEADER)) {
       this.#wakeup(text);
@@ -357,6 +402,12 @@ class Builder {
 
   #toolResult(part: Record<string, unknown>): void {
     if (typeof part.tool_use_id !== "string") return;
+    const asked = this.#asks.get(part.tool_use_id);
+    if (asked !== undefined) {
+      if (part.is_error === true) asked.failed = true;
+      asked.handoffId = handoffIdIn(resultText(part.content));
+      return;
+    }
     const call = this.#calls.get(part.tool_use_id);
     if (call === undefined) return;
     if (part.is_error === true) call.failed = true;
@@ -375,6 +426,39 @@ class Builder {
 }
 
 // Tool calls -------------------------------------------------------------------------------------
+
+function naruAsk(name: string, input: Record<string, unknown>, key: string): AskBlock | null {
+  if (!name.startsWith("mcp__naru__")) return null;
+  const tool = name.slice("mcp__naru__".length);
+  if (!(tool in ASK_TOOLS)) return null;
+  const text = (value: unknown) => (typeof value === "string" ? value : "");
+  return {
+    kind: "ask",
+    key,
+    handoffKind: ASK_TOOLS[tool] ?? (text(input.kind) || "product-decision"),
+    reason: text(input.reason),
+    options: (Array.isArray(input.options) ? input.options : [])
+      .map(asRecord)
+      .filter((option): option is Record<string, unknown> => option !== null)
+      .map((option) => ({ label: text(option.label), description: text(option.description) }))
+      .filter((option) => option.label !== ""),
+    recommendation: text(input.recommendation),
+    handoffId: null,
+    failed: false,
+  };
+}
+
+/** The recorded handoff's id in a tool result (the handoff itself, or wrapped in `result`). */
+function handoffIdIn(text: string): string | null {
+  try {
+    const parsed = asRecord(JSON.parse(text));
+    const handoff = asRecord(parsed?.result) ?? parsed;
+    return typeof handoff?.id === "string" ? handoff.id : null;
+  } catch {
+    // A shortened result is no longer JSON; the handoff's own id comes first.
+    return /"id"\s*:\s*"([0-9a-f-]{36})"/u.exec(text)?.[1] ?? null;
+  }
+}
 
 function claudeToolCall(id: string, name: string, input: Record<string, unknown>): ToolCall {
   const text = (key: string): string | null =>

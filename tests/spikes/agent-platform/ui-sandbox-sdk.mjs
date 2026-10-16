@@ -373,6 +373,10 @@ export function query({ prompt, options }) {
       } else if (!text.startsWith("[Naru] New events")) {
         // A person writing directly.
         think("사람이 직접 한 말을 먼저 반영한다.");
+        // Naru reminds us of our open question; this reply answers it, so withdraw it.
+        for (const match of text.matchAll(/- handoff ([0-9a-f-]{36}) /gu)) {
+          await act(options, "cancel_handoff", { handoff_id: match[1] });
+        }
         if (text.includes("APPROVE")) {
           const answer = await ask(options, "pnpm test");
           tool("Bash", { command: "pnpm test" }, `(${answer})\nTests  12 passed`);

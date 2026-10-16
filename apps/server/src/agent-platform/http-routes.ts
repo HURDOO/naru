@@ -379,7 +379,9 @@ export function registerAgentPlatformRoutes(
         verbatim: input.text,
       },
     );
-    runtimeCall(() => runtime.sendTurn(id, input.text, "gui", input.generation));
+    runtimeCall(() =>
+      runtime.sendTurn(id, input.text + openQuestionNote(core, agent), "gui", input.generation),
+    );
     noteHumanInput?.({ agentSessionId: id });
     return reply.code(202).send(runtimeCall(() => runtime.runtimeState(id)));
   });
@@ -444,4 +446,33 @@ function translateRuntimeError(error: unknown): unknown {
         "The agent runtime is unavailable.",
       );
   }
+}
+
+/** Marks Naru's note on a person's chat turn; the chat view strips it again. */
+export const OPEN_QUESTION_NOTE = "[Naru] Your question to the person is still open";
+
+/**
+ * The person may answer an agent's open question in its chat instead of in Naru. The turn then
+ * reminds the agent of the question so it can judge and withdraw it itself (`cancel_handoff`);
+ * the person's words are recorded verbatim without this note.
+ */
+function openQuestionNote(core: AgentPlatformCore, agent: AgentSession): string {
+  const open = core
+    .listOpenHandoffs(HUMAN, agent.projectId)
+    .filter(
+      (handoff) =>
+        handoff.requestedBy.kind === "agent" && handoff.requestedBy.agentSessionId === agent.id,
+    );
+  if (open.length === 0) return "";
+  const lines = open.map((handoff) => {
+    const reason = handoff.payload.reason.replaceAll(/\s+/gu, " ");
+    return `- handoff ${handoff.id} (${handoff.kind}): ${reason.length > 200 ? `${reason.slice(0, 199)}…` : reason}`;
+  });
+  return [
+    "",
+    "",
+    `${OPEN_QUESTION_NOTE}:`,
+    ...lines,
+    "If the message above answers it, act on that answer and withdraw the question with cancel_handoff.",
+  ].join("\n");
 }

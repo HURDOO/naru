@@ -15,6 +15,7 @@ import {
 } from "react";
 import { useAgentApp, useTaskDetail } from "./agent-context";
 import {
+  type AskBlock,
   changeSummary,
   type ConversationBlock,
   conversationBlocks,
@@ -31,6 +32,7 @@ import {
   roleName,
 } from "./agent-labels";
 import {
+  askKindLabel,
   clock,
   isLive,
   PRESENCE_ORDER,
@@ -871,10 +873,73 @@ function ThreadGroup({
             <FoldRow key={block.key} icon="brain" label="생각함" detail={block.text} />
           ) : block.kind === "tools" ? (
             <ToolGroup key={block.key} calls={block.calls} />
+          ) : block.kind === "ask" ? (
+            <AskCard key={block.key} ask={block} />
           ) : null,
         )}
       </li>
     </>
+  );
+}
+
+/**
+ * The agent asked the person something: the question in full, never folded, answerable here while
+ * it is still open.
+ */
+function AskCard({ ask }: { readonly ask: AskBlock }): React.JSX.Element {
+  const app = useAgentApp();
+  const open =
+    ask.handoffId === null
+      ? undefined
+      : app.inbox.find((item) => item.key === `handoff:${ask.handoffId}`);
+  const state = ask.failed
+    ? "failed"
+    : open !== undefined
+      ? "open"
+      : ask.handoffId === null
+        ? "sent"
+        : "closed";
+  return (
+    <div className="ag-ask-card" data-state={state}>
+      <div className="ag-ask-card-head">
+        <Icon name="hand" size={15} />
+        <strong>사람에게 물음 · {askKindLabel(ask.handoffKind)}</strong>
+      </div>
+      {ask.reason !== "" && <p className="ag-ask-card-question">{ask.reason}</p>}
+      {ask.options.length > 0 && (
+        <ul className="ag-ask-card-options">
+          {ask.options.map((option) => (
+            <li key={option.label}>
+              <strong>{option.label}</strong>
+              {option.description !== "" && <span>{option.description}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {ask.recommendation !== "" && (
+        <p className="ag-ask-card-recommend">추천: {ask.recommendation}</p>
+      )}
+      <div className="ag-ask-card-foot">
+        {state === "open" ? (
+          <button
+            className="ag-button"
+            data-variant="primary"
+            type="button"
+            onClick={() => app.openDecision(open!)}
+          >
+            답하기
+          </button>
+        ) : (
+          <span className="ag-muted">
+            {state === "failed"
+              ? "Naru에 전달되지 않은 질문입니다."
+              : state === "closed"
+                ? "답했거나 취소된 질문입니다."
+                : "Naru에 전달하는 중입니다."}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -275,5 +275,8 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   - 요청은 기록된 지시 원문과 맞춰 누가 했는지(나, 오케스트레이터 이름)를 붙인다. Naru wakeup turn은
     그 안의 `instruction.created`가 가리키는 지시로 바꾸고, 나머지 이벤트는 한 줄 알림이 된다.
   - 이력은 마지막 page부터 다시 읽는다(답하는 중 2.5초, 아니면 8초, turn이 끝날 때).
+  - 에이전트의 질문(`request_human_handoff`, `propose_design_change`)은 도구 묶음에서 빼서 카드로 둔다.
+    결과의 handoff id로 열린 질문과 이어 "답하기"를 붙인다(AP-D025).
+  - 사람의 Chat turn에 붙는 Naru 메모(열린 질문 알림)는 대화에서 지운다.
 - 타임라인은 이벤트에서 만든다: runtime turn(`agent_session.updated` active→idle), 사람 hold, 질문
   (`handoff.requested`), 병합(`artifact.published` commit). 불러온 이벤트보다 오래된 것은 그리지 않는다.

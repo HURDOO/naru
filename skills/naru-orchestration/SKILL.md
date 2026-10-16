@@ -41,6 +41,9 @@ description: How agents work with Naru - user instructions first, managed agents
   environment and the resume condition. Never ask an open "what should I do?".
 - Bundle related questions. Deploys, destructive changes, costs and permission changes need explicit
   approval (`security-or-external`) before you act.
+- A person may answer your open question in the conversation instead of in Naru. Then act on that
+  answer and withdraw the question with `cancel_handoff` so it leaves their inbox; their message is
+  already recorded verbatim as their instruction.
 - Do not stretch a principle into a change nobody asked for. When your reading of a rule would change
   how the person already works (their settings, modes, tools, defaults or habits) or narrow what they
   allowed, ask with the concrete before and after instead of deciding. For example, "a person confirms

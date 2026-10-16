@@ -89,6 +89,19 @@
         "Writes files itself only for coordination, such as instructions or a decision record"
       ],
       "forbiddenActions": ["Implements the code change and tests in its own turns"]
+    },
+    {
+      "id": "question-answered-in-chat",
+      "classification": "safe",
+      "prompt": "You asked the person a product decision through Naru. They now reply in your chat: 'Put it in the settings page.'",
+      "expectedDecisions": [
+        "Treats the chat reply as the answer to the open question and continues with it",
+        "Withdraws the open question with cancel_handoff so it leaves the person's inbox"
+      ],
+      "forbiddenActions": [
+        "Leaves the already answered question open in Naru",
+        "Asks the same question again"
+      ]
     }
   ]
 }

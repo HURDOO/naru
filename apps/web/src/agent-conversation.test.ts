@@ -103,6 +103,13 @@ describe("agent conversation", () => {
           message: { content: [{ type: "text", text: "x" }] },
         },
         { type: "user", message: { content: "<system-reminder>ignored</system-reminder>" } },
+        {
+          type: "user",
+          message: {
+            content:
+              "설정 안에 둬.\n\n[Naru] Your question to the person is still open:\n- handoff x (product-decision): 어디에?\nIf the message above answers it, act on that answer and withdraw the question with cancel_handoff.",
+          },
+        },
         { type: "user", message: { content: "알 수 없는 사람의 말" } },
       ],
       context,
@@ -112,6 +119,7 @@ describe("agent conversation", () => {
       "thinking",
       "tools",
       "answer",
+      "request",
       "request",
     ]);
     expect(blocks[0]).toMatchObject({
@@ -131,7 +139,9 @@ describe("agent conversation", () => {
       "파일 1개 읽음 · 검색 1번 · 파일 1개 수정 · Naru · 진행 보고",
     );
     expect(changeSummary(tools.calls)).toBe("+3 −2");
-    expect(blocks[4]).toMatchObject({ source: { kind: "unknown" }, text: "알 수 없는 사람의 말" });
+    // Naru's open-question reminder rides on a person's turn but is not part of what they said.
+    expect(blocks[4]).toMatchObject({ source: { kind: "unknown" }, text: "설정 안에 둬." });
+    expect(blocks[5]).toMatchObject({ source: { kind: "unknown" }, text: "알 수 없는 사람의 말" });
   });
 
   it("reads Codex turns with commands, file changes and read-only shell actions", () => {
@@ -197,6 +207,124 @@ describe("agent conversation", () => {
     ]);
     expect(changeSummary(tools.calls)).toBe("+2 −1");
     expect(conversationBlocks([null, 3, "x", { items: "not a list" }], context)).toEqual([]);
+  });
+
+  it("shows a question to the person in full, linked to the handoff Naru recorded", () => {
+    const question = {
+      kind: "product-decision",
+      project_id: null,
+      reason: "등록 화면을 어디에 둘까요?",
+      blocking_task_ids: [],
+      independent_work_to_continue: [],
+      options: [
+        { label: "설정 안에", description: "찾기 쉬움" },
+        { label: "별도 페이지", description: "" },
+      ],
+      recommendation: "설정 안에",
+      risks: [],
+      prepared_environment: [],
+      resume_condition: "결정",
+    };
+    const handoff = { id: "70000000-0000-4000-8000-000000000007", status: "open" };
+    const claude = conversationBlocks(
+      [
+        {
+          type: "assistant",
+          message: {
+            content: [
+              { type: "tool_use", id: "t1", name: "mcp__naru__get_project_state", input: {} },
+              {
+                type: "tool_use",
+                id: "t2",
+                name: "mcp__naru__request_human_handoff",
+                input: question,
+              },
+              { type: "tool_use", id: "t3", name: "Read", input: { file_path: "a.ts" } },
+            ],
+          },
+        },
+        {
+          type: "user",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "t2", content: JSON.stringify(handoff) }],
+          },
+        },
+      ],
+      { instructions: [], origins: [] },
+    );
+    // The question breaks the gray tool rows and stands on its own.
+    expect(claude.map((block) => block.kind)).toEqual(["tools", "ask", "tools"]);
+    expect(claude[1]).toMatchObject({
+      kind: "ask",
+      handoffKind: "product-decision",
+      reason: "등록 화면을 어디에 둘까요?",
+      options: [
+        { label: "설정 안에", description: "찾기 쉬움" },
+        { label: "별도 페이지", description: "" },
+      ],
+      recommendation: "설정 안에",
+      handoffId: handoff.id,
+      failed: false,
+    });
+
+    const codex = conversationBlocks(
+      [
+        {
+          id: "turn",
+          items: [
+            {
+              type: "mcpToolCall",
+              id: "m1",
+              server: "naru",
+              tool: "propose_design_change",
+              arguments: question,
+              status: "completed",
+              result: { content: [{ type: "text", text: JSON.stringify({ result: handoff }) }] },
+            },
+          ],
+        },
+      ],
+      { instructions: [], origins: [] },
+    );
+    expect(codex).toMatchObject([
+      { kind: "ask", handoffKind: "design-deviation", handoffId: handoff.id },
+    ]);
+
+    // A runtime may shorten a long result; the id is still found.
+    const shortened = conversationBlocks(
+      [
+        {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "t9",
+                name: "mcp__naru__request_human_handoff",
+                input: question,
+              },
+            ],
+          },
+        },
+        {
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "t9",
+                content: JSON.stringify({ ...handoff, payload: { reason: "x".repeat(400) } }).slice(
+                  0,
+                  120,
+                ),
+              },
+            ],
+          },
+        },
+      ],
+      { instructions: [], origins: [] },
+    );
+    expect(shortened[0]).toMatchObject({ kind: "ask", handoffId: handoff.id });
   });
 
   it("counts diff lines without the file headers", () => {
