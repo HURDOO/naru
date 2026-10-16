@@ -267,13 +267,15 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
     숫자를 위해 15초마다 읽는다.
   - `GET /api/agent/agents/:id/instructions`: 그 에이전트에게 한 말(위임, 사람의 직접 대화, project
     오케스트레이터는 project 지시, 메인은 사용자 global 지시)과 각 위임의 원본 사용자 지시. 원문은 이미
-    저장된 지시다(AP-D002). 최신 200개.
+    저장된 지시다(AP-D002). 최신 200개. `decisions`: 그 에이전트가 물은 질문에 사람이 한 답과, 프로젝트
+    오케스트레이터면 그 프로젝트의 의도 계약 승인(AP-D035).
   - 이벤트는 project 없이 전체를 읽는다(`GET /api/agent/events?latest=1`, 처음 500개, 이후 이어 받기,
     browser에 최대 3,000개).
 - 대화 구성(`agent-conversation.ts`): runtime 이력을 다시 읽어 만든다. Claude session message와 Codex
   turn item을 요청, 답, 도구 묶음, 생각, 알림으로 나눈다.
   - 요청은 기록된 지시 원문과 맞춰 누가 했는지(나, 오케스트레이터 이름)를 붙인다. Naru wakeup turn은
-    그 안의 `instruction.created`가 가리키는 지시로 바꾸고, 나머지 이벤트는 한 줄 알림이 된다.
+    그 안의 `instruction.created`가 가리키는 지시로 바꾸고, `handoff.resolved`·`intent_contract.approved`가
+    `decisions`에 있으면 사람의 말풍선으로 바꾼다(AP-D035). 나머지 이벤트는 한 줄 알림이 된다.
   - 이력은 마지막 page부터 다시 읽는다(답하는 중 2.5초, 아니면 8초, turn이 끝날 때).
   - 에이전트의 질문(`request_human_handoff`, `propose_design_change`)은 도구 묶음에서 빼서 카드로 둔다.
     결과의 handoff id로 열린 질문과 이어 "답하기"를 붙인다(AP-D025).

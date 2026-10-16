@@ -2178,6 +2178,16 @@ button.ag-chip:hover:not(:disabled) {
   white-space: pre-wrap;
 }
 
+.ag-bubble-choice {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .ag-origin summary {
   display: inline-flex;
   align-items: center;

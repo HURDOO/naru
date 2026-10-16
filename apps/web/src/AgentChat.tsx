@@ -629,6 +629,8 @@ function Thread({
             (group) =>
               group.kind === "request" &&
               group.block.source.kind === "me" &&
+              // Answering its question is not talking to it directly.
+              group.block.answered === null &&
               group.block.at !== null &&
               Date.parse(group.block.at) >= holdStart - 1_000,
           );
@@ -825,9 +827,13 @@ function ThreadGroup({
       block.source.kind === "agent" ? app.agentById(block.source.agentSessionId) : undefined;
     const label =
       block.source.kind === "me"
-        ? block.source.channel === "tui"
-          ? "나 · TUI"
-          : "나"
+        ? block.answered !== null
+          ? block.answered.kind === "contract"
+            ? `나 · 의도 계약 v${block.answered.version} 승인`
+            : "나 · 질문에 답함"
+          : block.source.channel === "tui"
+            ? "나 · TUI"
+            : "나"
         : block.source.kind === "agent"
           ? author === undefined
             ? "에이전트"
@@ -843,7 +849,19 @@ function ThreadGroup({
             {block.at !== null && ` · ${clock(block.at)}`}
           </span>
           <div className="ag-bubble">
+            {block.answered?.kind === "question" && block.answered.chosen !== null && (
+              <span className="ag-bubble-choice">선택 · {block.answered.chosen}</span>
+            )}
             <p>{block.text}</p>
+            {block.answered?.kind === "question" && (
+              <details className="ag-origin">
+                <summary>
+                  <Icon name="chevronRight" size={12} />
+                  답한 질문
+                </summary>
+                <p>{block.answered.question}</p>
+              </details>
+            )}
             {block.origin !== null && block.origin.verbatim !== null && (
               <details className="ag-origin">
                 <summary>
@@ -934,7 +952,9 @@ function AskCard({ ask }: { readonly ask: AskBlock }): React.JSX.Element {
             {state === "failed"
               ? "Naru에 전달되지 않은 질문입니다."
               : state === "closed"
-                ? "답했거나 취소된 질문입니다."
+                ? ask.answered
+                  ? "답했습니다. 내 답은 아래에 있습니다."
+                  : "답했거나 취소된 질문입니다."
                 : "Naru에 전달하는 중입니다."}
           </span>
         )}

@@ -1,11 +1,13 @@
 import type { Instruction } from "@naru/contracts/naru-agent/v1";
 import { eventTypeLabel } from "./agent-labels";
+import type { AgentDecision } from "./api";
 
 /**
  * An agent's conversation as the chat shows it (AP-D022). Naru re-reads history from the runtime
  * instead of storing it (AP-D002): Claude's SDK returns session messages, Codex returns turns with
  * items. Requests are attributed to whoever asked by the verbatim instructions Naru recorded; tool
- * calls and thinking become collapsible rows; Naru's wakeup turns become the requests they carry.
+ * calls and thinking become collapsible rows; Naru's wakeup turns become the requests they carry,
+ * and the person's decisions on what the agent asked become the person's words (AP-D035).
  * Anything not understood is left out rather than guessed.
  */
 
@@ -38,6 +40,8 @@ export type ConversationBlock =
       readonly at: string | null;
       /** The user instruction an agent's delegation serves. */
       readonly origin: Instruction | null;
+      /** What these words decided: the agent's question or its intent contract (AP-D035). */
+      readonly answered: Answered | null;
     }
   | { readonly kind: "answer"; readonly key: string; text: string }
   | { readonly kind: "tools"; readonly key: string; readonly calls: ToolCall[] }
@@ -49,6 +53,15 @@ export type ConversationBlock =
       readonly details: string[];
     }
   | AskBlock;
+
+export type Answered =
+  | {
+      readonly kind: "question";
+      readonly question: string;
+      /** The option the person picked, when they also wrote more than its name. */
+      readonly chosen: string | null;
+    }
+  | { readonly kind: "contract"; readonly version: number };
 
 /** The agent asked the person something through Naru; shown in full, never folded. */
 export interface AskBlock {
@@ -62,6 +75,8 @@ export interface AskBlock {
   /** The handoff Naru recorded, once the call returned it. */
   handoffId: string | null;
   failed: boolean;
+  /** The person's answer follows in this conversation (AP-D035). */
+  answered: boolean;
 }
 
 /** Naru tools that put a question to the person, and the handoff kind each implies. */
@@ -73,6 +88,7 @@ const ASK_TOOLS: Readonly<Record<string, string | null>> = {
 export interface ConversationContext {
   readonly instructions: readonly Instruction[];
   readonly origins: readonly Instruction[];
+  readonly decisions?: readonly AgentDecision[] | undefined;
 }
 
 const WAKEUP_HEADER = "[Naru] New events since your last turn";
@@ -314,13 +330,17 @@ class Builder {
         text,
         at,
         origin: null,
+        answered: null,
       });
       return;
     }
     this.#request(instruction, text);
   }
 
-  /** A Naru wakeup turn: the instructions it announces become requests, the rest one notice. */
+  /**
+   * A Naru wakeup turn: the instructions it announces become requests, the person's decisions on
+   * what this agent asked become the person's words, the rest one notice.
+   */
   #wakeup(text: string): void {
     const details: string[] = [];
     for (const line of text.split("\n")) {
@@ -332,6 +352,18 @@ class Builder {
         if (instruction !== undefined && instruction.verbatim !== null) {
           this.#used.add(instruction.id);
           this.#request(instruction, instruction.verbatim);
+          continue;
+        }
+      }
+      if (type === "handoff.resolved" || type === "intent_contract.approved") {
+        const decision = this.#context.decisions?.find(
+          (item) =>
+            item.id === subjectId &&
+            item.kind === (type === "handoff.resolved" ? "handoff" : "contract"),
+        );
+        if (decision !== undefined && !this.#used.has(decision.id)) {
+          this.#used.add(decision.id);
+          this.#decision(decision);
           continue;
         }
       }
@@ -360,6 +392,34 @@ class Builder {
           : (this.#context.origins.find(
               (item) => item.id === instruction.originUserInstructionId,
             ) ?? null),
+      answered: null,
+    });
+  }
+
+  #decision(decision: AgentDecision): void {
+    for (const block of this.blocks) {
+      if (block.kind === "ask" && block.handoffId === decision.id) block.answered = true;
+    }
+    const answered: Answered =
+      decision.kind === "contract"
+        ? { kind: "contract", version: decision.version }
+        : {
+            kind: "question",
+            question: decision.question,
+            chosen:
+              decision.chosenOption !== null && decision.chosenOption !== decision.decision.trim()
+                ? decision.chosenOption
+                : null,
+          };
+    this.blocks.push({
+      kind: "request",
+      key: this.#key("request"),
+      source: { kind: "me", channel: "naru-ui" },
+      // The contract sheet's button is what the person said to it.
+      text: decision.kind === "contract" ? "이 계약으로 진행" : decision.decision,
+      at: decision.at,
+      origin: null,
+      answered,
     });
   }
 
@@ -445,6 +505,7 @@ function naruAsk(name: string, input: Record<string, unknown>, key: string): Ask
     recommendation: text(input.recommendation),
     handoffId: null,
     failed: false,
+    answered: false,
   };
 }
 

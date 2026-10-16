@@ -140,7 +140,26 @@ export interface AgentBoard {
 export interface AgentInstructions {
   readonly instructions: Instruction[];
   readonly origins: Instruction[];
+  /** The person's answers to what the agent asked (AP-D035); absent from older servers. */
+  readonly decisions?: AgentDecision[];
 }
+
+/** A decision the person made on an agent's question or intent contract (AP-D035). */
+export type AgentDecision =
+  | {
+      readonly kind: "handoff";
+      readonly id: string;
+      readonly question: string;
+      readonly decision: string;
+      readonly chosenOption: string | null;
+      readonly at: string;
+    }
+  | {
+      readonly kind: "contract";
+      readonly id: string;
+      readonly version: number;
+      readonly at: string;
+    };
 
 function key(): string {
   return globalThis.crypto.randomUUID();

@@ -779,6 +779,45 @@ export class AgentPlatformStore {
     return rows.map(handoffFromRow);
   }
 
+  /** The latest handoffs an agent asked that a person answered, oldest first (AP-D035). */
+  listAnsweredHandoffs(agentSessionId: string, limit: number): Handoff[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM (
+           SELECT * FROM agent_handoffs
+           WHERE requested_by_agent_session_id = ? AND status = 'resolved'
+           ORDER BY resolved_at DESC LIMIT ?
+         ) ORDER BY resolved_at`,
+      )
+      .all(agentSessionId, limit) as HandoffRow[];
+    return rows.map(handoffFromRow);
+  }
+
+  /** The person's latest intent contract approvals in a project, oldest first (AP-D035). */
+  listContractApprovals(
+    projectId: string,
+    limit: number,
+  ): { readonly contractId: string; readonly version: number; readonly at: string }[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM (
+           SELECT seq, subject_id, data_json, created_at FROM agent_events
+           WHERE type = 'intent_contract.approved' AND project_id = ?
+           ORDER BY seq DESC LIMIT ?
+         ) ORDER BY seq`,
+      )
+      .all(projectId, limit) as {
+      subject_id: string;
+      data_json: string;
+      created_at: string;
+    }[];
+    return rows.map((row) => ({
+      contractId: row.subject_id,
+      version: Number((JSON.parse(row.data_json) as { version?: unknown }).version),
+      at: row.created_at,
+    }));
+  }
+
   /** Resolves or cancels an open handoff exactly once. */
   closeHandoff(handoff: Handoff): boolean {
     return (

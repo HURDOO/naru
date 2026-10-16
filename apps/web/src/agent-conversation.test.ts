@@ -58,6 +58,97 @@ describe("agent conversation", () => {
     ]);
   });
 
+  it("shows the person's decisions on what this agent asked as their words (AP-D035)", () => {
+    const asked = "70000000-0000-4000-8000-000000000007";
+    const chose = "70000000-0000-4000-8000-000000000008";
+    const contract = "80000000-0000-4000-8000-000000000008";
+    const someoneElses = "70000000-0000-4000-8000-000000000009";
+    const wakeup = [
+      "[Naru] New events since your last turn. Read details with the naru tools before acting;",
+      "the latest user instruction wins over earlier plans.",
+      `- #9 intent_contract.approved subject=${contract} actor=human version=2`,
+      `- #10 handoff.resolved subject=${asked} actor=human kind=product-decision chosenOption=설정 안`,
+      `- #11 handoff.resolved subject=${chose} actor=human kind=product-decision chosenOption=새 메뉴`,
+      `- #12 handoff.resolved subject=${someoneElses} actor=human kind=manual-test chosenOption=null`,
+    ].join("\n");
+    const decisions = [
+      { kind: "contract", id: contract, version: 2, at: "2026-10-16T03:00:00.000Z" },
+      {
+        kind: "handoff",
+        id: asked,
+        question: "설정을 어디에 둘까요?",
+        decision: "설정 안에 두고 이름은 보안으로",
+        chosenOption: "설정 안",
+        at: "2026-10-16T03:01:00.000Z",
+      },
+      {
+        kind: "handoff",
+        id: chose,
+        question: "메뉴는?",
+        decision: "새 메뉴",
+        chosenOption: "새 메뉴",
+        at: "2026-10-16T03:02:00.000Z",
+      },
+    ] as const;
+    const turn = { type: "user", message: { role: "user", content: wakeup } };
+    // A wakeup sent again does not repeat the person's words.
+    const blocks = conversationBlocks([turn, turn], { ...context, decisions });
+    expect(blocks).toMatchObject([
+      {
+        kind: "request",
+        source: { kind: "me" },
+        text: "이 계약으로 진행",
+        at: "2026-10-16T03:00:00.000Z",
+        answered: { kind: "contract", version: 2 },
+      },
+      {
+        kind: "request",
+        source: { kind: "me" },
+        text: "설정 안에 두고 이름은 보안으로",
+        answered: { kind: "question", question: "설정을 어디에 둘까요?", chosen: "설정 안" },
+      },
+      // Picking an option without more words: the option is what they said.
+      { kind: "request", text: "새 메뉴", answered: { kind: "question", chosen: null } },
+      // Another agent's question answered: only a notice here.
+      { kind: "notice", details: ["사람 확인 완료"] },
+      {
+        kind: "notice",
+        details: ["의도 계약 승인", "사람 확인 완료", "사람 확인 완료", "사람 확인 완료"],
+      },
+    ]);
+    expect(blocks).toHaveLength(5);
+
+    // The question the answer belongs to knows it was answered.
+    const answeredQuestion = conversationBlocks(
+      [
+        {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "t1",
+                name: "mcp__naru__request_human_handoff",
+                input: { kind: "product-decision", reason: "설정을 어디에 둘까요?" },
+              },
+            ],
+          },
+        },
+        {
+          type: "user",
+          message: {
+            content: [
+              { type: "tool_result", tool_use_id: "t1", content: JSON.stringify({ id: asked }) },
+            ],
+          },
+        },
+        turn,
+      ],
+      { ...context, decisions },
+    );
+    expect(answeredQuestion[0]).toMatchObject({ kind: "ask", handoffId: asked, answered: true });
+  });
+
   it("reads Claude messages: requests by who said them, answers, thinking and grouped tools", () => {
     const blocks = conversationBlocks(
       [

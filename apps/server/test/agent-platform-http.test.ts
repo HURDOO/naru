@@ -422,12 +422,12 @@ describe("Agent Platform control room reads", () => {
     expect(board.body).not.toContain("passkey로 바꿔");
 
     const toWorker = await read(`/api/agent/agents/${worker}/instructions`);
-    expect(toWorker.json()).toEqual({ instructions: [delegation], origins: [goal] });
+    expect(toWorker.json()).toEqual({ instructions: [delegation], origins: [goal], decisions: [] });
     // A project orchestrator also hears what is sent to its project; the main one the user's goals.
     const toOrchestrator = await read(`/api/agent/agents/${orchestrator}/instructions`);
     expect(toOrchestrator.json<{ instructions: Instruction[] }>().instructions).toEqual([project]);
     const toMain = await read(`/api/agent/agents/${main}/instructions`);
-    expect(toMain.json()).toEqual({ instructions: [goal], origins: [] });
+    expect(toMain.json()).toEqual({ instructions: [goal], origins: [], decisions: [] });
     const missing = await read(
       "/api/agent/agents/90000000-0000-4000-8000-999999999999/instructions",
     );
@@ -676,6 +676,75 @@ describe("Agent Platform intent contract approval", () => {
       intentContract: { id: proposal.id },
       pendingIntentContract: null,
     });
+
+    // The person's decisions show in the asking agent's chat as their words (AP-D035).
+    const worker = core.registerAgentSession(ctx({ kind: "human" }), {
+      projectId: fixture.projectId,
+      role: "worker",
+      runtime: "claude",
+      native: false,
+      observation: "transcript",
+      conversationWriter: "orchestrator",
+    }).id;
+    const ask = (agentSessionId: string, reason: string) =>
+      core.requestHandoff(ctx({ kind: "agent", agentSessionId }), {
+        projectId: fixture.projectId,
+        kind: "product-decision",
+        payload: {
+          reason,
+          blockingTaskIds: [],
+          independentWorkToContinue: [],
+          options: [
+            { label: "설정 안", description: "" },
+            { label: "새 메뉴", description: "" },
+          ],
+          recommendation: "설정 안",
+          risks: [],
+          preparedEnvironment: [],
+          resumeCondition: "결정",
+        },
+      });
+    const question = ask(orchestrator, "로그인 설정을 어디에 둘까요?");
+    const workersQuestion = ask(worker, "버튼 문구는?");
+    const stillOpen = ask(orchestrator, "색은?");
+    core.resolveHandoff(ctx({ kind: "human" }), {
+      handoffId: question.id,
+      decision: "설정 안에 두고 이름은 보안으로",
+      chosenOption: "설정 안",
+    });
+    core.resolveHandoff(ctx({ kind: "human" }), {
+      handoffId: workersQuestion.id,
+      decision: "로그인",
+    });
+    const decisions = async (agentSessionId: string) =>
+      (
+        await fixture.app.inject({
+          method: "GET",
+          url: `/api/agent/agents/${agentSessionId}/instructions`,
+          headers: { cookie: login.cookie },
+        })
+      ).json<{ decisions: unknown[] }>().decisions;
+    // Both can share a millisecond; the chat places each where the agent was told of it.
+    const forOrchestrator = await decisions(orchestrator);
+    expect(forOrchestrator).toHaveLength(2);
+    expect(forOrchestrator).toEqual(
+      expect.arrayContaining([
+        { kind: "contract", id: proposal.id, version: 1, at: expect.any(String) as string },
+        {
+          kind: "handoff",
+          id: question.id,
+          question: "로그인 설정을 어디에 둘까요?",
+          decision: "설정 안에 두고 이름은 보안으로",
+          chosenOption: "설정 안",
+          at: expect.any(String) as string,
+        },
+      ]),
+    );
+    // Another agent's answer and an open question are not this agent's decisions.
+    expect(await decisions(worker)).toEqual([
+      expect.objectContaining({ kind: "handoff", id: workersQuestion.id, chosenOption: null }),
+    ]);
+    expect(JSON.stringify(await decisions(orchestrator))).not.toContain(stillOpen.id);
   });
 });
 

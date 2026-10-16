@@ -282,12 +282,17 @@ export class AgentPlatformCore {
   /**
    * What was said to one agent, by anyone, verbatim, for the person's conversation view (AP-D022):
    * the instructions addressed to it as `getDelegatedWork` reads them, for the main orchestrator
-   * also the user's global instructions, and the user instruction each delegation serves.
+   * also the user's global instructions, and the user instruction each delegation serves. The
+   * person's decisions on what it asked come along, to show as the person's words (AP-D035).
    */
   getAgentInstructions(
     actor: Actor,
     agentSessionId: string,
-  ): { readonly instructions: Instruction[]; readonly origins: Instruction[] } {
+  ): {
+    readonly instructions: Instruction[];
+    readonly origins: Instruction[];
+    readonly decisions: AgentDecision[];
+  } {
     this.#requireHuman(actor);
     const agent = this.#requireAgentSession(agentSessionId);
     const addressed = this.#store.listAddressedInstructions(
@@ -308,7 +313,39 @@ export class AgentPlatformCore {
     const instructions = [...addressed, ...global]
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
       .slice(-CONVERSATION_INSTRUCTIONS);
-    return { instructions, origins: this.#origins(instructions) };
+    return {
+      instructions,
+      origins: this.#origins(instructions),
+      decisions: this.#decisionsFor(agent),
+    };
+  }
+
+  /** The person's answers to this agent's questions, and to its intent contracts (AP-D035). */
+  #decisionsFor(agent: AgentSession): AgentDecision[] {
+    const answers: AgentDecision[] = this.#store
+      .listAnsweredHandoffs(agent.id, CONVERSATION_INSTRUCTIONS)
+      .filter((handoff) => handoff.resolution !== null && handoff.resolvedAt !== null)
+      .map((handoff) => ({
+        kind: "handoff",
+        id: handoff.id,
+        question: handoff.payload.reason,
+        decision: handoff.resolution!.decision,
+        chosenOption: handoff.resolution!.chosenOption,
+        at: handoff.resolvedAt!,
+      }));
+    // Only a project orchestrator proposes a project's contract.
+    const approvals: AgentDecision[] =
+      agent.role === "project-orchestrator" && agent.projectId !== null
+        ? this.#store
+            .listContractApprovals(agent.projectId, CONVERSATION_INSTRUCTIONS)
+            .map((approval) => ({
+              kind: "contract",
+              id: approval.contractId,
+              version: approval.version,
+              at: approval.at,
+            }))
+        : [];
+    return [...answers, ...approvals].sort((left, right) => left.at.localeCompare(right.at));
   }
 
   #origins(instructions: readonly Instruction[]): Instruction[] {
@@ -2736,6 +2773,23 @@ const RETIRABLE_PROCESS_STATUSES: ReadonlySet<SharedProcess["status"]> = new Set
 function retiredAgent(): AgentPlatformError {
   return new AgentPlatformError("AGENT_INVALID_STATE", "This agent was cleaned up.");
 }
+
+/** A decision the person made on what an agent asked; its chat shows it as their words (AP-D035). */
+export type AgentDecision =
+  | {
+      readonly kind: "handoff";
+      readonly id: string;
+      readonly question: string;
+      readonly decision: string;
+      readonly chosenOption: string | null;
+      readonly at: string;
+    }
+  | {
+      readonly kind: "contract";
+      readonly id: string;
+      readonly version: number;
+      readonly at: string;
+    };
 
 /** One goal the person handed over and the work it became (AP-D034). */
 export interface AgentJob {
