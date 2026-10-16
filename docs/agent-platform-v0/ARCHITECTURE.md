@@ -280,3 +280,42 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   - 사람의 Chat turn에 붙는 Naru 메모(열린 질문 알림)는 대화에서 지운다.
 - 타임라인은 이벤트에서 만든다: runtime turn(`agent_session.updated` active→idle), 사람 hold, 질문
   (`handoff.requested`), 병합(`artifact.published` commit). 불러온 이벤트보다 오래된 것은 그리지 않는다.
+
+### 6.6.2 작업공간 세로 목록과 위쪽 메뉴 (AP-T22 1단계, AP-D027~D031)
+
+- 저장(AP-D031): project의 `workspaces` 행(Pane 목록과 legacy layout)은 그대로 두고, 작업공간은
+  `workspace_views`(DB v21)에 둔다. layout은 `pane`, `slot`(아직 없는 Pane 자리), `split` node로 이뤄지고
+  Pane 일부만 담는다. 작업공간마다 `version`이 있다. 사람이 바꾼 Pane 이름은 `panes.custom_title`이다.
+  - 읽기: `GET /api/projects/:id/workspace`의 `views`(추가형).
+  - 쓰기: `POST/PUT/DELETE /api/projects/:id/views[/:viewId]`, 작업공간 안에서 새 Pane을 만드는
+    `POST /api/projects/:id/views/:viewId/panes`, 이름 바꾸기 `PATCH /api/panes/:id`. 모두 사람 기기 lease가
+    필요하고, 응답은 전체 `Workspace`다.
+  - Pane 끄기는 그 Pane을 모든 작업공간에서 뺀다. 작업공간에서 새로 만든 Pane과 에이전트 Pane은 legacy
+    layout에 접힌 채 더해져, legacy layout은 계속 모든 Pane을 담는다.
+  - 관제실과 흐름의 에이전트 이름: `GET /api/agent/board`의 `paneNames`(사람이 바꾼 이름)가 있으면 그
+    이름을 쓴다.
+- 화면 조건: agent API를 제공하는 server(`NARU_AGENT_PLATFORM=1`)에서만 새 화면을 켠다. 그렇지 않으면 가로
+  탭 화면 그대로다(e2e가 이 화면을 지킨다).
+- 위쪽 메뉴(`MainNav`): `관제실 | 작업공간 | 흐름`, 관제실의 숫자 배지와 "나를 기다림 N". 처음 여는 화면은
+  관제실이다. 900px 이하에서는 위쪽 막대 아래 줄로 내려간다. 휴대폰에서도 세 항목이 늘 보인다.
+  - `AgentApp`은 메뉴가 고른 화면(관제실, 흐름)을 받고 왼쪽 rail을 그리지 않는다.
+  - 1단계에서 대화는 관제실 위에 열리는 화면으로 남는다. 메뉴를 누르면 닫힌다. 2단계에서 에이전트 Pane으로
+    옮긴다(AP-D028).
+- 작업공간 화면(`WorkspaceScreen`, lazy):
+  - 세로 목록: project 이름(누르면 프로젝트 메뉴), 작업공간들(배치 그림, Pane 수), 작업공간 추가, 구분선,
+    개별 Pane(이름, `나`/`에이전트`와 상태, 쓰는 사람 표시, ⋯ 메뉴).
+  - 1101px 이상은 목록이 왼쪽에 늘 있다. 601~1100px은 목록을 서랍으로 연다. 600px 이하는 목록과 연
+    화면을 번갈아 보여 주고, 위쪽 메뉴로 들어오면 목록부터 보인다.
+  - 작업공간 화면: 이름, Pane 넣기(새 Pane 또는 이미 있는 Pane), 편집, 집중·분할 보기. 집중 보기와 휴대폰은
+    Pane과 빈 자리를 칩으로 고른다. Pane 머리줄의 `―`는 작업공간에서 빼기다(Pane은 계속 실행).
+  - 편집: 이름 입력, 작업공간 삭제(두 번 눌러 확인), 목록의 `＋`/`✓`, 목록에서 Pane을 끌어 Pane의
+    오른쪽·아래나 빈 자리에 놓기.
+  - Pane 하나만 보기: 목록의 Pane을 누르면 그 Pane만 연다. "작업공간에 넣기"로 작업공간에 둔다.
+  - 어떤 작업공간·Pane을 열었는지는 project별로 `localStorage`에 둔다.
+- 쓰는 사람 표시(AP-D029): agent board의 에이전트(`paneId`, `humanHoldSince`)와 공유 프로세스로 만든다.
+  - 내 Pane: `나 · 내 Pane`.
+  - 에이전트 Pane: 이름과 `끼어들기`. 끼어들기는 TUI surface의 hold이고, 답하는 중이면 그 차례를 멈춘다.
+  - 끼어든 Pane: `나 · 끼어든 중`과 `놓기`. 기존 hold API(`/api/agent/agents/:id/hold`,
+    `/api/agent/processes/:id/hold`)를 쓴다.
+- 새로 고침: 작업공간 화면은 5초마다(창이 보일 때, focus를 받을 때) 작업공간과 agent board를 다시 읽는다.
+  이 기기에서 저장하지 않은 변경이 있으면 건너뛴다.

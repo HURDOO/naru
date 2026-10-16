@@ -4,6 +4,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import type {
   CreatePaneRequest,
+  CreateWorkspaceViewPaneRequest,
+  CreateWorkspaceViewRequest,
   ErrorCode,
   LayoutNode,
   Pane,
@@ -18,8 +20,11 @@ import type {
   NaruPushSubscription,
   PushNotificationPayload,
   SaveWorkspaceRequest,
+  SaveWorkspaceViewRequest,
   UpdatePaneViewStateRequest,
   Workspace,
+  WorkspaceView,
+  WorkspaceViewLayoutNode,
 } from "@naru/contracts";
 import {
   ClaudeSessionIdSchema,
@@ -28,20 +33,29 @@ import {
   LAYOUT_SCHEMA_VERSION,
   PaneViewStateSchema,
   PUSH_INACTIVITY_DELAY_MINUTES,
+  WORKSPACE_VIEW_LIMIT,
 } from "@naru/contracts";
 import type { DurableSessionErrorCode, SessionView } from "@naru/contracts/durable-session/v0";
 import {
+  fillViewSlot,
+  firstViewPaneId,
   insertCollapsedPane,
+  insertIntoView,
   migrateLayout,
   removePane,
+  removePaneFromView,
   splitPane,
   validateLayout,
+  validateViewLayout,
+  viewContainsPane,
+  viewPaneNode,
 } from "@naru/domain";
 import { AppError } from "./errors.js";
 import { createPreMigrationBackupIfNeeded } from "./database-backup.js";
 import { AGENT_PLATFORM_MIGRATION } from "./agent-platform/migration.js";
 import { AgentPlatformStore } from "./agent-platform/store.js";
 import { CLAUDE_AGENT_LAUNCH_PROFILE, CODEX_AGENT_LAUNCH_PROFILE } from "./launch-profiles.js";
+import { WORKSPACE_VIEWS_MIGRATION, WorkspaceViewStore } from "./workspace-views.js";
 
 interface ProjectRow {
   id: string;
@@ -104,6 +118,7 @@ interface PaneRow {
   activity_revision: number;
   activity_updated_at: string;
   view_state_json: string;
+  custom_title: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -744,6 +759,7 @@ export const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
     },
   },
   AGENT_PLATFORM_MIGRATION,
+  WORKSPACE_VIEWS_MIGRATION,
 ];
 
 export function runDatabaseMigrations(
@@ -788,6 +804,7 @@ export class NaruRepository {
   readonly #defaultAgentPaneKind: "codex" | "claude";
   /** Agent Platform tables share this connection and its transactions (AP-T09). */
   readonly agentPlatform: AgentPlatformStore;
+  readonly #views: WorkspaceViewStore;
 
   constructor(filename: string, options: NaruRepositoryOptions = {}) {
     this.#defaultAgentPaneKind = options.defaultAgentPaneKind ?? "codex";
@@ -806,6 +823,7 @@ export class NaruRepository {
     }
     this.#migrate();
     this.agentPlatform = new AgentPlatformStore(this.#database);
+    this.#views = new WorkspaceViewStore(this.#database);
     if ((options.sessionOwner ?? "legacy") === "legacy") this.#markOrphanedPanesServerStopped();
   }
 
@@ -1266,6 +1284,7 @@ export class NaruRepository {
           defaultWorkspace.activePaneId,
           now,
         );
+      this.#views.insertDefault(project.id, defaultWorkspace.panes, now);
     });
 
     try {
@@ -1422,6 +1441,13 @@ export class NaruRepository {
     if (workspace.active_pane_id !== null && !paneIds.has(workspace.active_pane_id)) {
       throw new Error(`Workspace references unknown active Pane ${workspace.active_pane_id}.`);
     }
+    const views = this.#views.list(projectId);
+    for (const view of views) {
+      validateViewLayout(view.layout, paneIds);
+      if (view.activePaneId !== null && !viewContainsPane(view.layout, view.activePaneId)) {
+        throw new Error(`Workspace view ${view.id} references an active Pane it does not show.`);
+      }
+    }
 
     return {
       projectId,
@@ -1430,8 +1456,143 @@ export class NaruRepository {
       layout,
       activePaneId: workspace.active_pane_id,
       panes,
+      views,
       updatedAt: workspace.updated_at,
     };
+  }
+
+  /** A workspace the person made (AP-D031): any of the project's Panes, each at most once. */
+  createWorkspaceView(projectId: string, input: CreateWorkspaceViewRequest): Workspace {
+    this.#database
+      .transaction(() => {
+        const workspace = this.getWorkspace(projectId);
+        if ((workspace.views?.length ?? 0) >= WORKSPACE_VIEW_LIMIT) {
+          throw new AppError(
+            "REQUEST_INVALID",
+            409,
+            `작업공간은 프로젝트마다 ${WORKSPACE_VIEW_LIMIT}개까지 만들 수 있습니다.`,
+          );
+        }
+        assertViewState(input.layout, input.activePaneId, paneIdsOf(workspace));
+        this.#views.insert({
+          projectId,
+          name: input.name,
+          layout: input.layout,
+          activePaneId: input.activePaneId,
+          now: new Date().toISOString(),
+        });
+      })
+      .immediate();
+    return this.getWorkspace(projectId);
+  }
+
+  saveWorkspaceView(projectId: string, viewId: string, input: SaveWorkspaceViewRequest): Workspace {
+    this.#database
+      .transaction(() => {
+        const workspace = this.getWorkspace(projectId);
+        const view = requireView(workspace, viewId);
+        assertWorkspaceVersion(view.version, input.version);
+        assertViewState(input.layout, input.activePaneId, paneIdsOf(workspace));
+        const saved = this.#views.update(
+          projectId,
+          viewId,
+          input.version,
+          { name: input.name, layout: input.layout, activePaneId: input.activePaneId },
+          new Date().toISOString(),
+        );
+        assertWorkspaceUpdated(saved ? 1 : 0);
+      })
+      .immediate();
+    return this.getWorkspace(projectId);
+  }
+
+  /** Removes the workspace only; its Panes keep running (AP-D027). */
+  deleteWorkspaceView(projectId: string, viewId: string, version: number): Workspace {
+    this.#database
+      .transaction(() => {
+        const view = requireView(this.getWorkspace(projectId), viewId);
+        assertWorkspaceVersion(view.version, version);
+        assertWorkspaceUpdated(this.#views.delete(projectId, viewId, version) ? 1 : 0);
+      })
+      .immediate();
+    return this.getWorkspace(projectId);
+  }
+
+  /**
+   * A new Pane made inside a workspace: beside a Pane, in an empty place or alone. It joins the
+   * project layout collapsed, like agent Panes, so that layout keeps holding every Pane.
+   */
+  createWorkspaceViewPane(
+    projectId: string,
+    viewId: string,
+    input: CreateWorkspaceViewPaneRequest,
+  ): Pane {
+    return this.#database
+      .transaction(() => {
+        const workspace = this.getWorkspace(projectId);
+        const view = requireView(workspace, viewId);
+        assertWorkspaceVersion(view.version, input.viewVersion);
+        const now = new Date().toISOString();
+        const paneNumber = workspace.panes.filter((pane) => pane.kind === input.kind).length + 1;
+        const pane = createPaneRecord(
+          projectId,
+          input.kind,
+          input.title ?? defaultPaneTitle(input.kind, paneNumber),
+          paneLaunchProfile(input),
+          now,
+          input.kind === "files" || input.kind === "docs" || input.kind === "tasks"
+            ? (input.selectedDocumentPath ?? null)
+            : null,
+        );
+        const layout = placeInView(view.layout, pane.id, input.placement);
+        const legacy = insertCollapsedPane(workspace.layout, pane.id);
+        const legacyActive = workspace.activePaneId ?? pane.id;
+        const paneIds = new Set([...paneIdsOf(workspace), pane.id]);
+        assertWorkspaceState(legacy, legacyActive, paneIds);
+        assertViewState(layout, pane.id, paneIds);
+
+        this.#insertPane(pane);
+        const result = this.#database
+          .prepare(
+            `UPDATE workspaces
+           SET version = version + 1, layout_json = ?, active_pane_id = ?, updated_at = ?
+           WHERE project_id = ? AND version = ?`,
+          )
+          .run(JSON.stringify(legacy), legacyActive, now, projectId, workspace.version);
+        assertWorkspaceUpdated(result.changes);
+        const saved = this.#views.update(
+          projectId,
+          viewId,
+          view.version,
+          { name: view.name, layout, activePaneId: pane.id },
+          now,
+        );
+        assertWorkspaceUpdated(saved ? 1 : 0);
+        return pane;
+      })
+      .immediate();
+  }
+
+  /** The person's name for a Pane (AP-D029); null returns to the name Naru gave it. */
+  renamePane(paneId: string, customTitle: string | null): Pane {
+    const result = this.#database
+      .prepare("UPDATE panes SET custom_title = ?, updated_at = ? WHERE id = ?")
+      .run(customTitle, new Date().toISOString(), paneId);
+    const pane = result.changes === 1 ? this.getPaneContext(paneId)?.pane : undefined;
+    if (pane === undefined) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
+    return pane;
+  }
+
+  /** Names the person gave to the given Panes, for screens that show agents by name. */
+  customPaneTitles(paneIds: readonly string[]): Record<string, string> {
+    if (paneIds.length === 0) return {};
+    const rows = this.#database
+      .prepare(
+        `SELECT id, custom_title FROM panes
+          WHERE custom_title IS NOT NULL AND id IN (${paneIds.map(() => "?").join(", ")})`,
+      )
+      .all(...paneIds) as Array<{ id: string; custom_title: string }>;
+    return Object.fromEntries(rows.map((row) => [row.id, row.custom_title]));
   }
 
   createPane(projectId: string, input: CreatePaneRequest): Pane {
@@ -1631,6 +1792,23 @@ export class NaruRepository {
         assertWorkspaceState(layout, nextActivePaneId, remainingPaneIds);
         const now = new Date().toISOString();
 
+        for (const view of workspace.views ?? []) {
+          if (!viewContainsPane(view.layout, paneId)) continue;
+          const viewLayout = removePaneFromView(view.layout, paneId);
+          const saved = this.#views.update(
+            context.pane.projectId,
+            view.id,
+            view.version,
+            {
+              name: view.name,
+              layout: viewLayout,
+              activePaneId:
+                view.activePaneId === paneId ? firstViewPaneId(viewLayout) : view.activePaneId,
+            },
+            now,
+          );
+          assertWorkspaceUpdated(saved ? 1 : 0);
+        }
         this.#database.prepare("DELETE FROM panes WHERE id = ?").run(paneId);
         const result = this.#database
           .prepare(
@@ -2420,6 +2598,7 @@ function mapPane(row: PaneRow): Pane {
     codexSessionId: row.codex_session_id,
     codexSessionResumable: row.codex_session_resumable === 1,
     claudeSessionId: row.claude_session_id,
+    customTitle: row.custom_title,
     lastErrorCode: row.last_error_code,
     lastExitedAt: row.last_exited_at,
     activity: {
@@ -2562,7 +2741,7 @@ function defaultPaneTitle(kind: PaneKind, paneNumber: number): string {
   }
 }
 
-function paneLaunchProfile(input: CreatePaneRequest): string {
+function paneLaunchProfile(input: CreatePaneRequest | CreateWorkspaceViewPaneRequest): string {
   switch (input.kind) {
     case "codex":
       return input.launchProfile ?? "codex-main";
@@ -2643,6 +2822,59 @@ function assertWorkspaceState(
   }
   if (paneIds.size > 0 && activePaneId === null) {
     throw new AppError("REQUEST_INVALID", 400, "활성 Pane을 선택해 주세요.");
+  }
+}
+
+function paneIdsOf(workspace: Workspace): Set<string> {
+  return new Set(workspace.panes.map((pane) => pane.id));
+}
+
+function requireView(workspace: Workspace, viewId: string): WorkspaceView {
+  const view = workspace.views?.find((candidate) => candidate.id === viewId);
+  if (view === undefined) {
+    throw new AppError("WORKSPACE_VIEW_MISSING", 404, "작업공간을 찾을 수 없습니다.");
+  }
+  return view;
+}
+
+function assertViewState(
+  layout: WorkspaceViewLayoutNode | null,
+  activePaneId: string | null,
+  paneIds: ReadonlySet<string>,
+): void {
+  try {
+    validateViewLayout(layout, paneIds);
+  } catch {
+    throw new AppError("REQUEST_INVALID", 400, "유효하지 않은 작업공간 배치입니다.");
+  }
+  if (activePaneId !== null && !viewContainsPane(layout, activePaneId)) {
+    throw new AppError("REQUEST_INVALID", 400, "활성 Pane이 이 작업공간에 없습니다.");
+  }
+}
+
+function placeInView(
+  layout: WorkspaceViewLayoutNode | null,
+  paneId: string,
+  placement: CreateWorkspaceViewPaneRequest["placement"],
+): WorkspaceViewLayoutNode {
+  try {
+    switch (placement.type) {
+      case "split":
+        return insertIntoView(
+          layout,
+          viewPaneNode(paneId),
+          { type: "pane", paneId: placement.targetPaneId },
+          placement.direction,
+        );
+      case "slot":
+        if (layout === null) throw new Error("An empty workspace has no places.");
+        return fillViewSlot(layout, placement.slotId, paneId);
+      case "root":
+        if (layout !== null) throw new Error("The workspace is not empty.");
+        return viewPaneNode(paneId);
+    }
+  } catch {
+    throw new AppError("REQUEST_INVALID", 400, "새 Pane을 놓을 자리가 작업공간에 없습니다.");
   }
 }
 

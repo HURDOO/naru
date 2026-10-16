@@ -28,6 +28,13 @@ import {
   SaveFileDraftRequestSchema,
   SaveProjectFileRequestSchema,
   SaveWorkspaceRequestSchema,
+  CreateWorkspaceViewPaneRequestSchema,
+  CreateWorkspaceViewRequestSchema,
+  DeleteWorkspaceViewRequestSchema,
+  RenamePaneRequestSchema,
+  SaveWorkspaceViewRequestSchema,
+  type CreatePaneRequest,
+  type CreateWorkspaceViewPaneRequest,
   PushProjectSummarySchema,
   TERMINAL_RESTORE_PROTOCOL,
   type SessionResponse,
@@ -77,6 +84,7 @@ import { TlsCertificateManager, type TlsCertificateService } from "./tls-certifi
 
 const CSRF_HEADER = "x-csrf-token";
 const IdParamsSchema = z.object({ id: z.string().uuid() });
+const ViewParamsSchema = z.object({ id: z.string().uuid(), viewId: z.string().uuid() });
 const DocumentQuerySchema = z.object({ path: DocumentRelativePathSchema });
 const DirectoryQuerySchema = z.object({ path: ProjectRelativePathSchema.default("") });
 const ProjectFileQuerySchema = z.object({
@@ -610,6 +618,7 @@ export async function buildApp(
       dependencies.agentRuntime,
       dependencies.sharedProcesses,
       dependencies.noteHumanInput,
+      (paneIds) => dependencies.repository.customPaneTitles(paneIds),
     );
   }
 
@@ -754,12 +763,11 @@ export async function buildApp(
     return dependencies.repository.saveWorkspace(id, input);
   });
 
-  app.post("/api/projects/:id/panes", async (request, reply) => {
-    requireUnsafeRequest(request, config, sessions);
-    requireSurfaceController(request, leases);
-    const { id } = IdParamsSchema.parse(request.params);
-    const project = await requireUsableProject(id, dependencies);
-    const input = CreatePaneRequestSchema.parse(request.body);
+  /** What every new Pane must pass before it is stored: its document and its runtime. */
+  const assertNewPaneUsable = async (
+    project: Project,
+    input: CreatePaneRequest | CreateWorkspaceViewPaneRequest,
+  ): Promise<void> => {
     if ((input.kind === "docs" || input.kind === "tasks") && input.selectedDocumentPath) {
       if (input.kind === "docs" && !input.selectedDocumentPath.startsWith("docs/")) {
         throw new AppError(
@@ -787,11 +795,73 @@ export async function buildApp(
         "Claude Code 실행 파일이 Host에 설정되지 않았습니다.",
       );
     }
+  };
+
+  app.post("/api/projects/:id/panes", async (request, reply) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id } = IdParamsSchema.parse(request.params);
+    const project = await requireUsableProject(id, dependencies);
+    const input = CreatePaneRequestSchema.parse(request.body);
+    await assertNewPaneUsable(project, input);
     const pane = dependencies.repository.createPane(id, input);
     if (pane.kind === "terminal" || pane.kind === "codex" || pane.kind === "claude") {
       await startPaneWithPersistedFailure(dependencies.supervisor, pane.id, observability);
     }
     return reply.code(201).send(dependencies.repository.getWorkspace(id));
+  });
+
+  // Workspaces the person arranges (AP-D031). Each answers with the whole project workspace.
+  app.post("/api/projects/:id/views", async (request, reply) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id } = IdParamsSchema.parse(request.params);
+    await requireUsableProject(id, dependencies);
+    const input = CreateWorkspaceViewRequestSchema.parse(request.body);
+    return reply.code(201).send(dependencies.repository.createWorkspaceView(id, input));
+  });
+
+  app.put("/api/projects/:id/views/:viewId", async (request) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id, viewId } = ViewParamsSchema.parse(request.params);
+    await requireUsableProject(id, dependencies);
+    const input = SaveWorkspaceViewRequestSchema.parse(request.body);
+    return dependencies.repository.saveWorkspaceView(id, viewId, input);
+  });
+
+  app.delete("/api/projects/:id/views/:viewId", async (request) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id, viewId } = ViewParamsSchema.parse(request.params);
+    await requireUsableProject(id, dependencies);
+    const input = DeleteWorkspaceViewRequestSchema.parse(request.body);
+    return dependencies.repository.deleteWorkspaceView(id, viewId, input.version);
+  });
+
+  app.post("/api/projects/:id/views/:viewId/panes", async (request, reply) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id, viewId } = ViewParamsSchema.parse(request.params);
+    const project = await requireUsableProject(id, dependencies);
+    const input = CreateWorkspaceViewPaneRequestSchema.parse(request.body);
+    await assertNewPaneUsable(project, input);
+    const pane = dependencies.repository.createWorkspaceViewPane(id, viewId, input);
+    if (pane.kind === "terminal" || pane.kind === "codex" || pane.kind === "claude") {
+      await startPaneWithPersistedFailure(dependencies.supervisor, pane.id, observability);
+    }
+    return reply.code(201).send(dependencies.repository.getWorkspace(id));
+  });
+
+  app.patch("/api/panes/:id", async (request) => {
+    requireUnsafeRequest(request, config, sessions);
+    requireSurfaceController(request, leases);
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = RenamePaneRequestSchema.parse(request.body);
+    const pane = dependencies.repository.getPaneContext(id)?.pane;
+    if (!pane) throw new AppError("PANE_MISSING", 404, "Pane을 찾을 수 없습니다.");
+    await requireUsableProject(pane.projectId, dependencies);
+    return dependencies.repository.renamePane(id, input.customTitle);
   });
 
   app.post("/api/panes/:id/restart", async (request) => {

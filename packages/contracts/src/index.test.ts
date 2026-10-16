@@ -6,20 +6,26 @@ import {
   ConnectDiscoveredProjectTargetRequestSchema,
   CreatePaneRequestSchema,
   CreatePushSubscriptionRequestSchema,
+  CreateWorkspaceViewPaneRequestSchema,
+  CreateWorkspaceViewRequestSchema,
   DeletePaneRequestSchema,
   FileDraftSchema,
+  PaneSchema,
   PaneViewStateSchema,
+  RenamePaneRequestSchema,
   ProjectDirectoryListingSchema,
   ProjectFileContentSchema,
   ProjectGroupSchema,
   SaveFileDraftRequestSchema,
   SaveProjectFileRequestSchema,
   SaveWorkspaceRequestSchema,
+  SaveWorkspaceViewRequestSchema,
   SessionResponseSchema,
   ServerWsFrameSchema,
   PushNotificationPayloadSchema,
   PushProjectSummarySchema,
   UpdatePushConfigurationRequestSchema,
+  WorkspaceSchema,
   type ClientWsFrame,
   type ServerWsFrame,
 } from "./index.js";
@@ -170,6 +176,109 @@ describe("workspace mutation contracts", () => {
         direction: "horizontal",
       }),
     ).toThrow();
+  });
+});
+
+describe("workspace view contracts (AP-D031)", () => {
+  const slotId = "44444444-4444-4444-8444-444444444444";
+  const splitId = "55555555-5555-4555-8555-555555555555";
+  const layout = {
+    type: "split" as const,
+    id: splitId,
+    direction: "horizontal" as const,
+    ratio: 0.5,
+    first: { type: "pane" as const, paneId },
+    second: {
+      type: "slot" as const,
+      id: slotId,
+      pane: { kind: "codex" as const, launchProfile: "codex-main" as const },
+    },
+  };
+
+  it("accepts pane, slot and split nodes and bounded names", () => {
+    expect(
+      CreateWorkspaceViewRequestSchema.parse({ name: " 리뷰 보기 ", layout, activePaneId: paneId }),
+    ).toEqual({ name: "리뷰 보기", layout, activePaneId: paneId });
+    expect(
+      SaveWorkspaceViewRequestSchema.parse({
+        version: 3,
+        name: "기본",
+        layout: null,
+        activePaneId: null,
+      }),
+    ).toEqual({ version: 3, name: "기본", layout: null, activePaneId: null });
+    expect(
+      CreateWorkspaceViewPaneRequestSchema.parse({
+        kind: "codex",
+        launchProfile: "codex-main",
+        viewVersion: 2,
+        placement: { type: "slot", slotId },
+      }),
+    ).toMatchObject({ kind: "codex", placement: { type: "slot", slotId } });
+    expect(RenamePaneRequestSchema.parse({ customTitle: " 로그인 담당 " })).toEqual({
+      customTitle: "로그인 담당",
+    });
+    expect(RenamePaneRequestSchema.parse({ customTitle: null })).toEqual({ customTitle: null });
+  });
+
+  it("rejects collapsed panes, unknown slot runtimes and empty names", () => {
+    const save = (value: unknown) =>
+      SaveWorkspaceViewRequestSchema.parse({
+        version: 1,
+        name: "기본",
+        layout: value,
+        activePaneId: null,
+      });
+    expect(() => save({ type: "pane", paneId, collapsed: true })).toThrow();
+    expect(() =>
+      save({ type: "slot", id: slotId, pane: { kind: "files", launchProfile: "files-editor" } }),
+    ).toThrow();
+    expect(() =>
+      save({ type: "slot", id: slotId, pane: { kind: "codex", launchProfile: "--yolo" } }),
+    ).toThrow();
+    expect(() =>
+      CreateWorkspaceViewRequestSchema.parse({ name: "   ", layout: null, activePaneId: null }),
+    ).toThrow();
+    expect(() =>
+      CreateWorkspaceViewPaneRequestSchema.parse({
+        kind: "terminal",
+        viewVersion: 1,
+        placement: { type: "split", targetPaneId: paneId, direction: "diagonal" },
+      }),
+    ).toThrow();
+    expect(() => RenamePaneRequestSchema.parse({ customTitle: "" })).toThrow();
+  });
+
+  it("reads workspaces and Panes from servers without views or custom names", () => {
+    const now = "2026-10-16T00:00:00.000Z";
+    const pane = {
+      id: paneId,
+      projectId: runtimeId,
+      kind: "terminal",
+      title: "Terminal 1",
+      launchProfile: "shell",
+      status: "running",
+      exitCode: null,
+      codexSessionId: null,
+      codexSessionResumable: false,
+      lastErrorCode: null,
+      lastExitedAt: null,
+      activity: { state: "idle", eventId: null, runtimeId: null, revision: 0, updatedAt: now },
+      viewState: { selectedDocumentPath: null, navigationOpen: true, expandedDirectories: [] },
+      createdAt: now,
+      updatedAt: now,
+    };
+    expect(PaneSchema.parse(pane).customTitle).toBeUndefined();
+    const workspace = WorkspaceSchema.parse({
+      projectId: runtimeId,
+      schemaVersion: 2,
+      version: 0,
+      layout: { type: "pane", paneId, collapsed: false },
+      activePaneId: paneId,
+      panes: [pane],
+      updatedAt: now,
+    });
+    expect(workspace.views).toBeUndefined();
   });
 });
 

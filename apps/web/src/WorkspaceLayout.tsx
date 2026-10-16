@@ -1,5 +1,11 @@
-import type { LayoutNode, Pane, PaneKind, SplitDirection, Workspace } from "@naru/contracts";
-import { visibleLayout, visiblePaneIds } from "@naru/domain";
+import type {
+  Pane,
+  PaneKind,
+  SplitDirection,
+  WorkspaceViewLayoutNode,
+  WorkspaceViewSlotNode,
+} from "@naru/contracts";
+import { viewPaneIds, type ViewTarget } from "@naru/domain";
 import {
   Group,
   Panel,
@@ -8,8 +14,9 @@ import {
   type LayoutChangedMeta,
   useGroupRef,
 } from "react-resizable-panels";
-import { lazy, Suspense, useEffect, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo, type ReactNode } from "react";
 import type { NaruApi } from "./api";
+import { PANE_DRAG_TYPE } from "./pane-drag";
 import type { ConnectionSnapshot, TerminalConnection } from "./terminal-connection";
 import type { WorkspaceViewMode } from "./workspace-view";
 import { ActivityStatus } from "./ActivityStatus";
@@ -29,8 +36,30 @@ const FilesPane = lazy(async () => {
   return { default: module.FilesPane };
 });
 
+/** Where a Pane dragged from the workspace list may land while a workspace is edited. */
+export interface WorkspaceDrop {
+  readonly onDrop: (target: ViewTarget, paneId: string, direction: SplitDirection) => void;
+}
+
 interface WorkspaceLayoutProps {
-  workspace: Workspace;
+  /** What to show: Panes, places for Panes not started yet and splits (AP-D031). */
+  layout: WorkspaceViewLayoutNode | null;
+  panes: readonly Pane[];
+  activePaneId: string | null;
+  /** The legacy tab strip labels each Pane as a tab panel. */
+  tabPanels: boolean;
+  /** Hiding a Pane: collapsing it in the project layout, or taking it out of a workspace. */
+  collapse: { readonly label: string; readonly title: string; readonly enabled: boolean };
+  /** Each Pane in its own cell, so drop targets can cover it (workspaces only). */
+  cells?: boolean;
+  /** False hides the split menu (a Pane open on its own has nothing to split). */
+  splitEnabled?: boolean;
+  /** The name to show for a Pane (the person's name, the agent's, then Naru's). */
+  paneTitle?: (pane: Pane) => string;
+  /** Owner and actions shown in each Pane's header (AP-D029). */
+  paneExtras?: (pane: Pane) => ReactNode;
+  renderSlot?: (slot: WorkspaceViewSlotNode) => ReactNode;
+  drop?: WorkspaceDrop | null;
   api: NaruApi;
   connection: TerminalConnection | null;
   connectionStatus: ConnectionSnapshot;
@@ -66,47 +95,126 @@ interface WorkspaceLayoutProps {
 }
 
 interface BranchProps extends WorkspaceLayoutProps {
-  node: LayoutNode;
+  node: WorkspaceViewLayoutNode;
   paneById: ReadonlyMap<string, Pane>;
 }
 
 export function WorkspaceLayout(props: WorkspaceLayoutProps): React.JSX.Element | null {
-  const paneById = new Map(props.workspace.panes.map((pane) => [pane.id, pane]));
-  if (!props.workspace.layout) return null;
-  const renderedLayout = visibleLayout(props.workspace.layout);
-  const visibleIds = visiblePaneIds(props.workspace.layout);
-  if (!renderedLayout) return null;
+  const paneById = new Map(
+    titledPanes(props.panes, props.paneTitle).map((pane) => [pane.id, pane]),
+  );
+  if (!props.layout) return null;
+  const visibleIds = viewPaneIds(props.layout);
 
   if (props.viewMode === "focus") {
     const activePane =
-      (visibleIds.includes(props.workspace.activePaneId ?? "")
-        ? paneById.get(props.workspace.activePaneId ?? "")
+      (visibleIds.includes(props.activePaneId ?? "")
+        ? paneById.get(props.activePaneId ?? "")
         : undefined) ??
       paneById.get(visibleIds[0] ?? "") ??
       null;
     return activePane ? (
       <div className="focused-workspace" data-testid="focused-workspace">
-        <PaneSurface {...props} pane={activePane} />
+        <PaneCell {...props} node={{ type: "pane", paneId: activePane.id }} paneById={paneById} />
+      </div>
+    ) : props.layout.type === "slot" || visibleIds.length === 0 ? (
+      <div className="focused-workspace" data-testid="focused-workspace">
+        <LayoutBranch {...props} node={props.layout} paneById={paneById} />
       </div>
     ) : null;
   }
 
   return (
     <div className="recursive-workspace" data-testid="recursive-workspace">
-      <LayoutBranch {...props} node={renderedLayout} paneById={paneById} />
+      <LayoutBranch {...props} node={props.layout} paneById={paneById} />
     </div>
   );
 }
 
-function LayoutBranch(props: BranchProps): React.JSX.Element | null {
-  if (props.node.type === "pane") {
-    const pane = props.paneById.get(props.node.paneId);
-    return pane ? <PaneSurface {...props} pane={pane} /> : null;
-  }
-  return <SplitBranch {...props} node={props.node} />;
+/** Panes carrying the name to show (the person's name, the agent's, then Naru's). */
+function titledPanes(panes: readonly Pane[], title?: (pane: Pane) => string): readonly Pane[] {
+  if (title === undefined) return panes;
+  return panes.map((pane) => {
+    const name = title(pane);
+    return name === pane.title ? pane : { ...pane, title: name };
+  });
 }
 
-function SplitBranch(props: BranchProps & { node: Extract<LayoutNode, { type: "split" }> }) {
+function LayoutBranch(props: BranchProps): React.JSX.Element | null {
+  if (props.node.type === "split") return <SplitBranch {...props} node={props.node} />;
+  return <PaneCell {...props} />;
+}
+
+function PaneCell(props: BranchProps): React.JSX.Element | null {
+  const node = props.node;
+  if (node.type === "split") return null;
+  const pane = node.type === "pane" ? props.paneById.get(node.paneId) : undefined;
+  const content =
+    node.type === "slot" ? (
+      (props.renderSlot?.(node) ?? null)
+    ) : pane ? (
+      <PaneSurface {...props} pane={pane} />
+    ) : null;
+  if (!props.cells) return <>{content}</>;
+  const target: ViewTarget =
+    node.type === "slot"
+      ? { type: "slot", slotId: node.id }
+      : { type: "pane", paneId: node.paneId };
+  return (
+    <div className="view-cell" data-view-cell={node.type}>
+      {content}
+      {props.drop && <DropTargets drop={props.drop} target={target} />}
+    </div>
+  );
+}
+
+function DropTargets({
+  drop,
+  target,
+}: {
+  drop: WorkspaceDrop;
+  target: ViewTarget;
+}): React.JSX.Element {
+  const zones: { label: string; direction: SplitDirection; className: string }[] =
+    target.type === "slot"
+      ? [{ label: "여기에 놓기", direction: "horizontal", className: "whole" }]
+      : [
+          { label: "오른쪽에 놓기", direction: "horizontal", className: "right" },
+          { label: "아래에 놓기", direction: "vertical", className: "below" },
+        ];
+  return (
+    <div className="view-drop-targets">
+      {zones.map((zone) => (
+        <div
+          key={zone.className}
+          className={`view-drop-zone ${zone.className}`}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            event.currentTarget.dataset.over = "true";
+          }}
+          onDragLeave={(event) => {
+            delete event.currentTarget.dataset.over;
+          }}
+          onDrop={(event) => {
+            const paneId = event.dataTransfer.getData(PANE_DRAG_TYPE);
+            delete event.currentTarget.dataset.over;
+            if (!paneId) return;
+            event.preventDefault();
+            drop.onDrop(target, paneId, zone.direction);
+          }}
+        >
+          <span>{zone.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SplitBranch(
+  props: BranchProps & { node: Extract<WorkspaceViewLayoutNode, { type: "split" }> },
+) {
   const { node } = props;
   const groupRef = useGroupRef();
   const firstId = `${node.id}-first`;
@@ -165,9 +273,10 @@ function SplitBranch(props: BranchProps & { node: Extract<LayoutNode, { type: "s
 }
 
 function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.Element {
-  const active = props.workspace.activePaneId === props.pane.id;
+  const active = props.activePaneId === props.pane.id;
   const toolbar = (
     <>
+      {props.paneExtras?.(props.pane)}
       {(props.pane.kind === "codex" ||
         props.pane.kind === "claude" ||
         props.pane.activity.state === "failed") && (
@@ -180,13 +289,15 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
         className="pane-collapse"
         type="button"
         onClick={() => props.onCollapse(props.pane.id)}
-        disabled={!props.mutationAllowed || visiblePaneIds(props.workspace.layout).length <= 1}
-        aria-label={`${props.pane.title} 접기`}
-        title="Pane 접기"
+        disabled={!props.mutationAllowed || !props.collapse.enabled}
+        aria-label={`${props.pane.title} ${props.collapse.label}`}
+        title={props.collapse.title}
       >
         <span aria-hidden="true">―</span>
       </button>
-      <PaneSplitMenu pane={props.pane} onSplit={props.onSplit} enabled={props.mutationAllowed} />
+      {props.splitEnabled !== false && (
+        <PaneSplitMenu pane={props.pane} onSplit={props.onSplit} enabled={props.mutationAllowed} />
+      )}
     </>
   );
   if (props.pane.kind === "files") {
@@ -195,10 +306,10 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
         <FilesPane
           key={props.pane.id}
           pane={props.pane}
-          panes={props.workspace.panes}
+          panes={props.panes}
           active={active}
           panelId={panePanelId(props.pane.id)}
-          tabPanel={props.workspace.panes.length > 1}
+          tabPanel={props.tabPanels}
           api={props.api}
           connection={props.connection}
           mutationAllowed={props.mutationAllowed}
@@ -223,7 +334,7 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
           pane={props.pane}
           active={active}
           panelId={panePanelId(props.pane.id)}
-          tabPanel={props.workspace.panes.length > 1}
+          tabPanel={props.tabPanels}
           api={props.api}
           mutationAllowed={props.mutationAllowed}
           toolbarExtras={toolbar}
@@ -248,7 +359,7 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
         pane={props.pane}
         active={active}
         panelId={panePanelId(props.pane.id)}
-        tabPanel={props.workspace.panes.length > 1}
+        tabPanel={props.tabPanels}
         connection={props.connection}
         connectionStatus={props.connectionStatus}
         mutationAllowed={props.mutationAllowed}

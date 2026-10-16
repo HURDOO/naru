@@ -36,6 +36,7 @@ export const ErrorCodeSchema = z.enum([
   "FILE_CONFLICT",
   "FILE_PROTECTED",
   "LAYOUT_CONFLICT",
+  "WORKSPACE_VIEW_MISSING",
   "PANE_MISSING",
   "PTY_NOT_RUNNING",
   "PTY_SPAWN_FAILED",
@@ -549,6 +550,8 @@ export const PaneSchema = z.object({
   codexSessionResumable: z.boolean(),
   /** Latest Claude Code conversation for `claude --resume`; absent from older servers. */
   claudeSessionId: ClaudeSessionIdSchema.nullable().optional(),
+  /** The name the person gave this Pane (AP-D029); absent from older servers. */
+  customTitle: z.string().min(1).max(120).nullable().optional(),
   lastErrorCode: ErrorCodeSchema.nullable(),
   lastExitedAt: z.string().datetime().nullable(),
   activity: PaneActivitySchema,
@@ -598,6 +601,78 @@ export const LayoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
   ]),
 );
 
+/** A Pane a workspace keeps a place for until the person starts it (AP-D029, AP-D031). */
+export const WorkspaceSlotPaneSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("claude"), launchProfile: ClaudeLaunchProfileSchema }),
+  z.strictObject({ kind: z.literal("codex"), launchProfile: CodexLaunchProfileSchema }),
+  z.strictObject({ kind: z.literal("terminal"), launchProfile: z.literal("shell") }),
+]);
+export type WorkspaceSlotPane = z.infer<typeof WorkspaceSlotPaneSchema>;
+
+export interface WorkspaceViewPaneNode {
+  type: "pane";
+  paneId: string;
+}
+
+export interface WorkspaceViewSlotNode {
+  type: "slot";
+  id: string;
+  pane: WorkspaceSlotPane;
+}
+
+export interface WorkspaceViewSplitNode {
+  type: "split";
+  id: string;
+  direction: SplitDirection;
+  ratio: number;
+  first: WorkspaceViewLayoutNode;
+  second: WorkspaceViewLayoutNode;
+}
+
+/**
+ * A workspace's arrangement (AP-D031): some of the project's Panes, places for Panes not started
+ * yet, and splits. Unlike the project layout it need not hold every Pane and has no collapsed state.
+ */
+export type WorkspaceViewLayoutNode =
+  WorkspaceViewPaneNode | WorkspaceViewSlotNode | WorkspaceViewSplitNode;
+
+export const WORKSPACE_VIEW_LAYOUT_SCHEMA_VERSION = 1;
+export const WORKSPACE_VIEW_LIMIT = 32;
+
+export const WorkspaceViewLayoutNodeSchema: z.ZodType<WorkspaceViewLayoutNode> = z.lazy(() =>
+  z.discriminatedUnion("type", [
+    z.strictObject({ type: z.literal("pane"), paneId: z.string().uuid() }),
+    z.strictObject({
+      type: z.literal("slot"),
+      id: z.string().uuid(),
+      pane: WorkspaceSlotPaneSchema,
+    }),
+    z.strictObject({
+      type: z.literal("split"),
+      id: z.string().uuid(),
+      direction: SplitDirectionSchema,
+      ratio: z.number().min(0.1).max(0.9),
+      first: WorkspaceViewLayoutNodeSchema,
+      second: WorkspaceViewLayoutNodeSchema,
+    }),
+  ]),
+);
+
+export const WorkspaceViewNameSchema = z.string().trim().min(1).max(60);
+
+/** A workspace the person made: a named arrangement of existing Panes (AP-D027, AP-D031). */
+export const WorkspaceViewSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.literal("user"),
+  name: WorkspaceViewNameSchema,
+  layout: WorkspaceViewLayoutNodeSchema.nullable(),
+  activePaneId: z.string().uuid().nullable(),
+  version: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type WorkspaceView = z.infer<typeof WorkspaceViewSchema>;
+
 export const WorkspaceSchema = z.object({
   projectId: z.string().uuid(),
   schemaVersion: z.number().int().positive(),
@@ -605,6 +680,8 @@ export const WorkspaceSchema = z.object({
   layout: LayoutNodeSchema.nullable(),
   activePaneId: z.string().uuid().nullable(),
   panes: z.array(PaneSchema),
+  /** The project's workspaces in list order (AP-D031); absent from older servers. */
+  views: z.array(WorkspaceViewSchema).max(WORKSPACE_VIEW_LIMIT).optional(),
   updatedAt: z.string().datetime(),
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
@@ -838,6 +915,84 @@ export const DeletePaneRequestSchema = z.object({
   workspaceVersion: z.number().int().nonnegative(),
 });
 export type DeletePaneRequest = z.infer<typeof DeletePaneRequestSchema>;
+
+export const CreateWorkspaceViewRequestSchema = z.strictObject({
+  name: WorkspaceViewNameSchema,
+  layout: WorkspaceViewLayoutNodeSchema.nullable(),
+  activePaneId: z.string().uuid().nullable(),
+});
+export type CreateWorkspaceViewRequest = z.infer<typeof CreateWorkspaceViewRequestSchema>;
+
+export const SaveWorkspaceViewRequestSchema = z.strictObject({
+  version: z.number().int().nonnegative(),
+  name: WorkspaceViewNameSchema,
+  layout: WorkspaceViewLayoutNodeSchema.nullable(),
+  activePaneId: z.string().uuid().nullable(),
+});
+export type SaveWorkspaceViewRequest = z.infer<typeof SaveWorkspaceViewRequestSchema>;
+
+export const DeleteWorkspaceViewRequestSchema = z.strictObject({
+  version: z.number().int().nonnegative(),
+});
+export type DeleteWorkspaceViewRequest = z.infer<typeof DeleteWorkspaceViewRequestSchema>;
+
+/** Where a Pane made inside a workspace goes: beside a Pane, into an empty place, or alone. */
+export const WorkspaceViewPlacementSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("split"),
+    targetPaneId: z.string().uuid(),
+    direction: SplitDirectionSchema,
+  }),
+  z.strictObject({ type: z.literal("slot"), slotId: z.string().uuid() }),
+  z.strictObject({ type: z.literal("root") }),
+]);
+export type WorkspaceViewPlacement = z.infer<typeof WorkspaceViewPlacementSchema>;
+
+const CreateWorkspaceViewPaneRequestBase = {
+  title: z.string().trim().min(1).max(120).optional(),
+  viewVersion: z.number().int().nonnegative(),
+  placement: WorkspaceViewPlacementSchema,
+};
+
+export const CreateWorkspaceViewPaneRequestSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("terminal"),
+    launchProfile: z.literal("shell").optional(),
+    ...CreateWorkspaceViewPaneRequestBase,
+  }),
+  z.strictObject({
+    kind: z.literal("codex"),
+    launchProfile: CodexLaunchProfileSchema.optional(),
+    ...CreateWorkspaceViewPaneRequestBase,
+  }),
+  z.strictObject({
+    kind: z.literal("claude"),
+    launchProfile: ClaudeLaunchProfileSchema.optional(),
+    ...CreateWorkspaceViewPaneRequestBase,
+  }),
+  z.strictObject({
+    kind: z.literal("files"),
+    selectedDocumentPath: DocumentRelativePathSchema.optional(),
+    ...CreateWorkspaceViewPaneRequestBase,
+  }),
+  z.strictObject({
+    kind: z.literal("docs"),
+    selectedDocumentPath: DocumentRelativePathSchema.optional(),
+    ...CreateWorkspaceViewPaneRequestBase,
+  }),
+  z.strictObject({
+    kind: z.literal("tasks"),
+    selectedDocumentPath: DocumentRelativePathSchema.optional(),
+    ...CreateWorkspaceViewPaneRequestBase,
+  }),
+]);
+export type CreateWorkspaceViewPaneRequest = z.infer<typeof CreateWorkspaceViewPaneRequestSchema>;
+
+/** The person's own name for a Pane (AP-D029); null goes back to the default name. */
+export const RenamePaneRequestSchema = z.strictObject({
+  customTitle: z.string().trim().min(1).max(120).nullable(),
+});
+export type RenamePaneRequest = z.infer<typeof RenamePaneRequestSchema>;
 
 const LeaseGenerationSchema = z.number().int().positive();
 export const LeaseAcquisitionSchema = z.enum(["initial", "reconnect", "takeover"]);

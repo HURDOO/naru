@@ -1,0 +1,918 @@
+/* Workspace list and workspaces (Figma 시안 v3: V3-C, V3-D, V3-H, V3-M2, V3-M3; AP-T22) ---------- */
+
+.ws-host {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.ws-screen {
+  --ws-faint: #5f6a70;
+  --ws-teal: #6fc7c0;
+  --ws-amber: #e8c36b;
+  --ws-violet: #a99cf4;
+  --ws-list-width: 256px;
+
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: var(--ws-list-width) minmax(0, 1fr);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ws-glyph {
+  flex: 0 0 auto;
+}
+
+.ws-accent {
+  color: var(--accent);
+}
+
+.ws-faint {
+  color: var(--ws-faint);
+}
+
+/* The vertical list ------------------------------------------------------------------------------ */
+
+.ws-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.ws-list ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ws-list button {
+  font: inherit;
+}
+
+.ws-list-project {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-list-project:hover {
+  background: var(--panel);
+}
+
+.ws-list-project strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-project-dot {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: var(--ws-teal);
+}
+
+.ws-list-project-hint {
+  margin-left: auto;
+  color: var(--ws-faint);
+  font-size: 11.5px;
+}
+
+.ws-list-view,
+.ws-list-pane {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-list-view {
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.ws-list-view:hover,
+.ws-list-pane:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.ws-list-view[aria-current="true"],
+.ws-list-pane[aria-current="true"] {
+  border-color: var(--line-strong);
+  color: var(--text);
+  background: var(--panel-raised);
+}
+
+.ws-list-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-list-view[aria-current="true"] .ws-list-name {
+  font-weight: 650;
+}
+
+.ws-list-count {
+  color: var(--ws-faint);
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+
+.ws-thumb {
+  flex: 0 0 auto;
+}
+
+.ws-thumb .ws-thumb-cell {
+  fill: var(--muted);
+  fill-opacity: 0.55;
+}
+
+.ws-thumb[data-active="true"] .ws-thumb-cell {
+  fill: var(--text);
+  fill-opacity: 0.85;
+}
+
+.ws-thumb .ws-thumb-empty {
+  fill: none;
+  stroke: var(--muted);
+  stroke-dasharray: 2 1.5;
+  stroke-opacity: 0.7;
+}
+
+.ws-list-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ws-list-add:hover:not(:disabled) {
+  border-color: #59666d;
+  color: var(--text);
+}
+
+.ws-list-divider {
+  width: calc(100% - 8px);
+  height: 1px;
+  margin: 10px 4px;
+  border: 0;
+  background: var(--line);
+}
+
+.ws-list-pane-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ws-list-pane-row[draggable="true"] {
+  cursor: grab;
+}
+
+.ws-list-pane {
+  gap: 9px;
+  padding: 7px 10px;
+}
+
+.ws-list-pane-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ws-list-pane .ws-list-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.ws-list-sub {
+  overflow: hidden;
+  color: var(--subtle);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-pane-glyph {
+  display: inline-flex;
+  width: 20px;
+  flex: 0 0 auto;
+  justify-content: center;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ws-pane-glyph.claude {
+  color: var(--accent);
+}
+
+.ws-pane-glyph.codex {
+  color: var(--ws-violet);
+}
+
+.ws-pane-glyph.terminal,
+.ws-pane-glyph.tasks {
+  color: var(--green);
+}
+
+.ws-pane-glyph.files,
+.ws-pane-glyph.docs {
+  color: var(--ws-amber);
+}
+
+.ws-owner-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--blue);
+}
+
+.ws-icon-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ws-icon-button:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.ws-icon-button.ws-in-view {
+  border-color: transparent;
+  color: var(--green);
+}
+
+/* The Pane menu in the list shows on hover and focus; touch screens always show it. */
+.ws-list-pane-row .ws-pane-menu > summary {
+  opacity: 0;
+}
+
+.ws-list-pane-row:hover .ws-pane-menu > summary,
+.ws-list-pane-row:focus-within .ws-pane-menu > summary,
+.ws-list-pane-row .ws-pane-menu[open] > summary {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .ws-list-pane-row .ws-pane-menu > summary {
+    opacity: 1;
+  }
+}
+
+/* The open workspace ------------------------------------------------------------------------------ */
+
+.ws-stage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.ws-stage-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 0;
+}
+
+.ws-stage-title {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 200px;
+  align-items: center;
+  gap: 10px;
+}
+
+.ws-stage-title h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-stage-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--subtle);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-stage-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.ws-stage-body {
+  padding: 10px 16px 16px;
+}
+
+.ws-chips {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.ws-chips button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.ws-chips button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--text);
+  background: var(--panel-raised);
+  font-weight: 650;
+}
+
+.ws-name-input {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+}
+
+.ws-name-input input {
+  width: min(320px, 100%);
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.ws-edit-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 16px 16px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+  border-radius: 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--blue) 7%, transparent);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.ws-edit-note .ws-glyph {
+  margin-top: 2px;
+  color: var(--blue);
+}
+
+.ws-empty {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 16px;
+  padding: 24px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ws-stage-body > .ws-empty {
+  margin: 0;
+}
+
+.ws-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ws-empty[data-drop="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.ws-slot {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 9px;
+  color: var(--muted);
+  background: #0f1215;
+  text-align: center;
+}
+
+.ws-slot strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ws-slot > span:not(.ws-pane-glyph) {
+  max-width: 260px;
+  font-size: 12px;
+}
+
+.ws-slot .ws-pane-glyph {
+  font-size: 18px;
+}
+
+.ws-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Cells and drop targets while a workspace is edited ------------------------------------------ */
+
+.view-cell {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.view-drop-targets {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 10px;
+  background: #0d1013cc;
+}
+
+.view-drop-zone {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: 9px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.view-drop-zone[data-over="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Owner marks and actions in a Pane header (V3-H) ---------------------------------------------- */
+
+.ws-pane-extras {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin-right: 2px;
+}
+
+.ws-owner-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 190px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ws-owner-chip.mine {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ws-owner-chip.agent {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+.ws-owner-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-owner-chip .ws-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+/* Buttons and menus ------------------------------------------------------------------------------- */
+
+.ws-button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ws-button:hover:not(:disabled) {
+  border-color: #59666d;
+  background: #20272b;
+}
+
+.ws-button .ws-glyph {
+  color: var(--muted);
+}
+
+.ws-button.primary {
+  border-color: transparent;
+  color: #14100d;
+  background: var(--accent);
+}
+
+.ws-button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.ws-button.primary .ws-glyph {
+  color: #14100d;
+}
+
+.ws-button.danger {
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
+}
+
+.ws-button.danger .ws-glyph {
+  color: var(--red);
+}
+
+.ws-button.quiet {
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+}
+
+.ws-button.ws-hold {
+  min-height: 26px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}
+
+.ws-popover {
+  position: relative;
+}
+
+.ws-popover > summary {
+  display: inline-flex;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ws-popover > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ws-pane-menu > summary {
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--muted);
+}
+
+.ws-pane-menu > summary:hover,
+.ws-pane-menu[open] > summary {
+  color: var(--text);
+  background: #ffffff0d;
+}
+
+.ws-popover-disabled {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0.55;
+}
+
+.ws-popover-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  min-width: 210px;
+  max-height: min(60vh, 420px);
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  box-shadow: 0 18px 48px #000a;
+}
+
+.ws-popover-panel strong {
+  padding: 6px 10px 2px;
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ws-popover-panel button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ws-popover-panel button:hover,
+.ws-popover-panel button:focus-visible {
+  background: #ffffff0d;
+}
+
+.ws-popover-panel button .ws-glyph {
+  color: var(--muted);
+}
+
+.ws-popover-panel button.danger,
+.ws-popover-panel button.danger .ws-glyph {
+  color: var(--red);
+}
+
+.ws-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #0009;
+}
+
+.ws-dialog {
+  display: flex;
+  width: min(440px, 100%);
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: 0 24px 80px #000c;
+}
+
+.ws-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.ws-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.ws-dialog input {
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 14px;
+}
+
+.ws-dialog p {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ws-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ws-dialog-actions > :first-child {
+  margin-right: auto;
+}
+
+/* Sizes ---------------------------------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .ws-screen {
+    --ws-list-width: 220px;
+  }
+
+  .ws-owner-text {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .ws-stage-header {
+    flex-wrap: wrap;
+    padding: 10px 12px 0;
+  }
+
+  .ws-stage-body {
+    padding: 8px 10px 10px;
+  }
+
+  .ws-chips {
+    padding: 8px 12px 0;
+  }
+}
+
+/* Tablets: the list is a drawer over the open workspace. */
+.ws-screen[data-drawer="true"] {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ws-list.ws-list-drawer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  width: min(280px, 85%);
+  box-shadow: 18px 0 60px #000b;
+}
+
+.ws-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 29;
+  border: 0;
+  background: #0007;
+  cursor: pointer;
+}
+
+.ws-screen[data-drawer="true"] .ws-stage-sub {
+  display: none;
+}
+
+/* Phones: the list or the open workspace, one at a time (V3-M2, V3-M3). */
+.ws-screen[data-phone="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ws-screen[data-phone="true"] .ws-list {
+  padding: 8px 12px 16px;
+  border-right: 0;
+}
+
+.ws-screen[data-phone="true"] .ws-list-view {
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+}
+
+.ws-screen[data-phone="true"] .ws-list-name {
+  font-size: 15px;
+}
+
+.ws-screen[data-phone="true"] .ws-list-pane {
+  padding: 10px 12px;
+}
+
+.ws-screen[data-phone="true"] .ws-list-pane .ws-list-name {
+  font-size: 14px;
+}
+
+.ws-screen[data-phone="true"] .ws-stage-header {
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 8px 10px 0;
+}
+
+.ws-screen[data-phone="true"] .ws-stage-sub {
+  display: none;
+}
+
+.ws-screen[data-phone="true"] .ws-stage-actions .ws-button {
+  padding: 0 9px;
+}
+
+.ws-screen[data-phone="true"] .ws-stage-body {
+  padding: 8px 6px 6px;
+}
+
+.ws-chips .ws-chip-slot {
+  border-style: dashed;
+}

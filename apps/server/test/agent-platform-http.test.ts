@@ -403,6 +403,20 @@ describe("Agent Platform control room reads", () => {
       globalAgents: [{ id: main }],
       openHandoffs: [],
       globalPendingApprovals: [],
+      paneNames: {},
+    });
+
+    // A name the person gives an agent's Pane shows wherever the agent does (AP-D029).
+    const workerPane = fixture.repository.createAgentPane(worker, "Claude worker · fixture");
+    const mainPane = fixture.repository.createAgentPane(main, "Claude main", fixture.projectId);
+    fixture.repository.renamePane(workerPane.id, "로그인 담당");
+    expect((await read("/api/agent/board")).json()).toMatchObject({
+      paneNames: { [workerPane.id]: "로그인 담당" },
+    });
+    fixture.repository.renamePane(mainPane.id, "총괄");
+    expect((await read("/api/agent/board")).json<{ paneNames: unknown }>().paneNames).toEqual({
+      [workerPane.id]: "로그인 담당",
+      [mainPane.id]: "총괄",
     });
     // The board carries no instruction text; conversations read it per agent.
     expect(board.body).not.toContain("passkey로 바꿔");

@@ -49,6 +49,14 @@ interface AgentAppProps {
   readonly initialAgentPaneId?: string | null;
   /** How many things wait for the person, for the top bar. */
   readonly onWaitingChange?: (count: number) => void;
+  /**
+   * The screen the top menu chose (AP-D028). When given, the rail is gone and a conversation
+   * opens over this screen until the menu is used again.
+   */
+  readonly view?: "control" | "flow";
+  readonly onViewChange?: (view: "control" | "flow") => void;
+  /** Changes whenever the top menu is pressed, so an open conversation closes. */
+  readonly navigation?: number;
 }
 
 /**
@@ -64,6 +72,9 @@ export function AgentApp({
   initialHandoffId = null,
   initialAgentPaneId = null,
   onWaitingChange,
+  view,
+  onViewChange,
+  navigation,
 }: AgentAppProps): React.JSX.Element {
   const phone = useMedia(PHONE);
   const [board, setBoard] = useState<AgentBoard | null>(null);
@@ -71,7 +82,18 @@ export function AgentApp({
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
-  const [screen, setScreen] = useState<Screen>(initialAgentPaneId === null ? "control" : "chat");
+  const [ownScreen, setScreen] = useState<Screen>(
+    initialAgentPaneId === null ? (view ?? "control") : "chat",
+  );
+  // The top menu owns control room and flow; a conversation sits over them until it is used.
+  const controlled = view !== undefined;
+  const screen: Screen = controlled && ownScreen !== "chat" ? view : ownScreen;
+  const lastNavigation = useRef(navigation);
+  useEffect(() => {
+    if (!controlled || lastNavigation.current === navigation) return;
+    lastNavigation.current = navigation;
+    setScreen(view);
+  }, [controlled, navigation, view]);
   const [chatAgentId, setChatAgentId] = useState<string | null>(null);
   const [flow, setFlow] = useState<{ projectId: string | null; taskId: string | null }>({
     projectId: null,
@@ -137,9 +159,14 @@ export function AgentApp({
   );
   const identities = useMemo(() => {
     const map = new Map<string, AgentIdentity>();
-    for (const agent of agents) map.set(agent.id, agentIdentity(agent, agents, projectName));
+    for (const agent of agents) {
+      const identity = agentIdentity(agent, agents, projectName);
+      // A name the person gave the agent's Pane shows here too (AP-D029).
+      const named = agent.paneId === null ? undefined : board?.paneNames?.[agent.paneId];
+      map.set(agent.id, named === undefined ? identity : { ...identity, name: named });
+    }
     return map;
-  }, [agents, projectName]);
+  }, [agents, board, projectName]);
 
   // An alert names the agent's Pane: open its chat once the board that binds it has loaded.
   const pendingPane = useRef(initialAgentPaneId);
@@ -197,6 +224,7 @@ export function AgentApp({
       openFlow: (projectId, taskId = null) => {
         setFlow({ projectId, taskId });
         setScreen("flow");
+        onViewChange?.("flow");
         setDecisionKey(null);
       },
       openDecision: (item: InboxItem) => setDecisionKey(item.key),
@@ -214,6 +242,7 @@ export function AgentApp({
     mutationAllowed,
     now,
     onOpenPane,
+    onViewChange,
     projectName,
     projects,
     waiting,
@@ -233,32 +262,35 @@ export function AgentApp({
       aria-label="에이전트"
       data-screen={screen}
       data-conversation={inConversation}
+      data-rail={controlled ? "none" : "own"}
     >
       <p className="sr-only" role="status" aria-live="polite">
         {status}
       </p>
-      <nav className="ag-rail" aria-label="에이전트 화면">
-        {SCREENS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className="ag-rail-item"
-            aria-current={screen === item.id ? "page" : undefined}
-            onClick={() => {
-              setScreen(item.id);
-              if (item.id === "chat" && phone) setChatAgentId(null);
-            }}
-          >
-            <Icon name={item.icon} size={20} />
-            <span>{item.label}</span>
-            {item.id === "control" && inbox.length > 0 && (
-              <span className="ag-rail-badge" aria-label={`나를 기다림 ${inbox.length}`}>
-                {inbox.length}
-              </span>
-            )}
-          </button>
-        ))}
-      </nav>
+      {!controlled && (
+        <nav className="ag-rail" aria-label="에이전트 화면">
+          {SCREENS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="ag-rail-item"
+              aria-current={screen === item.id ? "page" : undefined}
+              onClick={() => {
+                setScreen(item.id);
+                if (item.id === "chat" && phone) setChatAgentId(null);
+              }}
+            >
+              <Icon name={item.icon} size={20} />
+              <span>{item.label}</span>
+              {item.id === "control" && inbox.length > 0 && (
+                <span className="ag-rail-badge" aria-label={`나를 기다림 ${inbox.length}`}>
+                  {inbox.length}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+      )}
       <div className="ag-stage">
         {error !== null && (
           <div className="ag-error" role="alert">

@@ -965,6 +965,159 @@ describe("Naru HTTP API", () => {
     }
   });
 
+  it("arranges workspaces, makes Panes inside them and renames Panes (AP-D031)", async () => {
+    const fixture = await createFixture();
+    try {
+      const login = await fixture.app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers: { origin },
+        payload: { password: "naru-test-password" },
+      });
+      const cookie = firstHeader(login.headers["set-cookie"])?.split(";")[0] ?? "";
+      const csrfToken = login.json<{ csrfToken: string }>().csrfToken;
+      const { headers } = await openControllerSurface(fixture.app, cookie, csrfToken);
+      const projectId = (
+        await fixture.app.inject({
+          method: "POST",
+          url: "/api/projects",
+          headers,
+          payload: { path: fixture.projectPath },
+        })
+      ).json<{ id: string }>().id;
+      type ViewWorkspace = {
+        version: number;
+        panes: Array<{ id: string; kind: string; status: string; customTitle?: string | null }>;
+        views: Array<{ id: string; name: string; version: number; layout: unknown }>;
+      };
+      const initial = (
+        await fixture.app.inject({
+          method: "GET",
+          url: `/api/projects/${projectId}/workspace`,
+          headers: { cookie },
+        })
+      ).json<ViewWorkspace>();
+      expect(initial.views.map((view) => view.name)).toEqual(["기본"]);
+      const terminal = initial.panes.find((pane) => pane.kind === "terminal")!;
+
+      const withoutLease = await fixture.app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/views`,
+        headers: { origin, cookie, "x-csrf-token": csrfToken },
+        payload: { name: "리뷰", layout: null, activePaneId: null },
+      });
+      expect(withoutLease.statusCode).toBe(409);
+      expect(withoutLease.json()).toMatchObject({ code: "LEASE_REQUIRED" });
+      const withoutCsrf = await fixture.app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/views`,
+        headers: { ...headers, "x-csrf-token": "wrong" },
+        payload: { name: "리뷰", layout: null, activePaneId: null },
+      });
+      expect(withoutCsrf.json()).toMatchObject({ code: "CSRF_INVALID" });
+
+      const created = await fixture.app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/views`,
+        headers,
+        payload: {
+          name: "리뷰",
+          layout: { type: "pane", paneId: terminal.id },
+          activePaneId: terminal.id,
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const review = created.json<ViewWorkspace>().views.at(-1)!;
+      expect(review).toMatchObject({ name: "리뷰", version: 0 });
+
+      const split = await fixture.app.inject({
+        method: "POST",
+        url: `/api/projects/${projectId}/views/${review.id}/panes`,
+        headers,
+        payload: {
+          kind: "terminal",
+          viewVersion: 0,
+          placement: { type: "split", targetPaneId: terminal.id, direction: "vertical" },
+        },
+      });
+      expect(split.statusCode).toBe(201);
+      const afterSplit = split.json<ViewWorkspace>();
+      expect(afterSplit.panes).toHaveLength(initial.panes.length + 1);
+      const made = afterSplit.panes.at(-1)!;
+      expect(made).toMatchObject({ kind: "terminal", status: "running" });
+      expect(afterSplit.views.at(-1)).toMatchObject({ version: 1 });
+
+      const stale = await fixture.app.inject({
+        method: "PUT",
+        url: `/api/projects/${projectId}/views/${review.id}`,
+        headers,
+        payload: { version: 0, name: "리뷰", layout: null, activePaneId: null },
+      });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json()).toMatchObject({ code: "LAYOUT_CONFLICT" });
+
+      const missing = await fixture.app.inject({
+        method: "PUT",
+        url: `/api/projects/${projectId}/views/${projectId}`,
+        headers,
+        payload: { version: 0, name: "없음", layout: null, activePaneId: null },
+      });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json()).toMatchObject({ code: "WORKSPACE_VIEW_MISSING" });
+
+      const renamedView = await fixture.app.inject({
+        method: "PUT",
+        url: `/api/projects/${projectId}/views/${review.id}`,
+        headers,
+        payload: {
+          version: 1,
+          name: "리뷰 보기",
+          layout: { type: "pane", paneId: made.id },
+          activePaneId: made.id,
+        },
+      });
+      expect(renamedView.statusCode).toBe(200);
+      expect(renamedView.json<ViewWorkspace>().views.at(-1)).toMatchObject({
+        name: "리뷰 보기",
+        version: 2,
+        layout: { type: "pane", paneId: made.id },
+      });
+
+      const renamedPane = await fixture.app.inject({
+        method: "PATCH",
+        url: `/api/panes/${made.id}`,
+        headers,
+        payload: { customTitle: "로그 보기" },
+      });
+      expect(renamedPane.statusCode).toBe(200);
+      expect(renamedPane.json()).toMatchObject({ id: made.id, customTitle: "로그 보기" });
+      const invalidName = await fixture.app.inject({
+        method: "PATCH",
+        url: `/api/panes/${made.id}`,
+        headers,
+        payload: { customTitle: "", title: "x" },
+      });
+      expect(invalidName.statusCode).toBe(400);
+
+      const removed = await fixture.app.inject({
+        method: "DELETE",
+        url: `/api/projects/${projectId}/views/${review.id}`,
+        headers,
+        payload: { version: 2 },
+      });
+      expect(removed.statusCode).toBe(200);
+      const afterRemove = removed.json<ViewWorkspace>();
+      expect(afterRemove.views.map((view) => view.name)).toEqual(["기본"]);
+      // The workspace is gone; its Pane keeps running.
+      expect(afterRemove.panes.find((pane) => pane.id === made.id)).toMatchObject({
+        status: "running",
+        customTitle: "로그 보기",
+      });
+    } finally {
+      await fixture.app.close();
+    }
+  });
+
   it("serves bounded project documents and persists independent Docs and Tasks Panes", async () => {
     const fixture = await createFixture();
     await mkdir(join(fixture.projectPath, "docs"));

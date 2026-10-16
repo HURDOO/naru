@@ -1,4 +1,11 @@
-import type { LayoutNode, Pane, Workspace } from "@naru/contracts";
+import type {
+  CreateWorkspaceViewPaneRequest,
+  CreateWorkspaceViewRequest,
+  LayoutNode,
+  Pane,
+  Workspace,
+  WorkspaceView,
+} from "@naru/contracts";
 import { isPaneCollapsed, resizeSplit, setPaneCollapsed, visiblePaneIds } from "@naru/domain";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiFailure, type NaruApi } from "./api";
@@ -10,6 +17,11 @@ interface PendingWorkspaceSave {
   projectId: string;
   layout: LayoutNode | null;
   activePaneId: string | null;
+}
+
+interface PendingViewSave {
+  projectId: string;
+  view: WorkspaceView;
 }
 
 interface WorkspaceController {
@@ -25,6 +37,17 @@ interface WorkspaceController {
   load: (projectId: string | null) => Promise<boolean>;
   resize: (splitId: string, ratio: number) => void;
   updatePane: (pane: Pane) => void;
+  /** Reloads quietly unless a change of this device is still waiting to be saved. */
+  refresh: () => Promise<void>;
+  /** Changes a workspace here at once and saves it after a short pause (AP-D031). */
+  changeView: (viewId: string, change: (view: WorkspaceView) => WorkspaceView) => void;
+  createView: (input: CreateWorkspaceViewRequest) => Promise<WorkspaceView | null>;
+  deleteView: (viewId: string) => Promise<boolean>;
+  createViewPane: (
+    viewId: string,
+    input: Omit<CreateWorkspaceViewPaneRequest, "viewVersion">,
+  ) => Promise<Workspace | null>;
+  renamePane: (paneId: string, customTitle: string | null) => Promise<boolean>;
 }
 
 export interface WorkspaceIssue {
@@ -49,9 +72,15 @@ export function useWorkspace(
   const inFlightRef = useRef<Promise<boolean> | null>(null);
   const writableRef = useRef(writable);
   writableRef.current = writable;
+  const pendingViewsRef = useRef(new Map<string, PendingViewSave>());
+  const viewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewFlightRef = useRef<Promise<boolean> | null>(null);
 
   const accept = useCallback((next: Workspace): void => {
-    const merged = mergeWorkspaceRuntimeSnapshot(workspaceRef.current, next);
+    const merged = withPendingViews(
+      mergeWorkspaceRuntimeSnapshot(workspaceRef.current, next),
+      pendingViewsRef.current,
+    );
     workspaceRef.current = merged;
     versionsRef.current.set(merged.projectId, merged.version);
     setWorkspace(merged);
@@ -81,7 +110,66 @@ export function useWorkspace(
     [accept, api, onNotice],
   );
 
+  const flushViews = useCallback(async (): Promise<boolean> => {
+    if (viewTimerRef.current !== null) {
+      clearTimeout(viewTimerRef.current);
+      viewTimerRef.current = null;
+    }
+    if (!writableRef.current) {
+      pendingViewsRef.current.clear();
+      return true;
+    }
+    for (;;) {
+      const active = viewFlightRef.current;
+      if (active) {
+        if (!(await active)) return false;
+        continue;
+      }
+      const [next] = pendingViewsRef.current.values();
+      if (next === undefined) return true;
+      pendingViewsRef.current.delete(next.view.id);
+      const request = (async (): Promise<boolean> => {
+        try {
+          const saved = await api.saveWorkspaceView(next.projectId, next.view.id, {
+            version: next.view.version,
+            name: next.view.name,
+            layout: next.view.layout,
+            activePaneId: next.view.activePaneId,
+          });
+          // Later local changes to this workspace now build on the saved version.
+          const savedView = saved.views?.find((view) => view.id === next.view.id);
+          const later = pendingViewsRef.current.get(next.view.id);
+          if (later !== undefined && savedView !== undefined) {
+            later.view = { ...later.view, version: savedView.version };
+          }
+          if (workspaceRef.current?.projectId === saved.projectId) accept(saved);
+          return true;
+        } catch (error) {
+          pendingViewsRef.current.clear();
+          const conflict = error instanceof ApiFailure && error.code === "LAYOUT_CONFLICT";
+          try {
+            const latest = await api.workspace(next.projectId);
+            if (workspaceRef.current?.projectId === latest.projectId) accept(latest);
+          } catch {
+            // The server keeps its last valid state even if it cannot be reloaded now.
+          }
+          onNotice(
+            conflict
+              ? "다른 변경이 먼저 저장되어 최신 작업공간을 다시 불러왔습니다. 방금 변경을 다시 해 주세요."
+              : "작업공간을 저장하지 못해 이전 저장 상태를 다시 불러왔습니다. 잠시 후 다시 시도해 주세요.",
+          );
+          return false;
+        }
+      })();
+      viewFlightRef.current = request;
+      const succeeded = await request;
+      if (viewFlightRef.current === request) viewFlightRef.current = null;
+      if (!succeeded) return false;
+    }
+  }, [accept, api, onNotice]);
+
   const flush = useCallback(async (): Promise<boolean> => {
+    if (!(await flushViews())) return false;
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -136,7 +224,7 @@ export function useWorkspace(
       if (inFlightRef.current === request) inFlightRef.current = null;
       if (!succeeded) return false;
     }
-  }, [accept, api, restoreAfterFailure]);
+  }, [accept, api, flushViews, restoreAfterFailure]);
 
   const scheduleSave = useCallback(
     (next: Workspace): void => {
@@ -232,6 +320,145 @@ export function useWorkspace(
 
   const current = useCallback((): Workspace | null => workspaceRef.current, []);
 
+  const changeView = useCallback(
+    (viewId: string, change: (view: WorkspaceView) => WorkspaceView): void => {
+      const currentWorkspace = workspaceRef.current;
+      const view = currentWorkspace?.views?.find((candidate) => candidate.id === viewId);
+      if (!currentWorkspace || !view) return;
+      const changed = change(view);
+      if (changed === view) return;
+      const next = {
+        ...currentWorkspace,
+        views: currentWorkspace.views!.map((candidate) =>
+          candidate.id === viewId ? changed : candidate,
+        ),
+      };
+      workspaceRef.current = next;
+      setWorkspace(next);
+      if (!writableRef.current) return;
+      pendingViewsRef.current.set(viewId, { projectId: next.projectId, view: changed });
+      if (viewTimerRef.current !== null) clearTimeout(viewTimerRef.current);
+      viewTimerRef.current = setTimeout(() => {
+        viewTimerRef.current = null;
+        void flushViews();
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [flushViews],
+  );
+
+  /** Runs one immediate change after pending saves, then shows the server's whole workspace. */
+  const mutate = useCallback(
+    async (
+      run: (projectId: string) => Promise<Workspace>,
+      failure: string,
+    ): Promise<Workspace | null> => {
+      if (!writableRef.current || !(await flush())) return null;
+      const projectId = workspaceRef.current?.projectId;
+      if (projectId === undefined) return null;
+      try {
+        const next = await run(projectId);
+        if (workspaceRef.current?.projectId === next.projectId) accept(next);
+        return next;
+      } catch (error) {
+        try {
+          const latest = await api.workspace(projectId);
+          if (workspaceRef.current?.projectId === latest.projectId) accept(latest);
+        } catch {
+          // Keep what is shown; the next refresh brings the server state.
+        }
+        onNotice(error instanceof ApiFailure ? error.message : failure);
+        return null;
+      }
+    },
+    [accept, api, flush, onNotice],
+  );
+
+  const createView = useCallback(
+    async (input: CreateWorkspaceViewRequest): Promise<WorkspaceView | null> => {
+      const before = new Set(workspaceRef.current?.views?.map((view) => view.id) ?? []);
+      const next = await mutate(
+        (projectId) => api.createWorkspaceView(projectId, input),
+        "작업공간을 만들지 못했습니다.",
+      );
+      return next?.views?.find((view) => !before.has(view.id)) ?? null;
+    },
+    [api, mutate],
+  );
+
+  const deleteView = useCallback(
+    async (viewId: string): Promise<boolean> =>
+      (await mutate((projectId) => {
+        const view = workspaceRef.current?.views?.find((candidate) => candidate.id === viewId);
+        if (view === undefined)
+          throw new ApiFailure("작업공간을 찾을 수 없습니다.", "WORKSPACE_VIEW_MISSING", 404);
+        return api.deleteWorkspaceView(projectId, viewId, view.version);
+      }, "작업공간을 지우지 못했습니다.")) !== null,
+    [api, mutate],
+  );
+
+  const createViewPane = useCallback(
+    (
+      viewId: string,
+      input: Omit<CreateWorkspaceViewPaneRequest, "viewVersion">,
+    ): Promise<Workspace | null> =>
+      mutate((projectId) => {
+        const view = workspaceRef.current?.views?.find((candidate) => candidate.id === viewId);
+        if (view === undefined)
+          throw new ApiFailure("작업공간을 찾을 수 없습니다.", "WORKSPACE_VIEW_MISSING", 404);
+        return api.createWorkspaceViewPane(projectId, viewId, {
+          ...input,
+          viewVersion: view.version,
+        });
+      }, "새 Pane을 만들지 못했습니다."),
+    [api, mutate],
+  );
+
+  const renamePane = useCallback(
+    async (paneId: string, customTitle: string | null): Promise<boolean> => {
+      if (!writableRef.current) return false;
+      try {
+        const pane = await api.renamePane(paneId, customTitle);
+        const currentWorkspace = workspaceRef.current;
+        if (currentWorkspace?.projectId === pane.projectId) {
+          const next = {
+            ...currentWorkspace,
+            panes: currentWorkspace.panes.map((candidate) =>
+              candidate.id === pane.id
+                ? { ...candidate, customTitle: pane.customTitle ?? null }
+                : candidate,
+            ),
+          };
+          workspaceRef.current = next;
+          setWorkspace(next);
+        }
+        return true;
+      } catch (error) {
+        onNotice(error instanceof ApiFailure ? error.message : "이름을 바꾸지 못했습니다.");
+        return false;
+      }
+    },
+    [api, onNotice],
+  );
+
+  const refresh = useCallback(async (): Promise<void> => {
+    const projectId = workspaceRef.current?.projectId;
+    if (projectId === undefined) return;
+    const busy = (): boolean =>
+      pendingRef.current !== null ||
+      inFlightRef.current !== null ||
+      pendingViewsRef.current.size > 0 ||
+      viewFlightRef.current !== null;
+    if (busy()) return;
+    const generation = loadGenerationRef.current;
+    try {
+      const next = await api.workspace(projectId);
+      if (generation !== loadGenerationRef.current || busy()) return;
+      if (workspaceRef.current?.projectId === next.projectId) accept(next);
+    } catch {
+      // A missed refresh is retried on the next tick; errors show on real actions.
+    }
+  }, [accept, api]);
+
   const load = useCallback(
     async (projectId: string | null): Promise<boolean> => {
       const generation = ++loadGenerationRef.current;
@@ -263,6 +490,9 @@ export function useWorkspace(
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = null;
     pendingRef.current = null;
+    if (viewTimerRef.current !== null) clearTimeout(viewTimerRef.current);
+    viewTimerRef.current = null;
+    pendingViewsRef.current.clear();
     workspaceRef.current = null;
     setLoading(false);
     setWorkspace(null);
@@ -272,6 +502,7 @@ export function useWorkspace(
   useEffect(
     () => () => {
       if (timerRef.current !== null) clearTimeout(timerRef.current);
+      if (viewTimerRef.current !== null) clearTimeout(viewTimerRef.current);
     },
     [],
   );
@@ -281,6 +512,9 @@ export function useWorkspace(
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = null;
     pendingRef.current = null;
+    if (viewTimerRef.current !== null) clearTimeout(viewTimerRef.current);
+    viewTimerRef.current = null;
+    pendingViewsRef.current.clear();
   }, [writable]);
 
   return {
@@ -296,6 +530,29 @@ export function useWorkspace(
     load,
     resize,
     updatePane,
+    refresh,
+    changeView,
+    createView,
+    deleteView,
+    createViewPane,
+    renamePane,
+  };
+}
+
+/** Keeps this device's unsaved workspace changes over a server snapshot. */
+function withPendingViews(
+  workspace: Workspace,
+  pending: ReadonlyMap<string, PendingViewSave>,
+): Workspace {
+  if (pending.size === 0 || workspace.views === undefined) return workspace;
+  return {
+    ...workspace,
+    views: workspace.views.map((view) => {
+      const local = pending.get(view.id);
+      return local === undefined || local.projectId !== workspace.projectId
+        ? view
+        : { ...local.view, version: view.version };
+    }),
   };
 }
 

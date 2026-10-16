@@ -204,7 +204,7 @@ function Ask({ onSent }: { readonly onSent?: () => void }): React.JSX.Element {
           <>
             <button className="ag-agent-chip" type="button" onClick={() => app.openChat(main.id)}>
               <Avatar identity={app.identity(main)} size={18} presence={presence!} />
-              메인 오케스트레이터 · {presenceLabel(presence!)}
+              {app.identity(main).name} · {presenceLabel(presence!)}
             </button>
             {presence === "mine" && <span> 내가 직접 대화 중이라, 돌려주면 이어 받습니다.</span>}
             {(presence === "stopped" || presence === "failed") && (
@@ -356,7 +356,9 @@ function OrchestratorChip({ project }: { readonly project: AgentBoardProject }):
     return (
       <button className="ag-agent-chip" type="button" onClick={() => app.openChat(orchestrator.id)}>
         <Avatar identity={app.identity(orchestrator)} size={20} presence={presence} />
-        <span>오케스트레이터 · {presenceLabel(presence)}</span>
+        <span>
+          {app.identity(orchestrator).name} · {presenceLabel(presence)}
+        </span>
       </button>
     );
   }

@@ -12,7 +12,14 @@ import type {
   SplitDirection,
 } from "@naru/contracts";
 import { PUSH_INACTIVITY_DELAY_MINUTES } from "@naru/contracts";
-import { isPaneCollapsed } from "@naru/domain";
+import {
+  firstViewPaneId,
+  isPaneCollapsed,
+  viewContainsPane,
+  viewFromProjectLayout,
+  viewSlots,
+  visiblePaneIds,
+} from "@naru/domain";
 import {
   browserSupportsWebAuthn,
   startAuthentication,
@@ -29,7 +36,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ApiFailure, NaruApi } from "./api";
+import { ApiFailure, NaruApi, type AgentBoard } from "./api";
 import { ActivityStatus } from "./ActivityStatus";
 import { activityLabel } from "./activity-presentation";
 import { passkeyMessageFrom } from "./auth-presentation";
@@ -63,6 +70,14 @@ import { useVisualViewportVariables, useWorkspaceView } from "./use-workspace-vi
 import { useWorkspace, type WorkspaceIssue } from "./use-workspace";
 import { WorkspaceLayout } from "./WorkspaceLayout";
 import type { WorkspaceViewMode } from "./workspace-view";
+import { MainNav, type MainView } from "./MainNav";
+import type { PaneOwner } from "./workspace-model";
+import {
+  readSelection,
+  resolveSelection,
+  writeSelection,
+  type WorkspaceSelection,
+} from "./workspace-selection";
 
 const LAST_PROJECT_KEY = "naru-last-project";
 const SCREEN_READER_MODE_KEY = "naru-screen-reader-mode";
@@ -71,11 +86,19 @@ const TERMINAL_INPUT_TOOLS_MODE_KEY = "naru-terminal-input-tools-mode";
 const AGENT_LAUNCH_PROFILES: ReadonlySet<string> = new Set(["claude-agent", "codex-agent"]);
 /** How often the workspace view re-reads what waits for the person on the agent screen. */
 const AGENT_WAITING_POLL_MS = 15_000;
+/** The workspace list re-reads agents and Panes this often, so new agent Panes and owners show. */
+const WORKSPACE_REFRESH_MS = 5_000;
 
 /** The agent screens (and their markdown) load only when opened. */
 const AgentApp = lazy(async () => {
   const module = await import("./AgentApp");
   return { default: module.AgentApp };
+});
+
+/** The workspace list and editor (AP-T22) load with the agent screens' server only. */
+const WorkspaceScreen = lazy(async () => {
+  const module = await import("./WorkspaceScreen");
+  return { default: module.WorkspaceScreen };
 });
 
 type SidebarFocusTarget = "close" | "project-form" | "selected-action";
@@ -153,19 +176,43 @@ export default function App(): React.JSX.Element {
     load: loadWorkspace,
     resize: resizePane,
     updatePane,
+    refresh: refreshWorkspace,
+    changeView,
+    createView,
+    deleteView,
+    createViewPane,
+    renamePane,
   } = useWorkspace(api, setNotice, mutationAllowed);
 
-  // Agent Platform screen (AP-T17, AP-D022), shown only when the server serves the agent API.
-  const [mainView, setMainView] = useState<"workspace" | "agents">("workspace");
+  // Agent Platform screens (AP-T17, AP-D022), shown only when the server serves the agent API.
+  // With them comes the one top menu and the workspace list (AP-D028, AP-T22).
+  const [mainView, setMainViewState] = useState<MainView>("workspace");
+  const navigatedRef = useRef(false);
+  const [navigation, setNavigation] = useState(0);
+  const setMainView = useCallback((view: MainView): void => {
+    navigatedRef.current = true;
+    setMainViewState(view);
+  }, []);
   const [agentsAvailable, setAgentsAvailable] = useState(false);
   /** What waits for the person across projects, for the top bar on either view. */
   const [agentWaiting, setAgentWaiting] = useState(0);
+  /** Agents and their Panes, for owner marks in the workspace list (AP-D029). */
+  const [agentBoard, setAgentBoard] = useState<AgentBoard | null>(null);
+  /** What this device chose in the open project; a choice for another project is ignored. */
+  const [chosen, setChosen] = useState<{
+    projectId: string;
+    selection: WorkspaceSelection;
+  } | null>(null);
+  const newWorkspaceUi = agentsAvailable;
   useEffect(() => {
     if (authState !== "signed-in") return;
     let cancelled = false;
     api.agentOverview().then(
       () => {
-        if (!cancelled) setAgentsAvailable(true);
+        if (cancelled) return;
+        setAgentsAvailable(true);
+        // The control room is the first screen (AP-D028) unless something was opened already.
+        if (!navigatedRef.current) setMainViewState("control");
       },
       () => {
         if (!cancelled) setAgentsAvailable(false);
@@ -175,14 +222,25 @@ export default function App(): React.JSX.Element {
       cancelled = true;
     };
   }, [api, authState]);
+  const readAgentBoard = useCallback(
+    () =>
+      api.agentBoard().then(
+        (board) => {
+          setAgentBoard(board);
+          return board;
+        },
+        () => null,
+      ),
+    [api],
+  );
   useEffect(() => {
     // The agent screen reports its own count; the workspace view reads it now and then.
-    if (authState !== "signed-in" || !agentsAvailable || mainView === "agents") return;
+    if (authState !== "signed-in" || !agentsAvailable || mainView !== "workspace") return;
     let cancelled = false;
     const read = () =>
-      void api.agentBoard().then(
+      void readAgentBoard().then(
         (board) => {
-          if (cancelled) return;
+          if (cancelled || board === null) return;
           const approvals = [
             ...board.projects.flatMap((project) => project.pendingApprovals),
             ...board.globalPendingApprovals,
@@ -195,12 +253,93 @@ export default function App(): React.JSX.Element {
         () => undefined,
       );
     read();
-    const timer = window.setInterval(read, AGENT_WAITING_POLL_MS);
+    const timer = window.setInterval(
+      read,
+      newWorkspaceUi ? WORKSPACE_REFRESH_MS : AGENT_WAITING_POLL_MS,
+    );
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [agentsAvailable, api, authState, mainView]);
+  }, [agentsAvailable, authState, mainView, newWorkspaceUi, readAgentBoard]);
+
+  // Agents add Panes on their own; the workspace list shows them without a reload.
+  useEffect(() => {
+    if (authState !== "signed-in" || !newWorkspaceUi || mainView !== "workspace") return;
+    const refresh = (): void => {
+      if (document.visibilityState === "visible") void refreshWorkspace();
+    };
+    const timer = window.setInterval(refresh, WORKSPACE_REFRESH_MS);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [authState, mainView, newWorkspaceUi, refreshWorkspace]);
+
+  // What this device has open: the stored choice if it still exists, else the first workspace.
+  const workspaceProjectId = workspace?.projectId ?? null;
+  const selection = chosen?.projectId === workspaceProjectId ? chosen.selection : null;
+  const resolvedSelection = useMemo(
+    () =>
+      workspace === null
+        ? null
+        : resolveSelection(
+            workspace,
+            selection ?? (workspaceProjectId === null ? null : readSelection(workspaceProjectId)),
+          ),
+    [selection, workspace, workspaceProjectId],
+  );
+  const selectWorkspace = useCallback(
+    (next: WorkspaceSelection): void => {
+      const projectId = currentWorkspace()?.projectId;
+      if (projectId === undefined) return;
+      setChosen({ projectId, selection: next });
+      writeSelection(projectId, next);
+    },
+    [currentWorkspace],
+  );
+  /** A Pane was opened for the person (alert, agent screen): phones skip the list then. */
+  const [revealedPane, setRevealedPane] = useState(false);
+  /** Shows a Pane: in the open workspace if it is there, otherwise on its own. */
+  const revealPane = useCallback(
+    (paneId: string): void => {
+      setRevealedPane(true);
+      const current = currentWorkspace();
+      if (current === null) return;
+      const open = resolveSelection(current, selection ?? readSelection(current.projectId));
+      const view =
+        open?.type === "view"
+          ? current.views?.find((candidate) => candidate.id === open.id)
+          : undefined;
+      if (view !== undefined && viewContainsPane(view.layout, paneId)) {
+        changeView(view.id, (candidate) => ({ ...candidate, activePaneId: paneId }));
+        selectWorkspace({ type: "view", id: view.id });
+      } else {
+        selectWorkspace({ type: "pane", id: paneId });
+      }
+    },
+    [changeView, currentWorkspace, selectWorkspace, selection],
+  );
+  /** Pressing the top menu also closes a conversation open over the control room. */
+  const navigate = useCallback(
+    (view: MainView): void => {
+      setRevealedPane(false);
+      setMainView(view);
+      setNavigation((current) => current + 1);
+    },
+    [setMainView],
+  );
+  const workspaceActions = useMemo(
+    () => ({ changeView, createView, deleteView, createViewPane, renamePane }),
+    [changeView, createView, createViewPane, deleteView, renamePane],
+  );
+  const legacyLayout = useMemo(
+    () => (workspace === null ? null : viewFromProjectLayout(workspace.layout)),
+    [workspace],
+  );
   const rememberProject = useCallback((projectId: string | null): void => {
     setSelectedProjectId(projectId);
     if (projectId) localStorage.setItem(LAST_PROJECT_KEY, projectId);
@@ -208,6 +347,13 @@ export default function App(): React.JSX.Element {
   }, []);
 
   const projects = useMemo(() => connectedProjects(projectGroups), [projectGroups]);
+  const projectNameOf = useCallback(
+    (projectId: string | null): string =>
+      projectId === null
+        ? "전체"
+        : (projects.find((project) => project.id === projectId)?.name ?? "알 수 없는 프로젝트"),
+    [projects],
+  );
 
   const refreshProjects = useCallback(async (): Promise<Project[]> => {
     const before = activityFrameFenceRef.current.version;
@@ -464,6 +610,15 @@ export default function App(): React.JSX.Element {
     [acknowledgeCompletedPanes, activatePane, currentWorkspace],
   );
 
+  /** A Pane got focus in a workspace: acknowledge what it finished, without the project layout. */
+  const acknowledgePane = useCallback(
+    (paneId: string): void => {
+      const pane = currentWorkspace()?.panes.find((candidate) => candidate.id === paneId);
+      if (pane) void acknowledgeCompletedPanes([pane]);
+    },
+    [acknowledgeCompletedPanes, currentWorkspace],
+  );
+
   const openAgentPane = useCallback(
     async (paneId: string, projectId: string | null): Promise<void> => {
       try {
@@ -492,22 +647,31 @@ export default function App(): React.JSX.Element {
           setNotice("이 에이전트의 화면을 작업공간에서 찾지 못했습니다.");
           return;
         }
-        activateAndAcknowledgePane(paneId);
+        if (newWorkspaceUi) {
+          revealPane(paneId);
+          acknowledgePane(paneId);
+        } else {
+          activateAndAcknowledgePane(paneId);
+        }
         focusPaneSoon(paneId);
       } catch (error) {
         setNotice(messageFrom(error));
       }
     },
     [
+      acknowledgePane,
       activateAndAcknowledgePane,
       api,
       clearWorkspace,
       currentWorkspace,
       flushWorkspace,
       loadWorkspace,
+      newWorkspaceUi,
       projects,
       rememberProject,
+      revealPane,
       selectedProjectId,
+      setMainView,
     ],
   );
 
@@ -515,11 +679,12 @@ export default function App(): React.JSX.Element {
     if (!connection) return;
     return connection.onInput((paneId) => {
       const current = currentWorkspace();
-      if (!current || current.activePaneId !== paneId) return;
+      // In a workspace the Pane typed into is the one in focus.
+      if (!current || (!newWorkspaceUi && current.activePaneId !== paneId)) return;
       const pane = current.panes.find((candidate) => candidate.id === paneId);
       if (pane) void acknowledgeCompletedPanes([pane]);
     });
-  }, [acknowledgeCompletedPanes, connection, currentWorkspace]);
+  }, [acknowledgeCompletedPanes, connection, currentWorkspace, newWorkspaceUi]);
 
   const collapseAndFocusPane = useCallback(
     (paneId: string): void => {
@@ -658,7 +823,18 @@ export default function App(): React.JSX.Element {
     const current = currentWorkspace();
     if (!current || !current.panes.some((candidate) => candidate.id === pane.id)) return false;
     try {
-      const next = await api.deletePane(pane.id, current.version);
+      let next;
+      try {
+        next = await api.deletePane(pane.id, current.version);
+      } catch (error) {
+        // Agents move the project layout when they add Panes; the workspaces do not show it.
+        if (!(newWorkspaceUi && error instanceof ApiFailure && error.code === "LAYOUT_CONFLICT")) {
+          throw error;
+        }
+        const latest = await api.workspace(current.projectId);
+        acceptWorkspace(latest);
+        next = await api.deletePane(pane.id, latest.version);
+      }
       acceptWorkspace(next);
       if (next.activePaneId) focusPaneSoon(next.activePaneId);
       else focusSoon(() => workspaceTitleRef.current);
@@ -704,9 +880,84 @@ export default function App(): React.JSX.Element {
     void createPane(active, "terminal", "horizontal");
   };
 
+  /** A new Pane beside one open on its own; it then opens on its own too. */
+  const createBesideAndOpen = async (
+    target: Pane | null,
+    kind: PaneKind,
+    direction: SplitDirection,
+    selectedDocumentPath?: string,
+  ): Promise<void> => {
+    const before = new Set(currentWorkspace()?.panes.map((pane) => pane.id) ?? []);
+    await createPane(target, kind, direction, selectedDocumentPath);
+    const created = currentWorkspace()?.panes.find((pane) => !before.has(pane.id));
+    if (created !== undefined) {
+      selectWorkspace({ type: "pane", id: created.id });
+      focusPaneSoon(created.id);
+    }
+  };
+
+  /** A new Pane in what is open: next to the open workspace's Pane, or on its own. */
+  const createInWorkspace = (kind: PaneKind): void => {
+    const current = currentWorkspace();
+    if (!current) return;
+    const open = resolveSelection(current, selection ?? readSelection(current.projectId));
+    const view =
+      open?.type === "view"
+        ? current.views?.find((candidate) => candidate.id === open.id)
+        : undefined;
+    if (view !== undefined) {
+      const active =
+        view.activePaneId !== null && viewContainsPane(view.layout, view.activePaneId)
+          ? view.activePaneId
+          : firstViewPaneId(view.layout);
+      const slot = viewSlots(view.layout)[0];
+      void createViewPane(view.id, {
+        kind,
+        placement:
+          view.layout === null
+            ? { type: "root" }
+            : active !== null
+              ? { type: "split", targetPaneId: active, direction: "horizontal" }
+              : { type: "slot", slotId: slot!.id },
+      });
+      return;
+    }
+    const pane =
+      open?.type === "pane"
+        ? current.panes.find((candidate) => candidate.id === open.id)
+        : undefined;
+    void createBesideAndOpen(pane ?? null, kind, "horizontal");
+  };
+
+  /** "끼어들기" and "놓기" from a Pane (AP-D005, AP-D029): the same hold as the agent screens. */
+  const setPaneHold = async (owner: PaneOwner, held: boolean): Promise<void> => {
+    if (owner.kind === "mine" || !mutationAllowed) return;
+    try {
+      if (owner.kind === "agent") {
+        const runtime = held ? await api.agentRuntime(owner.agent.id).catch(() => null) : null;
+        await api.setAgentHold(owner.agent.id, held, "tui", runtime?.turnActive === true);
+      } else {
+        await api.setProcessHold(owner.process.id, held);
+      }
+    } catch (error) {
+      setNotice(messageFrom(error));
+    } finally {
+      await readAgentBoard();
+    }
+  };
+
   const openDocumentPane = (kind: "files" | "docs" | "tasks"): void => {
     const current = currentWorkspace();
     const existing = current?.panes.find((pane) => pane.kind === kind);
+    if (existing && newWorkspaceUi) {
+      revealPane(existing.id);
+      focusPaneSoon(existing.id);
+      return;
+    }
+    if (newWorkspaceUi) {
+      createInWorkspace(kind);
+      return;
+    }
     if (existing) {
       activatePane(existing.id);
       focusPaneSoon(existing.id);
@@ -795,7 +1046,7 @@ export default function App(): React.JSX.Element {
         setSidebarPreviewOpen(false);
         setFocusedAgentPaneId(null);
         setFocusedHandoffId(handoffTarget.handoffId);
-        setMainView("agents");
+        setMainView("control");
       } catch (error) {
         setNotice(messageFrom(error));
       } finally {
@@ -813,6 +1064,7 @@ export default function App(): React.JSX.Element {
     projects,
     rememberProject,
     selectedProjectId,
+    setMainView,
   ]);
 
   useEffect(() => {
@@ -862,10 +1114,15 @@ export default function App(): React.JSX.Element {
           setAgentsAvailable(true);
           setFocusedHandoffId(null);
           setFocusedAgentPaneId(pane.id);
-          setMainView("agents");
+          setMainView("control");
           return;
         }
-        activatePane(pane.id);
+        if (newWorkspaceUi) {
+          setMainView("workspace");
+          revealPane(pane.id);
+        } else {
+          activatePane(pane.id);
+        }
         focusPaneSoon(pane.id);
       } catch (error) {
         setNotice(messageFrom(error));
@@ -883,10 +1140,13 @@ export default function App(): React.JSX.Element {
     currentWorkspace,
     flushWorkspace,
     loadWorkspace,
+    newWorkspaceUi,
     notificationTarget,
     projects,
     rememberProject,
+    revealPane,
     selectedProjectId,
+    setMainView,
   ]);
 
   if (authState === "checking") return <AppLoading />;
@@ -946,17 +1206,17 @@ export default function App(): React.JSX.Element {
           </h1>
         </div>
         <div className="topbar-actions">
-          {agentsAvailable && selectedProject && (
-            <MainViewTabs
-              className="topbar-view-switch"
+          {newWorkspaceUi && selectedProject && (
+            <MainNav
+              className="main-nav topbar-main-nav"
               view={mainView}
               waiting={agentWaiting}
-              onChange={setMainView}
+              onChange={navigate}
             />
           )}
           <ConnectionBadge snapshot={connectionStatus} />
           <div className="desktop-topbar-actions">
-            {selectedProject && !(agentsAvailable && mainView === "agents") && (
+            {selectedProject && !newWorkspaceUi && (
               <div className="topbar-workspace-actions">
                 {canChooseWorkspaceView && (
                   <WorkspaceViewControl
@@ -1041,7 +1301,8 @@ export default function App(): React.JSX.Element {
             canManagePasskeys={api.authMode() === "app-managed"}
             onCreateTerminal={() => {
               setMainView("workspace");
-              createTerminalFromActivePane();
+              if (newWorkspaceUi) createInWorkspace("terminal");
+              else createTerminalFromActivePane();
             }}
             onOpenFiles={() => {
               setMainView("workspace");
@@ -1192,9 +1453,14 @@ export default function App(): React.JSX.Element {
                 setSidebarOpen(true);
               }}
             />
-          ) : agentsAvailable && mainView === "agents" ? (
+          ) : newWorkspaceUi && mainView !== "workspace" ? (
             <>
-              <MainViewTabs view={mainView} waiting={agentWaiting} onChange={setMainView} />
+              <MainNav
+                className="main-nav main-nav-row"
+                view={mainView}
+                waiting={agentWaiting}
+                onChange={navigate}
+              />
               <Suspense
                 fallback={
                   <div className="inline-loading">
@@ -1212,14 +1478,79 @@ export default function App(): React.JSX.Element {
                   initialHandoffId={focusedHandoffId}
                   initialAgentPaneId={focusedAgentPaneId}
                   onWaitingChange={setAgentWaiting}
+                  view={mainView}
+                  onViewChange={setMainView}
+                  navigation={navigation}
                 />
               </Suspense>
             </>
+          ) : newWorkspaceUi ? (
+            <>
+              <MainNav
+                className="main-nav main-nav-row"
+                view={mainView}
+                waiting={agentWaiting}
+                onChange={navigate}
+              />
+              <div className="ws-host">
+                {workspaceIssue ? (
+                  <WorkspaceUnavailable
+                    issue={workspaceIssue}
+                    onRetry={retryWorkspace}
+                    onManageProject={manageSelectedProject}
+                  />
+                ) : !workspace ? (
+                  <div className="inline-loading">
+                    <span /> 작업공간을 여는 중…
+                  </div>
+                ) : (
+                  <Suspense
+                    fallback={
+                      <div className="inline-loading">
+                        <span /> 작업공간을 여는 중…
+                      </div>
+                    }
+                  >
+                    <WorkspaceScreen
+                      key={workspace.projectId}
+                      workspace={workspace}
+                      projectTitle={selectedProjectTitle}
+                      board={agentBoard}
+                      projectName={projectNameOf}
+                      selection={resolvedSelection}
+                      onSelect={selectWorkspace}
+                      actions={workspaceActions}
+                      mutationAllowed={mutationAllowed}
+                      phone={workspaceView.overlayNavigation}
+                      startWithList={workspaceView.overlayNavigation && !revealedPane}
+                      drawer={workspaceView.canChoose}
+                      viewMode={workspaceView.mode}
+                      canChooseViewMode={workspaceView.canChoose}
+                      onViewModeChange={workspaceView.setMode}
+                      onOpenProjects={() => {
+                        setSidebarFocusTarget("close");
+                        setSidebarOpen(true);
+                      }}
+                      onPaneActivated={acknowledgePane}
+                      onTakeOver={(owner) => void setPaneHold(owner, true)}
+                      onRelease={(owner) => void setPaneHold(owner, false)}
+                      onCreateBesidePane={createBesideAndOpen}
+                      api={api}
+                      connection={connection}
+                      connectionStatus={connectionStatus}
+                      screenReaderMode={screenReaderMode}
+                      onClose={closePane}
+                      onRestart={restartPane}
+                      onStartNewSession={startNewSession}
+                      onAgentExited={() => void loadWorkspace(selectedProjectId)}
+                      onPaneViewStateChanged={updatePane}
+                    />
+                  </Suspense>
+                )}
+              </div>
+            </>
           ) : (
             <>
-              {agentsAvailable && (
-                <MainViewTabs view={mainView} waiting={agentWaiting} onChange={setMainView} />
-              )}
               {workspace && workspace.panes.length > 1 && (
                 <PaneTabs
                   panes={workspace.panes}
@@ -1251,7 +1582,15 @@ export default function App(): React.JSX.Element {
                   />
                 ) : (
                   <WorkspaceLayout
-                    workspace={workspace}
+                    layout={legacyLayout}
+                    panes={workspace.panes}
+                    activePaneId={workspace.activePaneId}
+                    tabPanels={workspace.panes.length > 1}
+                    collapse={{
+                      label: "접기",
+                      title: "Pane 접기",
+                      enabled: visiblePaneIds(workspace.layout).length > 1,
+                    }}
                     api={api}
                     connection={connection}
                     connectionStatus={connectionStatus}
@@ -2995,47 +3334,6 @@ function WorkspaceViewControl({
       <button type="button" aria-pressed={mode === "multi"} onClick={() => onChange("multi")}>
         분할 보기
       </button>
-    </div>
-  );
-}
-
-/** Workspace or agents, and how many things wait for the person on the agent screen. */
-function MainViewTabs({
-  view,
-  waiting,
-  onChange,
-  className = "main-view-tabs",
-}: {
-  view: "workspace" | "agents";
-  waiting: number;
-  onChange: (view: "workspace" | "agents") => void;
-  className?: string;
-}): React.JSX.Element {
-  return (
-    <div className={className}>
-      <div className="main-view-switch" role="group" aria-label="화면">
-        <button
-          type="button"
-          aria-pressed={view === "workspace"}
-          onClick={() => onChange("workspace")}
-        >
-          작업공간
-        </button>
-        <button type="button" aria-pressed={view === "agents"} onClick={() => onChange("agents")}>
-          에이전트
-        </button>
-      </div>
-      {waiting > 0 && (
-        <button
-          className="agent-waiting-pill"
-          type="button"
-          aria-label={`나를 기다리는 것 ${waiting}개 보기`}
-          onClick={() => onChange("agents")}
-        >
-          <span aria-hidden="true" />
-          나를 기다림 {waiting}
-        </button>
-      )}
     </div>
   );
 }

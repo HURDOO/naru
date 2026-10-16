@@ -3128,3 +3128,14 @@ button.ag-tool-call:hover {
     animation: none;
   }
 }
+
+/* The top menu replaces the rail (AP-D028) ------------------------------------------------------ */
+
+.ag-app[data-rail="none"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.ag-app[data-rail="none"] .ag-stage {
+  grid-row: 1;
+}

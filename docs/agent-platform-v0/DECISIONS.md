@@ -624,3 +624,51 @@
   - 휴대폰에서 세 메뉴는 위쪽에 보인다. 화면이 좁아 넘칠 때만 햄버거로 보낸다.
 - 안전 조건(구현 기본값): 병합이 성공한 뒤에만 지운다. Naru가 만든 것이 아닌 브랜치·워크트리와, 커밋하지 않은
   변경이나 추적하지 않는 파일이 남은 워크트리는 지우지 않고 사람에게 묻는다. 원격 저장소는 건드리지 않는다.
+
+## AP-D031. 작업공간 저장 형식
+
+- 상태: accepted (2026-10-16, AP-T22 1단계 구현 기준). AP-D027·D029의 작업공간을 서버에 저장하는 계약이다.
+- 배경: 지금은 project마다 `workspaces` 행 하나가 모든 Pane을 정확히 한 번씩 담는 layout(접힘 포함)을 가진다.
+  Pane 생성·삭제와 에이전트 Pane 추가가 이 layout을 고치고, 기존 API와 여러 테스트가 이 규칙에 기댄다.
+  작업공간은 Pane 일부를 골라 배치하는 보기다. 같은 Pane이 여러 작업공간에 있거나 어느 작업공간에도 없을 수 있다.
+- 결정:
+  - 기존 `workspaces` 행과 `GET/PUT /api/projects/:id/workspace`, Pane 생성·삭제 요청은 그대로 둔다. 이 행은
+    project의 Pane 목록과 legacy layout으로 남는다. 새 화면은 legacy layout을 보여 주지 않는다.
+  - 작업공간은 새 table `workspace_views`(DB v21)에 저장한다. 열은 `id`, `project_id`, `kind`, `name`(1~60자),
+    `position`, `layout_json`, `active_pane_id`, `version`, 생성·수정 시각이다. `kind`는 지금 `user`뿐이고,
+    맡긴 일 작업공간(AP-D028)은 2단계에서 `job`으로 더한다.
+  - 작업공간 layout(`WorkspaceViewLayoutNode`)은 세 가지 node로 이뤄진다.
+    - `pane`: Pane 하나.
+    - `slot`: 아직 없는 Pane의 자리. 만들 Pane의 kind와 launch profile을 담는다.
+    - `split`: 방향, 비율, 두 자식.
+  - 같은 Pane은 한 작업공간에 한 번만 둔다. 작업공간이 Pane을 모두 담을 필요는 없다. 접힘 상태는 없다.
+    작업공간에서 뺀 Pane은 개별 Pane 목록에만 남는다. 깊이는 12, 비율은 0.1~0.9, project당 작업공간은 32개까지다.
+  - `Workspace` 응답에 `views`를 더한다(추가형). 작업공간 변경은 작업공간별 `version`으로 낙관적 동시성을
+    검사하고, 응답으로 전체 `Workspace`를 돌려준다. 사람 기기 lease가 필요하다.
+    - `POST /api/projects/:id/views`: 작업공간을 만든다.
+    - `PUT /api/projects/:id/views/:viewId`: 이름, 배치, 활성 Pane을 저장한다.
+    - `DELETE /api/projects/:id/views/:viewId`: 작업공간만 지운다. Pane은 끄지 않는다.
+    - `POST /api/projects/:id/views/:viewId/panes`: 작업공간 안에서 새 Pane을 만들어 나누거나 빈 자리를 채운다.
+      새 Pane은 에이전트 Pane처럼 legacy layout에 접힌 채 더해진다.
+    - Pane 끄기(`DELETE /api/panes/:id`)는 그 Pane을 모든 작업공간에서도 뺀다.
+  - Pane 이름은 `panes.custom_title`과 `Pane.customTitle`(추가형, 없으면 null)에 둔다. `PATCH /api/panes/:id`로
+    사람이 바꾸거나 지운다. 화면은 `customTitle`, 에이전트 Pane이면 에이전트 이름, 그다음 `title` 순서로
+    이름을 고른다. 관제실과 흐름도 같은 이름을 쓰도록 `GET /api/agent/board`에 사람이 바꾼 이름 `paneNames`를
+    더한다(추가형). 에이전트의 신원과 기록은 바꾸지 않는다.
+  - 어떤 작업공간이나 Pane을 열어 두었는지는 기기별 보기 상태라 브라우저에 저장한다.
+- 마이그레이션(v21): 기존 project마다 작업공간 두 개를 만든다.
+  - "내 배치": 지금 legacy layout에서 보이는 배치를 그대로 옮긴다. 접어 둔 Pane은 빼서 개별 Pane 목록에
+    남기고, 활성 Pane은 유지한다.
+  - "기본": 위는 Claude와 메인 Codex, 아래는 터미널이다. 비율은 지금 기본 배치와 같은 0.64와 0.5다.
+    - 넣는 Pane: 사람이 만든 첫 Claude Code Pane, 첫 `codex-main` Pane, 에이전트 공유 프로세스가 아닌 첫 shell
+      터미널.
+    - 없는 자리는 slot으로 둔다. Naru는 Pane을 만들거나 띄우지 않는다.
+  - 새 project는 지금처럼 Pane을 만들고(`NARU_DEFAULT_AGENT_PANE_KIND` 그대로) "기본" 작업공간 하나를 같은
+    규칙으로 만든다.
+  - 되돌리기: v21 DB는 이전 build가 열지 않는다(기존 규칙). 되돌릴 때는 upgrade 전 자동 백업을 쓴다. 실제
+    instance 적용은 배포 때 데이터 마이그레이션 승인을 받는다(AP-D029).
+- 호환성: 모두 추가형이다. 기존 browser, 테스트와 harness의 `Workspace`, Pane 생성·삭제, legacy 저장은 그대로
+  동작한다. 새 client는 `views`와 `customTitle`이 없는 이전 server 응답을 빈 목록과 null로 받는다.
+- 화면 범위: 세로 목록과 새 위쪽 메뉴는 agent API를 제공하는 server(`NARU_AGENT_PLATFORM=1`)에서만 켠다.
+  AP-T17·T20 화면과 같은 조건이다. 그렇지 않은 server는 지금 가로 탭 화면을 그대로 쓴다. 가로 탭 화면을
+  언제 없앨지는 본선 병합 때 정한다.

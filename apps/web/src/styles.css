@@ -4698,24 +4698,23 @@ html[data-naru-display-mode="standalone"] .loading-screen {
   }
 }
 
-/* Workspace / agents switch (AP-T17, AP-D022); the agent screens style themselves -------------- */
+/* One top menu "관제실 | 작업공간 | 흐름" (AP-D028); the agent screens style themselves ----------- */
 
-.topbar-view-switch,
-.main-view-tabs {
+.main-nav {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.main-view-tabs {
+.main-nav-row {
   flex: 0 0 auto;
   justify-content: space-between;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: #101417;
 }
 
-.main-view-switch {
+.main-nav-switch {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
@@ -4724,21 +4723,43 @@ html[data-naru-display-mode="standalone"] .loading-screen {
   background: var(--panel);
 }
 
-.main-view-switch button {
-  min-height: 28px;
-  padding: 0 12px;
+.main-nav-switch button {
+  position: relative;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
   border: 0;
   border-radius: 7px;
   color: var(--muted);
   background: transparent;
   cursor: pointer;
   font-size: 12.5px;
+  white-space: nowrap;
 }
 
-.main-view-switch button[aria-pressed="true"] {
+.main-nav-switch button:hover {
+  color: var(--text);
+}
+
+.main-nav-switch button[aria-current="page"] {
   color: var(--text);
   background: var(--panel-raised);
   font-weight: 650;
+}
+
+.main-nav-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #14100d;
+  background: var(--accent);
+  font-size: 10.5px;
+  font-weight: 750;
+  line-height: 17px;
 }
 
 .agent-waiting-pill {
@@ -4765,13 +4786,36 @@ html[data-naru-display-mode="standalone"] .loading-screen {
 }
 
 @media (min-width: 901px) {
-  .main-view-tabs {
+  .main-nav-row {
     display: none;
   }
 }
 
 @media (max-width: 900px) {
-  .topbar-view-switch {
+  .topbar-main-nav {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  /* Three items stay on top on phones; they go to the menu only if they could not fit (AP-D030). */
+  .main-nav-row {
+    padding: 6px 12px;
+  }
+
+  .main-nav-row .main-nav-switch {
+    display: grid;
+    flex: 1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .main-nav-row .main-nav-switch button {
+    min-height: 36px;
+    padding: 0 6px;
+    font-size: 13px;
+  }
+
+  .main-nav-row .agent-waiting-pill {
     display: none;
   }
 }

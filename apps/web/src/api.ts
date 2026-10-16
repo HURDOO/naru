@@ -4,6 +4,8 @@ import {
   NARU_SURFACE_GENERATION_HEADER,
   type ErrorCode,
   type CreatePaneRequest,
+  type CreateWorkspaceViewPaneRequest,
+  type CreateWorkspaceViewRequest,
   type DocumentCatalog,
   type DocumentContent,
   type FileDraft,
@@ -17,6 +19,7 @@ import {
   type ProjectGroup,
   type PushConfiguration,
   type SaveWorkspaceRequest,
+  type SaveWorkspaceViewRequest,
   type SaveFileDraftRequest,
   type SaveProjectFileRequest,
   type SessionResponse,
@@ -92,6 +95,8 @@ export interface AgentBoard {
   /** Open handoffs of every project and the global ones. */
   readonly openHandoffs: Handoff[];
   readonly globalPendingApprovals: AgentPendingApproval[];
+  /** Names the person gave agents' Panes, by Pane id (AP-D029); absent from older servers. */
+  readonly paneNames?: Readonly<Record<string, string>>;
 }
 
 /** Who asked an agent what, verbatim, and the user instructions those requests serve. */
@@ -417,6 +422,61 @@ export class NaruApi {
 
   deleteFileDraft(paneId: string): Promise<void> {
     return this.#request<void>(`/api/panes/${paneId}/file-draft`, { method: "DELETE" }, true);
+  }
+
+  /** Workspaces the person arranges (AP-D031); each answers with the whole project workspace. */
+  createWorkspaceView(projectId: string, input: CreateWorkspaceViewRequest): Promise<Workspace> {
+    return this.#request<Workspace>(
+      `/api/projects/${projectId}/views`,
+      { method: "POST", body: JSON.stringify(input) },
+      true,
+      true,
+    );
+  }
+
+  saveWorkspaceView(
+    projectId: string,
+    viewId: string,
+    input: SaveWorkspaceViewRequest,
+  ): Promise<Workspace> {
+    return this.#request<Workspace>(
+      `/api/projects/${projectId}/views/${viewId}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      true,
+      true,
+    );
+  }
+
+  deleteWorkspaceView(projectId: string, viewId: string, version: number): Promise<Workspace> {
+    return this.#request<Workspace>(
+      `/api/projects/${projectId}/views/${viewId}`,
+      { method: "DELETE", body: JSON.stringify({ version }) },
+      true,
+      true,
+    );
+  }
+
+  createWorkspaceViewPane(
+    projectId: string,
+    viewId: string,
+    input: CreateWorkspaceViewPaneRequest,
+  ): Promise<Workspace> {
+    return this.#request<Workspace>(
+      `/api/projects/${projectId}/views/${viewId}/panes`,
+      { method: "POST", body: JSON.stringify(input) },
+      true,
+      true,
+    );
+  }
+
+  /** The person's own name for a Pane (AP-D029); null returns to Naru's name. */
+  renamePane(paneId: string, customTitle: string | null): Promise<Pane> {
+    return this.#request<Pane>(
+      `/api/panes/${paneId}`,
+      { method: "PATCH", body: JSON.stringify({ customTitle }) },
+      true,
+      true,
+    );
   }
 
   saveWorkspace(projectId: string, input: SaveWorkspaceRequest): Promise<Workspace> {

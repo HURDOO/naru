@@ -92,6 +92,8 @@ export function registerAgentPlatformRoutes(
   runtime?: AgentRuntimeControl,
   processes?: SharedProcessControl,
   noteHumanInput?: (target: { readonly agentSessionId: string }) => void,
+  /** Names the person gave to agents' Panes (AP-D029), so every screen shows the same name. */
+  customPaneTitles?: (paneIds: readonly string[]) => Readonly<Record<string, string>>,
 ): void {
   const mutate = (request: FastifyRequest): void => {
     guards.requireUnsafeRequest(request);
@@ -152,11 +154,15 @@ export function registerAgentPlatformRoutes(
         throw error;
       }
     });
+    const paneIds = [...projects.flatMap((project) => project.agents), ...overview.globalAgents]
+      .map((agent) => agent.paneId)
+      .filter((paneId): paneId is string => paneId !== null);
     return {
       projects,
       globalAgents: overview.globalAgents,
       openHandoffs: overview.openHandoffs,
       globalPendingApprovals: pendingApprovals(overview.globalAgents),
+      paneNames: customPaneTitles?.(paneIds) ?? {},
     };
   });
 
