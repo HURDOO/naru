@@ -366,7 +366,12 @@
       쓴다. 사용자 모드를 읽어 명시적으로 넘기게 고쳤다(AP-D024). 실제 SDK probe로 확인했다. build `51bca5f`로 올렸다(receipt 5,
       Naru만 재시작, doctor 25/25). 떠 있던 에이전트는 다시 시작할 때 새 모드를 받는다.
     - 대화에서 에이전트의 질문 내용이 보이지 않고, 대화로 답해도 질문이 대시보드에 남음 → AP-D025(질문 카드,
-      열린 질문을 사람의 turn에 알려 에이전트가 스스로 거둠).
+      열린 질문을 사람의 turn에 알려 에이전트가 스스로 거둠). build `ce237a6`로 올렸다(receipt 6, Naru만 재시작, doctor 25/25).
+    - 배포에서 본 distribution 약점(고치지 않음, Workstation 쪽 후속):
+      - 부하가 클 때(load average ~20) maintenance의 Node 아키텍처 확인(10초 제한)이 실패해 upgrade가
+        이전 상태로 돌아갔다. 같은 plan으로 다시 하니 성공했다.
+      - 실패하고 이전 상태로 돌아간 뒤 maintenance launchd 파일은 돌아가지 않아 doctor가 blocked였다.
+        다음 성공한 변경이 바로잡았다.
 
 ### AP-T20. 에이전트 화면 재설계 (Figma 시안 v1)
 
