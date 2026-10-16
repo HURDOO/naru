@@ -347,7 +347,8 @@ describe("orchestrator wakeups", () => {
     }
     await flush();
     const baseline = fixture.batches.length;
-    const woken = (from: number) => new Set(fixture.batches.slice(from).map((b) => b.orchestrator.id));
+    const woken = (from: number) =>
+      new Set(fixture.batches.slice(from).map((b) => b.orchestrator.id));
 
     // The person's word to the project and a worker failing: the lead's.
     const followUp = fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
