@@ -40,6 +40,8 @@ import {
 import type { WorkspaceSelection } from "./workspace-selection";
 import type { AgentBoard } from "./api";
 import { WorkspaceLayout } from "./WorkspaceLayout";
+import { AgentPaneCover, AgentViewSwitch, WorkspaceAgents } from "./AgentPane";
+import { useAgentPanes } from "./agent-pane-views";
 import { PANE_DRAG_TYPE, startPaneDrag } from "./pane-drag";
 import "./workspace-screen.css";
 
@@ -110,6 +112,15 @@ interface WorkspaceScreenProps {
   readonly onStartNewSession: (pane: Pane) => Promise<void>;
   readonly onAgentExited: () => void;
   readonly onPaneViewStateChanged: (pane: Pane) => void;
+  /**
+   * Agents' Panes show their conversation and switch to their TUI (AP-D028). Absent, every Pane
+   * is a plain terminal.
+   */
+  readonly agentPanes?: {
+    readonly projects: readonly { readonly id: string; readonly name: string }[];
+    readonly onOpenPane: (paneId: string, projectId: string | null) => void;
+    readonly onNavigate: (view: "control" | "flow") => void;
+  };
 }
 
 const NEW_PANES: readonly { kind: PaneKind; label: string; launchProfile?: string }[] = [
@@ -175,7 +186,7 @@ export function WorkspaceScreen(props: WorkspaceScreenProps): React.JSX.Element 
   const showStage = !props.phone || !showList;
   const openList = (): void => (drawer ? setDrawerOpen((open) => !open) : setListOpen(true));
 
-  return (
+  const screen = (
     <div className="ws-screen" data-editing={editing} data-phone={props.phone} data-drawer={drawer}>
       {drawer && drawerOpen && (
         <button
@@ -265,6 +276,20 @@ export function WorkspaceScreen(props: WorkspaceScreenProps): React.JSX.Element 
         />
       )}
     </div>
+  );
+  return props.agentPanes === undefined ? (
+    screen
+  ) : (
+    <WorkspaceAgents
+      api={props.api}
+      projects={props.agentPanes.projects}
+      currentProjectId={workspace.projectId}
+      mutationAllowed={props.mutationAllowed}
+      onOpenPane={props.agentPanes.onOpenPane}
+      onNavigate={props.agentPanes.onNavigate}
+    >
+      {screen}
+    </WorkspaceAgents>
   );
 }
 
@@ -529,6 +554,7 @@ function ViewStage(
     readonly onRename: (pane: Pane) => void;
   },
 ): React.JSX.Element {
+  const agentPanes = useAgentPanes();
   const { view, actions, editing } = props;
   const panes = props.workspace.panes;
   const shown = viewPaneIds(view.layout)
@@ -738,11 +764,17 @@ function ViewStage(
               enabled: true,
             }}
             paneTitle={props.nameOf}
+            paneCover={(pane) => (agentPanes.covered(pane) ? <AgentPaneCover pane={pane} /> : null)}
+            agentPane={(pane) => agentPanes.agentFor(pane) !== undefined}
             paneExtras={(pane) => (
               <PaneHeaderExtras
                 pane={pane}
                 name={props.nameOf(pane)}
                 owner={props.owners === null ? null : props.ownerFor(pane)}
+                viewSwitch={
+                  agentPanes.agentFor(pane) === undefined ? null : <AgentViewSwitch pane={pane} />
+                }
+                covered={agentPanes.covered(pane)}
                 enabled={props.mutationAllowed}
                 inView
                 viewName={view.name}
@@ -846,6 +878,7 @@ function PaneStage(
     readonly onRename: (pane: Pane) => void;
   },
 ): React.JSX.Element {
+  const agentPanes = useAgentPanes();
   const { pane } = props;
   const owner = props.ownerFor(pane);
   const layout = useMemo(() => viewPaneNode(pane.id), [pane.id]);
@@ -888,11 +921,19 @@ function PaneStage(
           }}
           paneTitle={props.nameOf}
           splitEnabled={false}
+          paneCover={(target) =>
+            agentPanes.covered(target) ? <AgentPaneCover pane={target} /> : null
+          }
+          agentPane={(target) => agentPanes.agentFor(target) !== undefined}
           paneExtras={() => (
             <PaneHeaderExtras
               pane={pane}
               name={props.nameOf(pane)}
               owner={props.owners === null ? null : owner}
+              viewSwitch={
+                agentPanes.agentFor(pane) === undefined ? null : <AgentViewSwitch pane={pane} />
+              }
+              covered={agentPanes.covered(pane)}
               enabled={props.mutationAllowed}
               inView={false}
               viewName={null}
@@ -1228,6 +1269,10 @@ interface PaneActionsProps {
   readonly pane: Pane;
   readonly name: string;
   readonly owner: PaneOwner | null;
+  /** An agent's Pane switches between its conversation and its TUI (AP-D028). */
+  readonly viewSwitch?: React.ReactNode;
+  /** The Pane shows the agent's conversation, which says who writes it. */
+  readonly covered?: boolean;
   readonly enabled: boolean;
   readonly inView: boolean;
   readonly viewName: string | null;
@@ -1244,7 +1289,8 @@ function PaneHeaderExtras(props: PaneActionsProps): React.JSX.Element {
   const { owner } = props;
   return (
     <span className="ws-pane-extras">
-      {owner !== null && (
+      {props.viewSwitch}
+      {owner !== null && props.covered !== true && (
         <span
           className={`ws-owner-chip ${owner.kind === "mine" || owner.held ? "mine" : "agent"}`}
           title={ownerLabel(owner)}
@@ -1257,7 +1303,7 @@ function PaneHeaderExtras(props: PaneActionsProps): React.JSX.Element {
           <span className="ws-owner-text">{ownerLabel(owner)}</span>
         </span>
       )}
-      {owner !== null && owner.kind !== "mine" && (
+      {owner !== null && owner.kind !== "mine" && (owner.held || !props.viewSwitch) && (
         <button
           type="button"
           className={owner.held ? "ws-button primary ws-hold" : "ws-button ws-hold"}
@@ -1303,7 +1349,7 @@ function PaneMenu(props: PaneActionsProps): React.JSX.Element {
           owner !== null && owner.kind !== "mine" && owner.held
             ? item("놓기", props.onRelease, false, "release")
             : null,
-          owner !== null && owner.kind !== "mine" && !owner.held
+          owner !== null && owner.kind !== "mine" && !owner.held && !props.viewSwitch
             ? item("끼어들기", props.onTakeOver, false, "hand")
             : null,
           props.inView && props.onRemoveFromView !== undefined

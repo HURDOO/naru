@@ -58,6 +58,10 @@ interface WorkspaceLayoutProps {
   paneTitle?: (pane: Pane) => string;
   /** Owner and actions shown in each Pane's header (AP-D029). */
   paneExtras?: (pane: Pane) => ReactNode;
+  /** What to show over a terminal Pane instead of it: an agent's conversation (AP-D028). */
+  paneCover?: (pane: Pane) => ReactNode;
+  /** A managed agent's Pane, where Naru starts new runtimes on its own (AP-D039). */
+  agentPane?: (pane: Pane) => boolean;
   renderSlot?: (slot: WorkspaceViewSlotNode) => ReactNode;
   drop?: WorkspaceDrop | null;
   api: NaruApi;
@@ -274,17 +278,20 @@ function SplitBranch(
 
 function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.Element {
   const active = props.activePaneId === props.pane.id;
+  const cover = props.paneCover?.(props.pane) ?? null;
   const toolbar = (
     <>
       {props.paneExtras?.(props.pane)}
-      {(props.pane.kind === "codex" ||
-        props.pane.kind === "claude" ||
-        props.pane.activity.state === "failed") && (
-        <ActivityStatus
-          state={props.pane.activity.state}
-          context={`${props.pane.title} 작업 상태`}
-        />
-      )}
+      {/* A covered agent Pane shows its state in the conversation instead. */}
+      {cover === null &&
+        (props.pane.kind === "codex" ||
+          props.pane.kind === "claude" ||
+          props.pane.activity.state === "failed") && (
+          <ActivityStatus
+            state={props.pane.activity.state}
+            context={`${props.pane.title} 작업 상태`}
+          />
+        )}
       <button
         className="pane-collapse"
         type="button"
@@ -365,6 +372,8 @@ function PaneSurface(props: WorkspaceLayoutProps & { pane: Pane }): React.JSX.El
         mutationAllowed={props.mutationAllowed}
         screenReaderMode={props.screenReaderMode}
         toolbarExtras={toolbar}
+        cover={cover}
+        followRuntime={props.agentPane?.(props.pane) ?? false}
         onActivate={() => props.onActivate(props.pane.id)}
         onFocus={() => props.onFocus(props.pane.id)}
         onRestart={() => props.onRestart(props.pane)}

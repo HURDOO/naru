@@ -396,7 +396,7 @@ function Conversation({
     .join(" · ");
   const showContext = wide || contextOpen;
   const paneLabel =
-    agent.launchMode === "tui" || agent.runtime === "codex" ? "TUI로 열기" : "콘솔 열기";
+    agent.launchMode === "tui" || agent.runtime === "codex" ? "TUI로 열기" : "작업공간에서 열기";
   return (
     <div
       className="ag-conversation-wrap"
@@ -470,6 +470,83 @@ function Conversation({
   );
 }
 
+/**
+ * An agent's conversation inside its own workspace Pane (AP-D028): the thread and the composer
+ * under a slim line with its state, task and menu. The Pane's header names the agent and switches
+ * to the TUI.
+ */
+export function PaneConversation({
+  agent,
+  notice = null,
+  onShowConsole = null,
+}: {
+  readonly agent: AgentSession;
+  /** Shown above the thread, such as a question before taking the agent over in the TUI. */
+  readonly notice?: React.ReactNode;
+  readonly onShowConsole?: (() => void) | null;
+}): React.JSX.Element {
+  const app = useAgentApp();
+  const [contextOpen, setContextOpen] = useState(false);
+  const { runtime, blocks, issue, truncated, turnStartedAt, paused, reload } =
+    useAgentConversation(agent);
+  const presence = app.presence(agent);
+  const task = currentTask(
+    agent,
+    app.board.projects.flatMap((project) => project.tasks),
+  );
+  return (
+    <div
+      className="ag-conversation-wrap ag-pane-conversation"
+      data-context={contextOpen ? "overlay" : undefined}
+    >
+      <section className="ag-conversation" aria-label={`${app.identity(agent).name} 대화`}>
+        <div className="ag-pane-convo-bar">
+          <Pill tone={presenceTone(presence)}>{presenceLabel(presence)}</Pill>
+          <span className="ag-pane-convo-task">
+            {task === undefined ? app.projectName(agent.projectId) : `맡은 일: ${task.title}`}
+          </span>
+          <button
+            className="ag-icon-button"
+            type="button"
+            aria-label="작업 맥락"
+            aria-expanded={contextOpen}
+            onClick={() => setContextOpen((open) => !open)}
+          >
+            <Icon name="panel" size={16} />
+          </button>
+          <AgentMenu agent={agent} runtime={runtime} inPane={{ onShowConsole }} />
+        </div>
+        {notice}
+        {issue !== null && !paused && (
+          <p className="ag-issue" role="status">
+            {issue}{" "}
+            <button className="ag-link" type="button" onClick={reload}>
+              다시 읽기
+            </button>
+          </p>
+        )}
+        <Thread
+          agent={agent}
+          blocks={blocks}
+          runtime={runtime}
+          truncated={truncated}
+          turnStartedAt={turnStartedAt}
+          paused={paused}
+        />
+        <Composer agent={agent} runtime={runtime} onSent={reload} />
+      </section>
+      {contextOpen && (
+        <TaskContext
+          agent={agent}
+          runtime={runtime}
+          task={task}
+          onClose={() => setContextOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 /** The task the agent works on now, else the one it touched last. */
 function currentTask(agent: AgentSession, tasks: readonly AgentTask[]): AgentTask | undefined {
   const mine = tasks
@@ -487,9 +564,12 @@ function currentTask(agent: AgentSession, tasks: readonly AgentTask[]): AgentTas
 function AgentMenu({
   agent,
   runtime,
+  inPane = null,
 }: {
   readonly agent: AgentSession;
   readonly runtime: AgentRuntimeState | null;
+  /** In the agent's own Pane: its header switches to TUI, and the runner's console is one step away. */
+  readonly inPane?: { readonly onShowConsole: (() => void) | null } | null;
 }): React.JSX.Element | null {
   const app = useAgentApp();
   const [open, setOpen] = useState(false);
@@ -508,7 +588,7 @@ function AgentMenu({
   }, [open]);
   if (!managed) return null;
   const items: { label: string; run: () => void }[] = [];
-  if (live && !held) {
+  if (live && !held && inPane === null) {
     items.push({
       label: "TUI에서 직접 이어받기",
       run: () =>
@@ -528,6 +608,7 @@ function AgentMenu({
         void app.act("에이전트에게 돌려줬습니다.", () => app.api.setAgentHold(agent.id, false)),
     });
   }
+  if (inPane?.onShowConsole) items.push({ label: "실행 콘솔 보기", run: inPane.onShowConsole });
   items.push(
     live
       ? {

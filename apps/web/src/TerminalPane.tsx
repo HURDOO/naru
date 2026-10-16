@@ -69,6 +69,16 @@ interface TerminalPaneProps {
   mutationAllowed: boolean;
   screenReaderMode: boolean;
   toolbarExtras?: ReactNode;
+  /**
+   * Shown over the terminal instead of it (an agent's conversation, AP-D028). The terminal keeps
+   * running and keeps its size underneath, so taking the cover away shows it as it is.
+   */
+  cover?: ReactNode;
+  /**
+   * Naru starts new runtimes in this Pane on its own (an agent's runner and TUI, AP-D011): attach
+   * to the next one when the Pane runs again, without a reload.
+   */
+  followRuntime?: boolean;
   onActivate: () => void;
   onFocus?: () => void;
   onRestart: () => Promise<void>;
@@ -131,6 +141,8 @@ export function TerminalPane({
   mutationAllowed,
   screenReaderMode,
   toolbarExtras,
+  cover = null,
+  followRuntime = false,
   onActivate,
   onFocus,
   onRestart,
@@ -179,6 +191,16 @@ export function TerminalPane({
   const composeInputId = `${pane.id}-terminal-compose-input`;
   const secureInputId = `${pane.id}-terminal-secure-input`;
   const [runtimeStatus, setRuntimeStatus] = useState<PaneStatus>(pane.status);
+  // An agent's Pane gets a new runtime after the last one ended: moving between its runner and
+  // its TUI (AP-D011, AP-D039), or started again. Attach to it without a reload. Other Panes keep
+  // their own runtime; a reconnect restores it without this.
+  const [seenPane, setSeenPane] = useState({ status: pane.status, updatedAt: pane.updatedAt });
+  if (seenPane.status !== pane.status || seenPane.updatedAt !== pane.updatedAt) {
+    setSeenPane({ status: pane.status, updatedAt: pane.updatedAt });
+    if (followRuntime && pane.status === "running" && runtimeStatus === "exited") {
+      setRuntimeStatus("running");
+    }
+  }
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
   const [restorePhase, setRestorePhase] = useState<RestorePhase>("waiting");
   const [terminalInstanceId, setTerminalInstanceId] = useState(0);
@@ -1657,6 +1679,7 @@ export function TerminalPane({
   const canResumeClaude = pane.kind === "claude" && (pane.claudeSessionId ?? null) !== null;
   const canStartNewSession = canResumeCodex || canResumeClaude;
 
+  const covered = cover !== null && cover !== undefined && cover !== false;
   const previousRuntimeStatusRef = useRef(runtimeStatus);
   useEffect(() => {
     const previous = previousRuntimeStatusRef.current;
@@ -1682,6 +1705,7 @@ export function TerminalPane({
       data-terminal-instance-id={terminalInstanceId || ""}
       data-scroll-bottom-offset={scrollBottomOffset}
       data-control-role={controlsPane ? "controller" : "observer"}
+      data-covered={covered ? "true" : undefined}
       onPointerDown={onActivate}
       onFocusCapture={onFocus ?? onActivate}
       onBlurCapture={() => requestAnimationFrame(() => promoteRestoreRef.current())}
@@ -1709,34 +1733,40 @@ export function TerminalPane({
           </span>
           <div>
             <strong>{pane.title}</strong>
-            <span>{runtimeLabel(pane, runtimeId)}</span>
+            {!covered && <span>{runtimeLabel(pane, runtimeId)}</span>}
           </div>
         </div>
         <div className="pane-actions">
-          <span
-            className={`status-pill status-${runtimeStatus}`}
-            role="status"
-            aria-live="polite"
-            aria-label={`${pane.title} 상태: ${statusLabel(runtimeStatus)}`}
-          >
-            <span aria-hidden="true" />
-            {statusLabel(runtimeStatus)}
-          </span>
-          {!controlsPane && runtimeStatus === "running" && (
+          {/* Under a cover the terminal's own state is not what the person looks at. */}
+          {!covered && (
+            <span
+              className={`status-pill status-${runtimeStatus}`}
+              role="status"
+              aria-live="polite"
+              aria-label={`${pane.title} 상태: ${statusLabel(runtimeStatus)}`}
+            >
+              <span aria-hidden="true" />
+              {statusLabel(runtimeStatus)}
+            </span>
+          )}
+          {!covered && !controlsPane && runtimeStatus === "running" && (
             <span className="terminal-control-state" role="status" aria-live="polite">
               {connectionStatus.surfaceRole === "observer" ? "보기 전용" : "외부 제어 중"}
             </span>
           )}
-          {mutationAllowed && paneControl?.role === "observer" && runtimeStatus === "running" && (
-            <button
-              className="secondary-button compact pane-control-preempt"
-              type="button"
-              onClick={() => connection?.preemptPaneControl(pane.id)}
-            >
-              Pane 제어권 가져오기
-            </button>
-          )}
-          {secureInputAvailable && (
+          {!covered &&
+            mutationAllowed &&
+            paneControl?.role === "observer" &&
+            runtimeStatus === "running" && (
+              <button
+                className="secondary-button compact pane-control-preempt"
+                type="button"
+                onClick={() => connection?.preemptPaneControl(pane.id)}
+              >
+                Pane 제어권 가져오기
+              </button>
+            )}
+          {secureInputAvailable && !covered && (
             <button
               className={
                 secureOpen
@@ -1753,15 +1783,17 @@ export function TerminalPane({
             </button>
           )}
           {toolbarExtras}
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => void restart()}
-            disabled={!mutationAllowed || busy || runtimeStatus === "running"}
-            aria-label={`${pane.title} 재시작`}
-          >
-            ↻
-          </button>
+          {!covered && (
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => void restart()}
+              disabled={!mutationAllowed || busy || runtimeStatus === "running"}
+              aria-label={`${pane.title} 재시작`}
+            >
+              ↻
+            </button>
+          )}
           <button
             className="icon-button danger-hover"
             type="button"
@@ -1783,13 +1815,19 @@ export function TerminalPane({
         Alt와 특수키 도구 및 한글 보조 입력을 사용할 수 있습니다. 출력을 길게 누르거나 선택 도구로
         범위를 지정한 뒤 복사하거나 클립보드 내용을 붙여넣을 수 있습니다.
       </p>
-      <div
-        className={`terminal-host ${controlsPane ? "is-controller" : "is-observer"}`}
-        ref={hostRef}
-        tabIndex={controlsPane ? undefined : 0}
-        role={controlsPane ? undefined : "region"}
-        aria-label={controlsPane ? undefined : `${pane.title} 보기 전용 터미널 출력`}
-      />
+      <div className="pane-body">
+        <div
+          className={`terminal-host ${controlsPane ? "is-controller" : "is-observer"}`}
+          ref={hostRef}
+          tabIndex={controlsPane ? undefined : 0}
+          role={controlsPane ? undefined : "region"}
+          aria-label={controlsPane ? undefined : `${pane.title} 보기 전용 터미널 출력`}
+          // Under a cover nothing typed may reach the terminal unseen.
+          inert={covered}
+          aria-hidden={covered ? true : undefined}
+        />
+        {covered && <div className="pane-cover">{cover}</div>}
+      </div>
       {touchSelectionActive && (
         <div
           className="terminal-selection-action-menu"
@@ -2005,7 +2043,7 @@ export function TerminalPane({
           한글 입력
         </button>
       </div>
-      {runtimeStatus !== "running" && (
+      {runtimeStatus !== "running" && !covered && (
         <div className="terminal-overlay" role="status" aria-live="polite">
           <div className="overlay-icon" aria-hidden="true">
             ■

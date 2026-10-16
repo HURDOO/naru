@@ -1,33 +1,18 @@
-import type { AgentEvent, AgentSession } from "@naru/contracts/naru-agent/v1";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentAppContext, type AgentAppContextValue } from "./agent-context";
-import { mergeEvents } from "./agent-events";
-import {
-  type AgentIdentity,
-  agentIdentity,
-  boardAgents,
-  namedAgents,
-  EVENT_FIRST_PAGE,
-  type InboxItem,
-  inboxItems,
-  presenceOf,
-  waitingAgentIds,
-} from "./agent-model";
+import { useAgentData } from "./agent-data";
+import type { InboxItem } from "./agent-model";
 import { AgentChat } from "./AgentChat";
 import { DecisionSheet } from "./AgentInbox";
 import { Icon, type IconName } from "./agent-ui";
 import { PHONE, useMedia } from "./agent-dom";
-import { ApiFailure, type AgentBoard, type AgentJob, type AgentWorking, type NaruApi } from "./api";
+import type { AgentJob, NaruApi } from "./api";
 import { ControlRoom } from "./ControlRoom";
 import { FlowView } from "./FlowView";
 import { JobSheet } from "./JobSheets";
 import "./agent-app.css";
 
 type Screen = "control" | "chat" | "flow";
-
-const BOARD_POLL_MS = 3_000;
-const EVENT_PAGE = 500;
-const EVENT_WINDOW = 3_000;
 
 const SCREENS: readonly { readonly id: Screen; readonly label: string; readonly icon: IconName }[] =
   [
@@ -79,17 +64,19 @@ export function AgentApp({
   navigation,
 }: AgentAppProps): React.JSX.Element {
   const phone = useMedia(PHONE);
-  const [board, setBoard] = useState<AgentBoard | null>(null);
-  const [jobs, setJobs] = useState<readonly AgentJob[]>([]);
+  const data = useAgentData({
+    api,
+    projects,
+    currentProjectId,
+    mutationAllowed,
+    ...(onWaitingChange === undefined ? {} : { onWaitingChange }),
+  });
+  const { board, error, status, context } = data;
   // The job as it was when its sheet opened: completing it takes it out of the inbox (AP-D036).
   const [jobSheet, setJobSheet] = useState<{
     readonly job: AgentJob;
     readonly action: "complete" | "reopen";
   } | null>(null);
-  const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [now, setNow] = useState(() => Date.now());
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState("");
   const [ownScreen, setScreen] = useState<Screen>(
     initialAgentPaneId === null ? (view ?? "control") : "chat",
   );
@@ -110,178 +97,43 @@ export function AgentApp({
   const [decisionKey, setDecisionKey] = useState<string | null>(
     initialHandoffId === null ? null : `handoff:${initialHandoffId}`,
   );
-  const eventsLoaded = useRef(false);
-  const lastSeq = useRef(0);
 
-  const loadEvents = useCallback(async () => {
-    if (!eventsLoaded.current) {
-      const first = await api.agentEvents(null, 0, { limit: EVENT_FIRST_PAGE, latest: true });
-      eventsLoaded.current = true;
-      lastSeq.current = first.at(-1)?.seq ?? 0;
-      setEvents(first);
-      return;
-    }
-    for (;;) {
-      const page = await api.agentEvents(null, lastSeq.current, { limit: EVENT_PAGE });
-      if (page.length === 0) return;
-      lastSeq.current = page.at(-1)!.seq;
-      setEvents((current) => mergeEvents(current, page, EVENT_WINDOW));
-      if (page.length < EVENT_PAGE) return;
-    }
-  }, [api]);
-
-  const refresh = useCallback(async () => {
-    try {
-      const [next, nextJobs] = await Promise.all([
-        api.agentBoard(),
-        // A server without jobs (before AP-D034) still shows the rest.
-        api.agentJobs().catch(() => null),
-        loadEvents(),
-      ]);
-      setBoard(next);
-      if (nextJobs !== null) setJobs(nextJobs);
-      setNow(Date.now());
-      setError(null);
-    } catch (failure) {
-      setError(messageOf(failure));
-    }
-  }, [api, loadEvents]);
-
-  useEffect(() => {
-    const first = window.setTimeout(() => void refresh(), 0);
-    const timer = window.setInterval(() => void refresh(), BOARD_POLL_MS);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(timer);
-    };
-  }, [refresh]);
-
-  const agents = useMemo(() => (board === null ? [] : boardAgents(board)), [board]);
-  const inbox = useMemo(() => (board === null ? [] : inboxItems(board, jobs)), [board, jobs]);
-  const waiting = useMemo(() => waitingAgentIds(inbox), [inbox]);
-  const working = useMemo(() => {
-    const map = new Map<string, AgentWorking>();
-    for (const entry of [
-      ...(board?.projects.flatMap((project) => project.working ?? []) ?? []),
-      ...(board?.globalWorking ?? []),
-    ]) {
-      map.set(entry.agentSessionId, entry);
-    }
-    return map;
-  }, [board]);
-
-  useEffect(() => {
-    if (board !== null) onWaitingChange?.(inbox.length);
-  }, [board, inbox.length, onWaitingChange]);
-
-  const projectName = useCallback(
-    (projectId: string | null) =>
-      projectId === null
-        ? "전체"
-        : (projects.find((project) => project.id === projectId)?.name ?? "알 수 없는 프로젝트"),
-    [projects],
+  const value = useMemo<AgentAppContextValue | null>(
+    () =>
+      context({
+        openChat: (agentSessionId) => {
+          setChatAgentId(agentSessionId);
+          setScreen("chat");
+          setDecisionKey(null);
+        },
+        openFlow: (projectId, taskId = null) => {
+          setFlow({ projectId, taskId });
+          setScreen("flow");
+          onViewChange?.("flow");
+          setDecisionKey(null);
+        },
+        openDecision: (item: InboxItem) => {
+          if (item.kind === "job") setJobSheet({ job: item.job, action: "complete" });
+          else setDecisionKey(item.key);
+        },
+        openJob: (job, action) => setJobSheet({ job, action }),
+        openPane: onOpenPane,
+      }),
+    [context, onOpenPane, onViewChange],
   );
-  // Cleaned-up agents (AP-D033) still name what they did, and keep everyone's numbers stable.
-  const named = useMemo(() => (board === null ? [] : namedAgents(board)), [board]);
-  const identities = useMemo(() => {
-    const map = new Map<string, AgentIdentity>();
-    for (const agent of named) {
-      const identity = agentIdentity(agent, named, projectName);
-      // A name the person gave the agent's Pane shows here too (AP-D029).
-      const custom = agent.paneId === null ? undefined : board?.paneNames?.[agent.paneId];
-      map.set(agent.id, custom === undefined ? identity : { ...identity, name: custom });
-    }
-    return map;
-  }, [board, named, projectName]);
+  const inbox = value?.inbox ?? [];
 
   // An alert names the agent's Pane: open its chat once the board that binds it has loaded.
   const pendingPane = useRef(initialAgentPaneId);
   useEffect(() => {
-    if (pendingPane.current === null || board === null) return;
-    const agent = agents.find((candidate) => candidate.paneId === pendingPane.current);
+    if (pendingPane.current === null || value === null) return;
+    const agent = value.agents.find((candidate) => candidate.paneId === pendingPane.current);
     pendingPane.current = null;
     if (agent !== undefined) {
       setChatAgentId(agent.id);
       setScreen("chat");
     }
-  }, [agents, board]);
-
-  const act = useCallback(
-    async (label: string, action: () => Promise<unknown>): Promise<boolean> => {
-      try {
-        await action();
-        setStatus(label);
-        await refresh();
-        return true;
-      } catch (failure) {
-        setStatus(messageOf(failure));
-        setError(messageOf(failure));
-        return false;
-      }
-    },
-    [refresh],
-  );
-
-  const value = useMemo<AgentAppContextValue | null>(() => {
-    if (board === null) return null;
-    const agentById = (agentSessionId: string | null) =>
-      agentSessionId === null ? undefined : named.find((agent) => agent.id === agentSessionId);
-    return {
-      api,
-      board,
-      events,
-      now,
-      mutationAllowed,
-      projects,
-      currentProjectId,
-      agents,
-      inbox,
-      jobs,
-      working,
-      identity: (agent: AgentSession) =>
-        identities.get(agent.id) ?? agentIdentity(agent, named, projectName),
-      agentById,
-      projectName,
-      presence: (agent: AgentSession) => presenceOf(agent, waiting.has(agent.id)),
-      act,
-      openChat: (agentSessionId) => {
-        setChatAgentId(agentSessionId);
-        setScreen("chat");
-        setDecisionKey(null);
-      },
-      openFlow: (projectId, taskId = null) => {
-        setFlow({ projectId, taskId });
-        setScreen("flow");
-        onViewChange?.("flow");
-        setDecisionKey(null);
-      },
-      openDecision: (item: InboxItem) => {
-        if (item.kind === "job") setJobSheet({ job: item.job, action: "complete" });
-        else setDecisionKey(item.key);
-      },
-      openJob: (job, action) => setJobSheet({ job, action }),
-      openPane: onOpenPane,
-    };
-  }, [
-    act,
-    agents,
-    api,
-    board,
-    currentProjectId,
-    events,
-    identities,
-    inbox,
-    jobs,
-    mutationAllowed,
-    named,
-    now,
-    onOpenPane,
-    onViewChange,
-    projectName,
-    projects,
-    waiting,
-    working,
-  ]);
+  }, [value]);
 
   const decision = inbox.find(
     (item): item is Extract<InboxItem, { kind: "handoff" | "contract" }> =>
@@ -334,7 +186,7 @@ export function AgentApp({
               className="ag-icon-button"
               type="button"
               aria-label="알림 닫기"
-              onClick={() => setError(null)}
+              onClick={data.dismissError}
             >
               <Icon name="x" size={16} />
             </button>
@@ -392,8 +244,4 @@ export function AgentApp({
       </div>
     </section>
   );
-}
-
-function messageOf(failure: unknown): string {
-  return failure instanceof ApiFailure ? failure.message : "요청을 처리하지 못했습니다.";
 }

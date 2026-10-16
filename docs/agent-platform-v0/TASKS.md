@@ -445,8 +445,8 @@
     §6.6.2. agent API가 있는 server에서만 켠다.
   - 검증: [validation/web-ui.md](validation/web-ui.md)의 AP-T22 1단계. lint, typecheck, vitest 전체 통과.
   - 남음:
-    - 2단계: 대화를 에이전트 Pane으로, 맡긴 일 작업공간, 새 프로젝트를 기본 작업공간대로 만들어 실행
-      (AP-D032).
+    - 2단계: 맡긴 일 작업공간, 새 프로젝트를 기본 작업공간대로 만들어 실행(AP-D032). 대화를 에이전트 Pane으로
+      옮기는 것은 AP-D039로 했다(2026-10-17, 테스트 앱 반영 전, 검증은 validation/web-ui.md의 AP-D039).
     - 내 Pane에 대한 쓰기 요청과 허락(AP-D030): 새 MCP 경로가 필요하다.
     - 편집의 배치 틀 고르기.
   - 꺼진 에이전트 정리(AP-D033, 2026-10-16): 관제실 "꺼진 에이전트 정리", DB v22 `retired_at`. 완료 때 정리와

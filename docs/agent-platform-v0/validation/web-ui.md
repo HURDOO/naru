@@ -299,7 +299,34 @@
 | 둘째는 이름으로 온 지시에 깨고, `get_delegated_work`에는 이름으로 온 것만 있음                       | `agent-platform-wakeups.test.ts`                        | **PASS**  |
 | sandbox: 사람이 둘째를 만들어도 카드는 "sample 오케스트레이터 1"(계획 소유자)                        | sandbox(`.local/ap-t22/routing.mjs`) 1440 화면          | **PASS**  |
 | sandbox: 둘째가 있는 동안 맡긴 새 일은 첫째가 계획하고, 둘째의 대화에는 자기 등록 깨우기 하나만 있음 | stand-in 대화 기록(이벤트 번호만 셈)                    | **PASS**  |
-| lint, typecheck, format, vitest 전체                                                                 | 명령 결과                                               | 아래 참고 |
+| lint, typecheck, format, vitest 전체(1053)                                                           | 명령 결과                                               | 아래 참고 |
 
 - vitest 전체: 1051개 중 1050개 통과. `ops/workstation/distribution/independent-runtimes.test.ts`의 한 테스트가
   전체 실행 때 5초 제한을 넘었다. 이 변경과 관계없는 배포 도구 테스트이고, 그 파일만 다시 실행하면 11개 모두 통과한다.
+
+# AP-D039 검증: 에이전트 Pane의 대화와 TUI 전환
+
+sandbox(stand-in Claude SDK와 stand-in Claude TUI)에서 `.local/ap-t22/agent-pane.mjs`, `agent-pane-live.mjs`로
+확인했다.
+
+| 항목                                                                                                                        | 근거                       | 상태      |
+| --------------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------- |
+| 작업자 Pane이 콘솔이 아닌 대화(말풍선, 접힌 도구 줄, 질문 카드, 입력창)로 열리고 "대화"가 눌려 있음                         | 1440 화면                  | **PASS**  |
+| 대화 아래의 터미널은 `inert`라 focus와 입력을 받지 않음                                                                     | DOM 확인                   | **PASS**  |
+| "TUI"를 누르면 같은 Pane에서 Claude TUI로 이어받고(runner 멈춤 → resume) TUI가 보임                                         | 1440 화면, 터미널 출력     | **PASS**  |
+| 일하는 중이면 "멈추고 TUI로"를 먼저 묻고, 취소하면 대화에 남고, 고르면 차례를 멈추고 TUI로 감                               | 1440 화면                  | **PASS**  |
+| "대화"로 돌아오면 "내가 직접 대화 중"으로 이어 가고, 보낸 말이 말풍선으로 보임                                              | 1440 화면                  | **PASS**  |
+| 에이전트 메뉴의 "실행 콘솔 보기"로 콘솔을 보고, "대화"로 돌아옴                                                             | 1440 화면                  | **PASS**  |
+| Tab으로 "대화"에서 "TUI"로 가고 focus 테두리가 보임                                                                         | 키보드                     | **PASS**  |
+| "놓기"로 오케스트레이터에게 돌려주면 입력창이 "보내면 이어받습니다"로 바뀜                                                  | 1440 화면                  | **PASS**  |
+| 다른 Pane과 함께 있는 작업공간에서도 에이전트 Pane만 대화로 보이고 터미널 표시는 숨김                                       | 1440 분할 화면             | **PASS**  |
+| 768 분할(Pane 약 165px)과 360·360×520에서 대화와 머리줄이 넘치지 않음                                                       | 768, 360 화면              | **PASS**  |
+| `paneView` 규칙(Claude는 runner·TUI, Codex는 고른 것, 콘솔은 runner에서만)                                                  | `agent-pane-views.test.ts` | **PASS**  |
+| lint, typecheck, format, vitest 전체                                                                                        | 명령 결과                  | **PASS**  |
+| e2e 전체: 27 통과, 2 실패(같은 runtime 다시 연결, 터치 복사). 바꾸기 전 커밋도 전체 실행에서 같은 둘(과 하나 더)이 실패한다 | `pnpm test:e2e`            | 기존 실패 |
+
+- 처음 실행에서 TUI로 바꾼 뒤 끝난 runner의 "중지되었습니다" 화면이 남는 것을 찾아 고쳤다(새 runtime에 다시 붙기).
+- 다시 붙기를 모든 터미널 Pane에 두었더니 e2e "같은 runtime 다시 연결"이 단독 실행에서도 실패했다. 연결이 끊길 때
+  잠깐 끝난 것으로 보이는 순간에 다시 붙어서였다. 다시 붙기는 Naru가 새 runtime을 띄우는 에이전트 Pane에만 두었고,
+  그 뒤 단독 실행은 통과한다.
+- 확인하지 못한 것: 실제 Claude Code TUI로의 전환은 테스트 앱에서 본다.

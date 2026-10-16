@@ -311,8 +311,8 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
 - 위쪽 메뉴(`MainNav`): `관제실 | 작업공간 | 흐름`, 관제실의 숫자 배지와 "나를 기다림 N". 처음 여는 화면은
   관제실이다. 900px 이하에서는 위쪽 막대 아래 줄로 내려간다. 휴대폰에서도 세 항목이 늘 보인다.
   - `AgentApp`은 메뉴가 고른 화면(관제실, 흐름)을 받고 왼쪽 rail을 그리지 않는다.
-  - 1단계에서 대화는 관제실 위에 열리는 화면으로 남는다. 메뉴를 누르면 닫힌다. 2단계에서 에이전트 Pane으로
-    옮긴다(AP-D028).
+  - 대화는 관제실 위에 열리는 화면으로도 남는다. 메뉴를 누르면 닫힌다. 작업공간의 에이전트 Pane은 AP-D039로
+    대화를 보인다(아래).
 - 작업공간 화면(`WorkspaceScreen`, lazy):
   - 세로 목록: project 이름(누르면 프로젝트 메뉴), 작업공간들(배치 그림, Pane 수), 작업공간 추가, 구분선,
     개별 Pane(이름, `나`/`에이전트`와 상태, 쓰는 사람 표시, ⋯ 메뉴).
@@ -329,6 +329,18 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   - 에이전트 Pane: 이름과 `끼어들기`. 끼어들기는 TUI surface의 hold이고, 답하는 중이면 그 차례를 멈춘다.
   - 끼어든 Pane: `나 · 끼어든 중`과 `놓기`. 기존 hold API(`/api/agent/agents/:id/hold`,
     `/api/agent/processes/:id/hold`)를 쓴다.
+- 에이전트 Pane의 대화(AP-D039):
+  - `agent-data.ts`의 `useAgentData`가 board, 맡긴 일, 이벤트를 3초마다 읽고 `AgentAppContextValue`를 만든다.
+    `AgentApp`과 작업공간의 `WorkspaceAgents`(`AgentPane.tsx`)가 각자 화면 이동만 달리해 같은 값을 준다. 작업공간에서
+    다른 에이전트의 대화를 열면 그 Pane으로, 흐름은 위쪽 메뉴로 간다. 질문과 맡긴 일 창은 `WorkspaceAgents`가 띄운다.
+  - `TerminalPane`의 `cover`: 터미널 위에 덮는 내용이다. 터미널은 `.pane-body` 안에서 계속 실행되고 크기를
+    유지하며 `inert`가 된다. `WorkspaceLayout`의 `paneCover`가 Pane마다 덮을지를 정한다.
+  - `agent-pane-views.ts`의 `paneView`: Claude는 `launchMode`(runner면 대화, TUI면 TUI), 그 밖에는 사람이 고른
+    것. 콘솔은 사람이 고른 것이다. 전환 중에는 "이어받는 중" 화면을 덮는다.
+  - 머리줄 "대화 | TUI"는 기존 hold API를 부른다. TUI는 surface `tui`(차례 중이면 묻고 `interrupt`), TUI에서
+    대화는 surface `chat`이다. 서버의 writer 전환(AP-D011 stop 후 resume)이 끝난 뒤 응답한다.
+  - `TerminalPane`의 `followRuntime`(에이전트 Pane만): Pane의 `status`·`updatedAt`이 바뀌어 다시 실행 중이 되면 끝난
+    runtime에서 새 runtime으로 다시 붙는다. 다른 Pane은 다시 연결 때 원래 runtime을 복원하므로 이것을 쓰지 않는다.
 - 새로 고침: 작업공간 화면은 5초마다(창이 보일 때, focus를 받을 때) 작업공간과 agent board를 다시 읽는다.
   이 기기에서 저장하지 않은 변경이 있으면 건너뛴다.
 - 꺼진 에이전트 정리(AP-D033): 관제실 에이전트 목록의 "꺼진 에이전트 정리 N"이

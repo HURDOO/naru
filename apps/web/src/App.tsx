@@ -680,6 +680,16 @@ export default function App(): React.JSX.Element {
       setMainView,
     ],
   );
+  // Agents' Panes in the workspace show their conversation (AP-D028).
+  const agentPanes = useMemo(
+    () => ({
+      projects,
+      onOpenPane: (paneId: string, projectId: string | null) =>
+        void openAgentPane(paneId, projectId),
+      onNavigate: navigate,
+    }),
+    [navigate, openAgentPane, projects],
+  );
 
   useEffect(() => {
     if (!connection) return;
@@ -1565,6 +1575,7 @@ export default function App(): React.JSX.Element {
                       onStartNewSession={startNewSession}
                       onAgentExited={() => void loadWorkspace(selectedProjectId)}
                       onPaneViewStateChanged={updatePane}
+                      agentPanes={agentPanes}
                     />
                   </Suspense>
                 )}

@@ -3669,3 +3669,156 @@ button.ag-tool-call:hover {
   margin-left: auto;
   font-size: 12px;
 }
+
+/* An agent's conversation in its workspace Pane (AP-D028) --------------------------------------- */
+
+.ag-app.ag-pane-host {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--bg);
+  container-type: inline-size;
+}
+
+.ag-pane-conversation {
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.ag-pane-conversation .ag-thread {
+  gap: 18px;
+  padding: 18px 16px 12px;
+}
+
+.ag-pane-conversation .ag-composer-note {
+  margin: 10px 12px 12px;
+}
+
+.ag-pane-conversation .ag-composer {
+  padding: 10px 14px 14px;
+}
+
+.ag-pane-convo-bar {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ag-pane-convo-task {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-pane-convo-bar .ag-pill {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-pane-convo-bar .ag-icon-button,
+.ag-pane-convo-bar .ag-menu-wrap {
+  flex: 0 0 auto;
+}
+
+/* A narrow Pane keeps the state and the buttons; the task is in the context panel. */
+@container (max-width: 260px) {
+  .ag-pane-convo-task {
+    display: none;
+  }
+
+  .ag-pane-convo-bar {
+    justify-content: space-between;
+    padding: 0 4px 0 8px;
+  }
+
+  .ag-pane-conversation .ag-thread {
+    padding: 14px 10px 10px;
+  }
+
+  .ag-pane-conversation .ag-composer {
+    padding: 8px 8px 10px;
+  }
+}
+
+.ag-pane-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+
+.ag-pane-confirm p {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.ag-pane-confirm span {
+  display: flex;
+  gap: 8px;
+}
+
+.ag-pane-switching {
+  display: flex;
+  margin: auto;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.ag-pane-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ag-pane-spin 0.9s linear infinite;
+}
+
+@keyframes ag-pane-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ag-pane-spinner {
+    animation: none;
+  }
+}
+
+.ag-app.ag-pane-overlays {
+  display: contents;
+}
+
+.ag-pane-error {
+  position: fixed;
+  z-index: 40;
+  right: 16px;
+  bottom: 16px;
+  max-width: min(420px, calc(100vw - 32px));
+  margin: 0;
+  box-shadow: 0 12px 36px #0006;
+}
