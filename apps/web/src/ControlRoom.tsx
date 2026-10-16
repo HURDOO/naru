@@ -6,6 +6,7 @@ import {
   ago,
   clock,
   EVENT_FIRST_PAGE,
+  isLive,
   PRESENCE_ORDER,
   presenceLabel,
   startOfDay,
@@ -122,7 +123,7 @@ function Ask({ onSent }: { readonly onSent?: () => void }): React.JSX.Element {
                 hostProjectId: app.currentProjectId,
                 runtime,
               });
-            } else if (target.status === "stopped" || target.status === "failed") {
+            } else if (!isLive(target)) {
               await app.api.launchAgent(target.id);
             }
             await app.api.createInstruction({ kind: "global" }, goal);
@@ -230,9 +231,7 @@ function Stats(): React.JSX.Element {
   const app = useAgentApp();
   const tasks = app.board.projects.flatMap((project) => project.tasks);
   const progress = taskProgress(tasks);
-  const live = app.agents.filter(
-    (agent) => agent.status === "starting" || agent.status === "active" || agent.status === "idle",
-  );
+  const live = app.agents.filter((agent) => isLive(agent));
   const working = app.agents.filter((agent) => app.presence(agent) === "working");
   const approvals = app.inbox.filter((item) => item.kind === "approval").length;
   const checks = app.inbox.filter(
@@ -450,9 +449,7 @@ function CompactLane({ project }: { readonly project: AgentBoardProject }): Reac
   const app = useAgentApp();
   const progress = taskProgress(project.tasks);
   const name = app.projectName(project.projectId);
-  const live = project.agents.filter(
-    (agent) => agent.status === "starting" || agent.status === "active" || agent.status === "idle",
-  );
+  const live = project.agents.filter((agent) => isLive(agent));
   const states = project.tasks.map((task) => ({
     task,
     state: taskState(task, taskWaitingFor(task, project, app.board.openHandoffs)),

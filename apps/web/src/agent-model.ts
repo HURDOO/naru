@@ -88,6 +88,11 @@ export const PRESENCE_ORDER: readonly Presence[] = [
   "failed",
 ];
 
+/** The agent's runtime is up: a stopped, failed or unknown one must be launched again first. */
+export function isLive(agent: AgentSession): boolean {
+  return agent.status === "starting" || agent.status === "active" || agent.status === "idle";
+}
+
 export function presenceOf(agent: AgentSession, waiting: boolean): Presence {
   if (agent.status === "failed" || agent.status === "unknown") return "failed";
   if (agent.status === "stopped") return "stopped";

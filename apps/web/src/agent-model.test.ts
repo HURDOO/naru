@@ -5,6 +5,7 @@ import {
   agentIdentity,
   ago,
   inboxItems,
+  isLive,
   layoutGraph,
   presenceOf,
   taskState,
@@ -250,6 +251,15 @@ describe("agent view model", () => {
     expect(heldRow.segments).toEqual([
       { start: Date.parse("2026-10-16T01:50:00.000Z"), end, kind: "mine", label: "내가 직접" },
     ]);
+  });
+
+  it("treats only a running runtime as live", () => {
+    expect(
+      ["starting", "active", "idle"].map((status) => isLive(agent(1, { status } as never))),
+    ).toEqual([true, true, true]);
+    expect(
+      ["stopped", "failed", "unknown"].map((status) => isLive(agent(1, { status } as never))),
+    ).toEqual([false, false, false]);
   });
 
   it("says how long ago in a compact form", () => {

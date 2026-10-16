@@ -32,6 +32,7 @@ import {
 } from "./agent-labels";
 import {
   clock,
+  isLive,
   PRESENCE_ORDER,
   type Presence,
   presenceLabel,
@@ -248,10 +249,13 @@ function useAgentConversation(agent: AgentSession): {
   readonly issue: string | null;
   readonly truncated: boolean;
   readonly turnStartedAt: number | null;
+  /** The runtime is down: nothing to read until it is launched again. */
+  readonly paused: boolean;
   readonly reload: () => void;
 } {
   const { api } = useAgentApp();
   const managed = agent.paneId !== null;
+  const paused = managed && !isLive(agent);
   const [runtime, setRuntime] = useState<AgentRuntimeState | null>(null);
   const [pages, setPages] = useState<HistoryPages | null>(null);
   const [instructions, setInstructions] = useState<AgentInstructions>({
@@ -303,6 +307,8 @@ function useAgentConversation(agent: AgentSession): {
   }, [api, agent.id]);
 
   useEffect(() => {
+    // A stopped runtime cannot answer; reading resumes when the agent runs again.
+    if (paused) return;
     let stopped = false;
     let historyTimer: number | null = null;
     const scheduleHistory = () => {
@@ -343,7 +349,7 @@ function useAgentConversation(agent: AgentSession): {
       window.clearInterval(timer);
       if (historyTimer !== null) window.clearTimeout(historyTimer);
     };
-  }, [api, agent.id, managed, loadHistory]);
+  }, [api, agent.id, managed, paused, loadHistory]);
 
   const blocks = useMemo(
     () => (pages === null ? null : conversationBlocks(pages.items.flat(), instructions)),
@@ -355,6 +361,7 @@ function useAgentConversation(agent: AgentSession): {
     issue,
     truncated,
     turnStartedAt: runtime?.turnActive === true ? turnStartedAt : null,
+    paused,
     reload: () => void loadHistory(),
   };
 }
@@ -370,7 +377,8 @@ function Conversation({
   const phone = useMedia(PHONE);
   const wide = useMedia("(min-width: 1180px)");
   const [contextOpen, setContextOpen] = useState(false);
-  const { runtime, blocks, issue, truncated, turnStartedAt, reload } = useAgentConversation(agent);
+  const { runtime, blocks, issue, truncated, turnStartedAt, paused, reload } =
+    useAgentConversation(agent);
   const identity = app.identity(agent);
   const presence = app.presence(agent);
   const task = currentTask(
@@ -430,7 +438,7 @@ function Conversation({
           )}
           <AgentMenu agent={agent} runtime={runtime} />
         </header>
-        {issue !== null && (
+        {issue !== null && !paused && (
           <p className="ag-issue" role="status">
             {issue}{" "}
             <button className="ag-link" type="button" onClick={reload}>
@@ -444,6 +452,7 @@ function Conversation({
           runtime={runtime}
           truncated={truncated}
           turnStartedAt={turnStartedAt}
+          paused={paused}
         />
         <Composer agent={agent} runtime={runtime} onSent={reload} />
       </section>
@@ -484,7 +493,7 @@ function AgentMenu({
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement | null>(null);
   const managed = agent.paneId !== null;
-  const live = agent.status === "starting" || agent.status === "active" || agent.status === "idle";
+  const live = isLive(agent);
   const held = agent.humanHoldSince !== null;
   useEffect(() => {
     if (!open) return;
@@ -590,12 +599,14 @@ function Thread({
   runtime,
   truncated,
   turnStartedAt,
+  paused,
 }: {
   readonly agent: AgentSession;
   readonly blocks: ConversationBlock[] | null;
   readonly runtime: AgentRuntimeState | null;
   readonly truncated: boolean;
   readonly turnStartedAt: number | null;
+  readonly paused: boolean;
 }): React.JSX.Element {
   const app = useAgentApp();
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -643,7 +654,11 @@ function Thread({
       <ol className="ag-thread" aria-label="대화" aria-busy={blocks === null}>
         {truncated && <li className="ag-notice-line">오래된 대화는 일부만 불러왔습니다.</li>}
         {blocks === null ? (
-          <li className="ag-notice-line">대화를 불러오는 중…</li>
+          <li className="ag-notice-line">
+            {paused
+              ? "에이전트가 멈춰 있어 대화를 불러올 수 없습니다. 아래에서 다시 실행하면 이어집니다."
+              : "대화를 불러오는 중…"}
+          </li>
         ) : groups.length === 0 && !working ? (
           <li className="ag-notice-line">
             {agent.status === "starting"
@@ -1008,7 +1023,7 @@ function Composer({
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLTextAreaElement | null>(null);
   const managed = agent.paneId !== null;
-  const live = agent.status === "starting" || agent.status === "active" || agent.status === "idle";
+  const live = isLive(agent);
   const writer = runtime?.writer ?? null;
   const mine = writer === "gui";
   const working = runtime?.turnActive === true;

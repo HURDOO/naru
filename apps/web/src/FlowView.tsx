@@ -9,7 +9,15 @@ import {
   runStatusLabel,
   taskStatusLabel,
 } from "./agent-labels";
-import { ago, clock, type Tone, taskProgress, taskState, taskWaitingFor } from "./agent-model";
+import {
+  ago,
+  clock,
+  isLive,
+  type Tone,
+  taskProgress,
+  taskState,
+  taskWaitingFor,
+} from "./agent-model";
 import { Steps } from "./AgentChat";
 import { ContractBody, EmptyNote, InboxCard } from "./AgentInbox";
 import { Avatar, ChatMarkdown, Icon, Pill, Sheet } from "./agent-ui";
@@ -623,7 +631,7 @@ function InstructSheet({
                   role: "project-orchestrator",
                   runtime,
                 });
-              } else if (orchestrator.status === "stopped" || orchestrator.status === "failed") {
+              } else if (!isLive(orchestrator)) {
                 await app.api.launchAgent(orchestrator.id);
               }
               await app.api.createInstruction(
