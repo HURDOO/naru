@@ -106,7 +106,7 @@ describe("agent view model", () => {
     ).toBe("메인 오케스트레이터");
   });
 
-  it("tells two orchestrators of one project apart and shows the one working (AP-D037)", () => {
+  it("tells two orchestrators of one project apart and shows the lead (AP-D037, AP-D038)", () => {
     const name = () => "blog";
     const older = agent(1, { role: "project-orchestrator", updatedAt: "2026-10-16T02:00:00.000Z" });
     const newer = agent(2, { role: "project-orchestrator", updatedAt: "2026-10-16T01:30:00.000Z" });
@@ -118,13 +118,11 @@ describe("agent view model", () => {
     expect(agentIdentity(newer, [retired, newer], name).name).toBe("blog 오케스트레이터");
 
     expect(projectOrchestrator({ agents: [older] })?.id).toBe(older.id);
-    // The one working now, else the one active most recently.
-    expect(projectOrchestrator({ agents: [older, newer] })?.id).toBe(older.id);
+    // The one that owns the active plan, else the first; being active more recently does not move it.
+    expect(projectOrchestrator({ agents: [newer, older] })?.id).toBe(older.id);
     expect(
-      projectOrchestrator({
-        agents: [older, newer],
-        working: [{ agentSessionId: newer.id, turnStartedAt: null, activity: null }],
-      })?.id,
+      projectOrchestrator({ agents: [older, newer], activePlan: { ownerAgentSessionId: newer.id } })
+        ?.id,
     ).toBe(newer.id);
   });
 

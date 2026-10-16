@@ -283,13 +283,16 @@ function relevantTo(
     // Workers are their project orchestrator's; project orchestrators are the main one's.
     return orchestrator.role === "main-orchestrator"
       ? roleOf(core, event.subjectId) === "project-orchestrator"
-      : event.projectId === orchestrator.projectId;
+      : event.projectId === orchestrator.projectId && leads(core, orchestrator);
   }
   if (orchestrator.role === "project-orchestrator") {
     // Its own project only: the person's global goals reach it through the main orchestrator.
     if (event.projectId !== orchestrator.projectId) return false;
     // Its own registration is its first turn: it reads the work waiting for it.
     if (event.type === "agent_session.registered") return event.subjectId === orchestrator.id;
+    // A second orchestrator of the project (an older one came back, or the person started one)
+    // hears only what is addressed to it; the project's events go to its lead.
+    if (!leads(core, orchestrator)) return core.eventConcernsAgent(event, orchestrator.id);
     // Instructions to it or its project; words to another agent are that agent's (it reads them).
     if (event.type === "instruction.created")
       return core.eventConcernsAgent(event, orchestrator.id);
@@ -309,6 +312,13 @@ function relevantTo(
     default:
       return false;
   }
+}
+
+/** Whether a project orchestrator is the one its project's events go to (AP-D038). */
+function leads(core: AgentPlatformCore, orchestrator: AgentSession): boolean {
+  if (orchestrator.projectId === null) return true;
+  const lead = core.leadProjectOrchestrator(orchestrator.projectId);
+  return lead === null || lead.id === orchestrator.id;
 }
 
 function roleOf(core: AgentPlatformCore, agentSessionId: string): AgentSession["role"] | null {

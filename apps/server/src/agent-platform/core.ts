@@ -270,10 +270,15 @@ export class AgentPlatformCore {
       throw new AgentPlatformError("AGENT_ROLE_DENIED", "Only an agent has delegated work.");
     }
     const agent = this.#authorize(actor, "state.read", this.#actorProject(actor))!;
-    // A project orchestrator owns its project: work sent to the project is addressed to it too.
+    // A project orchestrator owns its project: work sent to the project is addressed to it too. A
+    // second one (AP-D038) has only what is addressed to it by name; the project's work is its lead's.
+    const leads =
+      agent.role === "project-orchestrator" &&
+      agent.projectId !== null &&
+      this.leadProjectOrchestrator(agent.projectId)?.id === agent.id;
     const instructions = this.#store.listAddressedInstructions(
       agent.id,
-      agent.role === "project-orchestrator" ? agent.projectId : null,
+      leads ? agent.projectId : null,
       50,
     );
     return { instructions, origins: this.#origins(instructions) };
@@ -1538,8 +1543,23 @@ export class AgentPlatformCore {
   }
 
   /**
+   * The orchestrator a project's own events and instructions go to (AP-D038). A project has one; when
+   * an older one came back next to a newer one, or the person started a second, the owner of the
+   * active plan leads (it manages the work), else the first one, so adding one does not take the
+   * work away. The others hear only what is addressed to them by name.
+   */
+  leadProjectOrchestrator(projectId: string): AgentSession | null {
+    // Listed oldest first.
+    const orchestrators = this.#store
+      .listAgentSessions(projectId)
+      .filter((agent) => agent.role === "project-orchestrator");
+    const owner = this.#store.getActivePlan(projectId)?.ownerAgentSessionId ?? null;
+    return orchestrators.find((agent) => agent.id === owner) ?? orchestrators[0] ?? null;
+  }
+
+  /**
    * Who receives an instruction (AP-D034): the agent for agent scope, the task's assignee for task
-   * scope, the project's orchestrators for project scope and main orchestrators for global scope.
+   * scope, the project's lead orchestrator for project scope and main orchestrators for global scope.
    */
   instructionRecipients(actor: Actor, instructionId: string): AgentSession[] {
     if (actor.kind === "agent") {
@@ -1560,10 +1580,10 @@ export class AgentPlatformCore {
         const agent = assignee === null ? null : this.#store.getAgentSession(assignee);
         return agent === null || agent.retiredAt ? [] : [agent];
       }
-      case "project":
-        return this.#store
-          .listAgentSessions(scope.projectId)
-          .filter((agent) => agent.role === "project-orchestrator");
+      case "project": {
+        const lead = this.leadProjectOrchestrator(scope.projectId);
+        return lead === null ? [] : [lead];
+      }
       case "global":
         return this.#store
           .listAgentSessions(null)
@@ -2530,10 +2550,10 @@ export class AgentPlatformCore {
         if (scope?.kind === "agent") return scope.agentSessionId === agentSessionId;
         if (scope?.kind === "task") return assignedTo(scope.taskId);
         // A project's instructions go to its orchestrator, global ones to the main orchestrator.
-        const agent = this.#store.getAgentSession(agentSessionId);
         if (scope?.kind === "project") {
-          return agent?.role === "project-orchestrator" && agent.projectId === scope.projectId;
+          return this.leadProjectOrchestrator(scope.projectId)?.id === agentSessionId;
         }
+        const agent = this.#store.getAgentSession(agentSessionId);
         return scope?.kind === "global" && agent?.role === "main-orchestrator";
       }
       case "task.created":

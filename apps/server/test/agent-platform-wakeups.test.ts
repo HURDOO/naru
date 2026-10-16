@@ -331,6 +331,67 @@ describe("orchestrator wakeups", () => {
     wakeups.close();
   });
 
+  it("sends a project's events to its lead when it has two orchestrators (AP-D038)", async () => {
+    const fixture = setup();
+    // The person started a second orchestrator (or an older one came back): the first one leads,
+    // so adding one does not take the work away.
+    const lead = fixture.orchestrator;
+    const second = fixture.register("project-orchestrator", fixture.projectId);
+    expect(fixture.core.leadProjectOrchestrator(fixture.projectId)?.id).toBe(lead);
+    const wakeups = fixture.wakeups();
+    for (const id of [lead, second]) {
+      wakeups.register(id);
+      await flush();
+      fixture.clock.value += 10_000;
+      wakeups.turnCompleted(id);
+    }
+    await flush();
+    const baseline = fixture.batches.length;
+    const woken = (from: number) => new Set(fixture.batches.slice(from).map((b) => b.orchestrator.id));
+
+    // The person's word to the project and a worker failing: the lead's.
+    const followUp = fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "project follow-up",
+    });
+    expect(
+      fixture.core.instructionRecipients({ kind: "system" }, followUp.id).map((agent) => agent.id),
+    ).toEqual([lead]);
+    fixture.core.updateAgentRuntimeState(
+      { kind: "system" },
+      { agentSessionId: fixture.worker, status: "failed" },
+    );
+    await fixture.drain(wakeups, lead, baseline);
+    expect(woken(baseline)).toEqual(new Set([lead]));
+
+    // What is addressed to the second one by name still reaches it.
+    const before = fixture.batches.length;
+    fixture.core.createHumanInstruction(fixture.ctx(HUMAN), {
+      scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: second },
+      verbatim: "to the second one",
+    });
+    expect(await fixture.drain(wakeups, second, before)).toEqual(["instruction.created"]);
+    expect(woken(before)).toEqual(new Set([second]));
+
+    // Its delegated work is what is addressed to it; the project's work is the lead's.
+    const work = (agentSessionId: string) =>
+      fixture.core
+        .getDelegatedWork({ kind: "agent", agentSessionId })
+        .instructions.map((item) => item.verbatim);
+    expect(work(second)).toEqual(["to the second one"]);
+    expect(work(lead)).toEqual(expect.arrayContaining(["goal", "project follow-up"]));
+    expect(work(lead)).not.toContain("to the second one");
+
+    // The owner of the active plan leads, even when it came later.
+    fixture.core.createPlan(fixture.ctx({ kind: "agent", agentSessionId: second }), {
+      projectId: fixture.projectId,
+      summary: "plan",
+      activate: true,
+    });
+    expect(fixture.core.leadProjectOrchestrator(fixture.projectId)?.id).toBe(second);
+    wakeups.close();
+  });
+
   it("retries the same batch when the runtime does not accept it", async () => {
     const fixture = setup();
     let failures = 1;
@@ -390,6 +451,7 @@ function setup() {
   return {
     core,
     ctx,
+    register,
     projectId: project.id,
     otherProjectId: otherProject.id,
     main,

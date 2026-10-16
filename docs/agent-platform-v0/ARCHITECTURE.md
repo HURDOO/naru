@@ -55,6 +55,10 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
      지시는 자기와 프로젝트에 온 것만 받는다. 메인은 전체·자기 지시, 자기 질문의 답, 자기 hold, 프로젝트
      오케스트레이터의 실패·멈춤·상태 모름만 받는다. 작업자·리뷰어는 Core `eventConcernsAgent`로 자기 일만 받는다.
      store의 프로젝트 이벤트 조회는 전체 이벤트를 함께 돌려주므로 여기서 거른다.
+   - 한 프로젝트에 오케스트레이터가 둘 이상이면(AP-D038) 프로젝트 이벤트와 프로젝트 지시는 Core
+     `leadProjectOrchestrator`가 정한 주만 받는다. 주는 지금 계획의 소유자, 없으면 가장 먼저 만든 것이다. 다른
+     오케스트레이터는 `eventConcernsAgent`로 이름으로 온 것만 받는다. 지시 받는 쪽과 `get_delegated_work`도 같은
+     기준이다.
    - cursor는 차례가 끝난 것을 볼 때 옮긴다(최소 한 번 전달). 보낸 위치는 `orchestrator-sent:<id>` cursor로 따로
      남기고, 그 안의 이벤트를 다시 보내면 `resent`로 표시해 깨우기 메시지에 다시 보냈다고 적는다.
 

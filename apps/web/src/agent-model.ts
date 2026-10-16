@@ -4,6 +4,7 @@ import type {
   AgentTask,
   Handoff,
   IntentContract,
+  Plan,
   ProjectStall,
   SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
@@ -302,18 +303,23 @@ export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): I
 }
 
 /**
- * The orchestrator to show for a project. A project should have one (AP-D037); when an older one came
- * back next to a newer one, the one working now, else the one active most recently.
+ * The orchestrator to show for a project: the one its events go to (AP-D038). A project has one;
+ * when an older one came back next to a newer one, or the person started a second, the owner of the
+ * active plan (it manages the work), else the first one. The server picks the same one.
  */
 export function projectOrchestrator(
-  project: Pick<AgentBoardProject, "agents" | "working">,
+  project: Pick<AgentBoardProject, "agents"> & {
+    readonly activePlan?: Pick<Plan, "ownerAgentSessionId"> | null;
+  },
 ): AgentSession | undefined {
-  const orchestrators = project.agents.filter((agent) => agent.role === "project-orchestrator");
+  const orchestrators = project.agents.filter(
+    (agent) => agent.role === "project-orchestrator" && !agent.retiredAt,
+  );
   if (orchestrators.length < 2) return orchestrators[0];
-  const working = new Set((project.working ?? []).map((entry) => entry.agentSessionId));
+  const owner = project.activePlan?.ownerAgentSessionId ?? null;
   return (
-    orchestrators.find((agent) => working.has(agent.id)) ??
-    [...orchestrators].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+    orchestrators.find((agent) => agent.id === owner) ??
+    orchestrators.reduce((first, agent) => (agent.createdAt < first.createdAt ? agent : first))
   );
 }
 

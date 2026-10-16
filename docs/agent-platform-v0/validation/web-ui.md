@@ -289,3 +289,17 @@
 | lint, typecheck, format, vitest 전체(1050)                                                                        | 명령 결과                                                | **PASS** |
 
 - 확인하지 못한 것: 실제 모델 오케스트레이터가 새 지침대로 전체 지시를 규칙으로만 다루는지. 테스트 앱에서 본다.
+
+# AP-D038 검증: 주 오케스트레이터 하나에게만 보내기
+
+| 항목                                                                                                 | 근거                                                    | 상태      |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | --------- |
+| 오케스트레이터가 둘이면 계획 소유자, 없으면 먼저 만든 것이 주                                        | `agent-platform-wakeups.test.ts`, `agent-model.test.ts` | **PASS**  |
+| 프로젝트 지시와 작업자 실패는 주만 깨우고, 지시 받는 쪽도 주 하나                                    | `agent-platform-wakeups.test.ts`                        | **PASS**  |
+| 둘째는 이름으로 온 지시에 깨고, `get_delegated_work`에는 이름으로 온 것만 있음                       | `agent-platform-wakeups.test.ts`                        | **PASS**  |
+| sandbox: 사람이 둘째를 만들어도 카드는 "sample 오케스트레이터 1"(계획 소유자)                        | sandbox(`.local/ap-t22/routing.mjs`) 1440 화면          | **PASS**  |
+| sandbox: 둘째가 있는 동안 맡긴 새 일은 첫째가 계획하고, 둘째의 대화에는 자기 등록 깨우기 하나만 있음 | stand-in 대화 기록(이벤트 번호만 셈)                    | **PASS**  |
+| lint, typecheck, format, vitest 전체                                                                 | 명령 결과                                               | 아래 참고 |
+
+- vitest 전체: 1051개 중 1050개 통과. `ops/workstation/distribution/independent-runtimes.test.ts`의 한 테스트가
+  전체 실행 때 5초 제한을 넘었다. 이 변경과 관계없는 배포 도구 테스트이고, 그 파일만 다시 실행하면 11개 모두 통과한다.
