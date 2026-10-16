@@ -357,6 +357,8 @@
       지침). 사례를 [HUMAN_IN_THE_LOOP.md](HUMAN_IN_THE_LOOP.md)에 기록했다.
     - project 에이전트의 `read_events`가 project를 지정하지 않으면 항상 범위 밖으로 거부됨 → 자기 project를
       기본 범위로 읽게 고쳤다(회귀 테스트 추가).
+    - 사용자 승인으로 테스트 앱을 build `815e978`로 올렸다(receipt 3). Host가 실행하는 runner가 바뀌어 그 instance의
+      Host·Gateway·Naru가 모두 재시작했고, 에이전트는 다시 실행해야 한다. doctor 25/25.
 
 ### AP-T20. 에이전트 화면 재설계 (Figma 시안 v1)
 
