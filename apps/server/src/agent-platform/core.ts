@@ -259,6 +259,42 @@ export class AgentPlatformCore {
       agent.role === "project-orchestrator" ? agent.projectId : null,
       50,
     );
+    return { instructions, origins: this.#origins(instructions) };
+  }
+
+  /**
+   * What was said to one agent, by anyone, verbatim, for the person's conversation view (AP-D022):
+   * the instructions addressed to it as `getDelegatedWork` reads them, for the main orchestrator
+   * also the user's global instructions, and the user instruction each delegation serves.
+   */
+  getAgentInstructions(
+    actor: Actor,
+    agentSessionId: string,
+  ): { readonly instructions: Instruction[]; readonly origins: Instruction[] } {
+    this.#requireHuman(actor);
+    const agent = this.#requireAgentSession(agentSessionId);
+    const addressed = this.#store.listAddressedInstructions(
+      agent.id,
+      agent.role === "project-orchestrator" ? agent.projectId : null,
+      CONVERSATION_INSTRUCTIONS,
+    );
+    const global =
+      agent.role === "main-orchestrator"
+        ? this.#store
+            .listApplicableHumanInstructions({
+              projectId: null,
+              taskId: null,
+              agentSessionId: null,
+            })
+            .slice(-CONVERSATION_INSTRUCTIONS)
+        : [];
+    const instructions = [...addressed, ...global]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .slice(-CONVERSATION_INSTRUCTIONS);
+    return { instructions, origins: this.#origins(instructions) };
+  }
+
+  #origins(instructions: readonly Instruction[]): Instruction[] {
     const originIds = [
       ...new Set(
         instructions
@@ -266,10 +302,9 @@ export class AgentPlatformCore {
           .filter((id): id is string => id !== null),
       ),
     ];
-    const origins = originIds
+    return originIds
       .map((id) => this.#store.getInstruction(id))
       .filter((instruction): instruction is Instruction => instruction !== null);
-    return { instructions, origins };
   }
 
   /**
@@ -2278,6 +2313,8 @@ export class AgentPlatformCore {
 }
 
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+/** Instructions one conversation view reads: the newest, enough for a long-running agent. */
+const CONVERSATION_INSTRUCTIONS = 200;
 
 /** The `--name` Naru gives a managed Claude session; recipients are resolved from it (AP-D015). */
 export function nativeSessionName(agentSessionId: string): string {

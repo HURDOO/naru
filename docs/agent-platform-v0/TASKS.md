@@ -352,3 +352,17 @@
         였다. 운영 doctor는 29/29 healthy다. 인증 없는 요청은 다른 앱처럼 Gateway가 401로 막는다.
     - 남은 것: 사용자가 며칠 쓰며 확인(MANUAL_TESTS), 고칠 것 반영(테스트 instance는 Naru만 upgrade), 그 뒤
       main merge와 운영 반영 승인
+
+### AP-T20. 에이전트 화면 재설계 (Figma 시안 v1)
+
+- [x] 사용자가 테스트 앱을 써 본 뒤 기존 에이전트 화면(카드 목록과 데모 같은 채팅)을 거부했고, 다시 그린
+      Figma 시안 v1(관제실, 대화, 흐름, 휴대폰 두 화면)을 승인했다(2026-10-16). 이 시안대로 다시 만든다
+      (AP-D022). 1440px, 768px, 360px와 키보드·focus를 확인한다.
+- 완료(2026-10-16):
+  - 화면: `AgentApp`(관제실 `ControlRoom`, 대화 `AgentChat`, 흐름 `FlowView`). AP-T17의 `AgentView`,
+    `AgentOverview`, `agent-history`를 대신한다. 구조와 API는 ARCHITECTURE §6.6.1.
+  - 서버: `GET /api/agent/board`, `GET /api/agent/agents/:id/instructions`(읽기, 추가형).
+  - 검증: [validation/web-ui.md](validation/web-ui.md)의 AP-T20. 격리 sandbox에서 관제실 입력부터 팀
+    구성, 승인, 결정, 이어받기까지 실제 경로로 확인했다. vitest 전체, lint, typecheck, format 통과.
+  - 남음: 실제 모델 이력의 표시는 테스트 앱(naru-next)에서 사용자가 확인한다(MANUAL_TESTS 10). 테스트
+    앱에 올리는 것은 별도 승인이다.

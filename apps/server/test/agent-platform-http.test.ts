@@ -337,6 +337,90 @@ describe("Agent Platform task detail API", () => {
   });
 });
 
+describe("Agent Platform control room reads", () => {
+  it("shows every project's board and who asked an agent what", async () => {
+    const fixture = await createFixture(true);
+    const core = fixture.core!;
+    let ordinal = 700;
+    const ctx = (actor: Actor) => ({
+      actor,
+      idempotencyKey: `90000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`,
+    });
+    const register = (projectId: string | null, role: AgentSession["role"]) =>
+      core.registerAgentSession(ctx({ kind: "human" }), {
+        projectId,
+        role,
+        runtime: "claude",
+        native: false,
+        observation: "transcript",
+        conversationWriter: "orchestrator",
+      }).id;
+    const main = register(null, "main-orchestrator");
+    const orchestrator = register(fixture.projectId, "project-orchestrator");
+    const worker = register(fixture.projectId, "worker");
+    const goal = core.createHumanInstruction(ctx({ kind: "human" }), {
+      scope: { kind: "global" },
+      verbatim: "alpha는 passkey로 바꿔 줘.",
+    });
+    const project = core.delegate(ctx({ kind: "agent", agentSessionId: main }), {
+      scope: { kind: "project", projectId: fixture.projectId },
+      verbatim: "passkey 로그인 계획을 세워.",
+      originUserInstructionId: goal.id,
+    });
+    const task = core.createTask(ctx({ kind: "agent", agentSessionId: orchestrator }), {
+      projectId: fixture.projectId,
+      title: "passkey 등록",
+      purpose: "등록 흐름",
+      completionCriteria: [],
+      originInstructionId: goal.id,
+      assigneeAgentSessionId: worker,
+    });
+    const delegation = core.delegate(ctx({ kind: "agent", agentSessionId: orchestrator }), {
+      scope: { kind: "agent", projectId: fixture.projectId, agentSessionId: worker },
+      verbatim: "passkey 등록을 맡아 줘.",
+      originUserInstructionId: goal.id,
+    });
+
+    expect((await fixture.app.inject({ method: "GET", url: "/api/agent/board" })).statusCode).toBe(
+      401,
+    );
+    const login = await fixture.login();
+    const read = (url: string) =>
+      fixture.app.inject({ method: "GET", url, headers: { cookie: login.cookie } });
+
+    const board = await read("/api/agent/board");
+    expect(board.statusCode).toBe(200);
+    expect(board.json()).toMatchObject({
+      projects: [
+        {
+          projectId: fixture.projectId,
+          tasks: [{ id: task.id, assigneeAgentSessionId: worker }],
+          agents: [{ id: orchestrator }, { id: worker }],
+          pendingApprovals: [],
+          processes: [],
+        },
+      ],
+      globalAgents: [{ id: main }],
+      openHandoffs: [],
+      globalPendingApprovals: [],
+    });
+    // The board carries no instruction text; conversations read it per agent.
+    expect(board.body).not.toContain("passkey로 바꿔");
+
+    const toWorker = await read(`/api/agent/agents/${worker}/instructions`);
+    expect(toWorker.json()).toEqual({ instructions: [delegation], origins: [goal] });
+    // A project orchestrator also hears what is sent to its project; the main one the user's goals.
+    const toOrchestrator = await read(`/api/agent/agents/${orchestrator}/instructions`);
+    expect(toOrchestrator.json<{ instructions: Instruction[] }>().instructions).toEqual([project]);
+    const toMain = await read(`/api/agent/agents/${main}/instructions`);
+    expect(toMain.json()).toEqual({ instructions: [goal], origins: [] });
+    const missing = await read(
+      "/api/agent/agents/90000000-0000-4000-8000-999999999999/instructions",
+    );
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
 describe("Agent Platform intent contract approval", () => {
   it("shows a proposal until the user approves it with the device lease", async () => {
     const fixture = await createFixture(true);

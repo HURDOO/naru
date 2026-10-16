@@ -114,9 +114,7 @@ export function registerAgentPlatformRoutes(
     return core.getOverview(HUMAN);
   });
 
-  app.get("/api/agent/projects/:id", (request) => {
-    guards.requireSession(request);
-    const { id } = IdParamsSchema.parse(request.params);
+  const projectBoard = (id: string) => {
     const agents = core.listAgentSessions(HUMAN, id);
     return {
       ...core.getProjectState(HUMAN, id),
@@ -124,8 +122,40 @@ export function registerAgentPlatformRoutes(
       agents,
       // What managed agents wait for the person to allow, for the Inbox (AP-D017).
       pendingApprovals: pendingApprovals(agents),
-      instructions: core.getApplicableInstructions(HUMAN, { projectId: id }),
       processes: core.listSharedProcesses(HUMAN, id),
+    };
+  };
+
+  app.get("/api/agent/projects/:id", (request) => {
+    guards.requireSession(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    return {
+      ...projectBoard(id),
+      instructions: core.getApplicableInstructions(HUMAN, { projectId: id }),
+    };
+  });
+
+  /**
+   * Every project with agent work in one read, for the control room (AP-D022): what the project
+   * view shows except the instruction text, plus the global agents and what waits for the person.
+   */
+  app.get("/api/agent/board", (request) => {
+    guards.requireSession(request);
+    const overview = core.getOverview(HUMAN);
+    const projects = overview.projects.flatMap(({ projectId }) => {
+      try {
+        return [{ projectId, ...projectBoard(projectId) }];
+      } catch (error) {
+        // A project removed while this read ran has nothing left to show.
+        if (error instanceof AgentPlatformError && error.code === "AGENT_NOT_FOUND") return [];
+        throw error;
+      }
+    });
+    return {
+      projects,
+      globalAgents: overview.globalAgents,
+      openHandoffs: overview.openHandoffs,
+      globalPendingApprovals: pendingApprovals(overview.globalAgents),
     };
   });
 
@@ -156,6 +186,13 @@ export function registerAgentPlatformRoutes(
     guards.requireSession(request);
     const { id } = IdParamsSchema.parse(request.params);
     return core.mergeGate(HUMAN, id);
+  });
+
+  /** Who asked an agent what, verbatim, so its conversation shows the requests (AP-D022). */
+  app.get("/api/agent/agents/:id/instructions", (request) => {
+    guards.requireSession(request);
+    const { id } = IdParamsSchema.parse(request.params);
+    return core.getAgentInstructions(HUMAN, id);
   });
 
   app.post("/api/agent/instructions", (request, reply) => {

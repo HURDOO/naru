@@ -250,8 +250,15 @@ export function actorLabel(actor: Actor, agents: readonly AgentSession[]): strin
 }
 
 export function eventLabel(event: AgentEvent): string {
-  const status = typeof event.data.status === "string" ? event.data.status : null;
-  switch (event.type) {
+  return eventTypeLabel(
+    event.type,
+    typeof event.data.status === "string" ? event.data.status : null,
+  );
+}
+
+/** An event type as a person reads it; types this build does not know stay generic. */
+export function eventTypeLabel(type: string, status: string | null): string {
+  switch (type as AgentEvent["type"]) {
     case "instruction.created":
       return "지시 기록";
     case "instruction.forgotten":
@@ -306,6 +313,8 @@ export function eventLabel(event: AgentEvent): string {
       return "프로세스 사람이 개입";
     case "shared_process.hold_released":
       return "프로세스 반환";
+    default:
+      return "Naru 기록";
   }
 }
 

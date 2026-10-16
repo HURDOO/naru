@@ -21,6 +21,8 @@ import {
 import {
   type FormEvent,
   type KeyboardEvent,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -29,7 +31,6 @@ import {
 } from "react";
 import { ApiFailure, NaruApi } from "./api";
 import { ActivityStatus } from "./ActivityStatus";
-import { AgentView } from "./AgentView";
 import { activityLabel } from "./activity-presentation";
 import { passkeyMessageFrom } from "./auth-presentation";
 import { applyCodexIdentity, PaneActivityFrameFence } from "./pane-runtime";
@@ -68,6 +69,14 @@ const SCREEN_READER_MODE_KEY = "naru-screen-reader-mode";
 const TERMINAL_INPUT_TOOLS_MODE_KEY = "naru-terminal-input-tools-mode";
 /** Launch profiles of managed agents' Panes (server `launch-profiles.ts`). */
 const AGENT_LAUNCH_PROFILES: ReadonlySet<string> = new Set(["claude-agent", "codex-agent"]);
+/** How often the workspace view re-reads what waits for the person on the agent screen. */
+const AGENT_WAITING_POLL_MS = 15_000;
+
+/** The agent screens (and their markdown) load only when opened. */
+const AgentApp = lazy(async () => {
+  const module = await import("./AgentApp");
+  return { default: module.AgentApp };
+});
 
 type SidebarFocusTarget = "close" | "project-form" | "selected-action";
 
@@ -146,9 +155,11 @@ export default function App(): React.JSX.Element {
     updatePane,
   } = useWorkspace(api, setNotice, mutationAllowed);
 
-  // Agent Platform screen (AP-T17), shown only when the server serves the agent API.
+  // Agent Platform screen (AP-T17, AP-D022), shown only when the server serves the agent API.
   const [mainView, setMainView] = useState<"workspace" | "agents">("workspace");
   const [agentsAvailable, setAgentsAvailable] = useState(false);
+  /** What waits for the person across projects, for the top bar on either view. */
+  const [agentWaiting, setAgentWaiting] = useState(0);
   useEffect(() => {
     if (authState !== "signed-in") return;
     let cancelled = false;
@@ -164,6 +175,32 @@ export default function App(): React.JSX.Element {
       cancelled = true;
     };
   }, [api, authState]);
+  useEffect(() => {
+    // The agent screen reports its own count; the workspace view reads it now and then.
+    if (authState !== "signed-in" || !agentsAvailable || mainView === "agents") return;
+    let cancelled = false;
+    const read = () =>
+      void api.agentBoard().then(
+        (board) => {
+          if (cancelled) return;
+          const approvals = [
+            ...board.projects.flatMap((project) => project.pendingApprovals),
+            ...board.globalPendingApprovals,
+          ].length;
+          const contracts = board.projects.filter(
+            (project) => project.pendingIntentContract !== null,
+          ).length;
+          setAgentWaiting(approvals + board.openHandoffs.length + contracts);
+        },
+        () => undefined,
+      );
+    read();
+    const timer = window.setInterval(read, AGENT_WAITING_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [agentsAvailable, api, authState, mainView]);
   const rememberProject = useCallback((projectId: string | null): void => {
     setSelectedProjectId(projectId);
     if (projectId) localStorage.setItem(LAST_PROJECT_KEY, projectId);
@@ -428,15 +465,50 @@ export default function App(): React.JSX.Element {
   );
 
   const openAgentPane = useCallback(
-    async (paneId: string): Promise<void> => {
-      setMainView("workspace");
-      // An agent's Pane may have joined the workspace after this screen loaded it.
-      if (!currentWorkspace()?.panes.some((pane) => pane.id === paneId)) {
-        await loadWorkspace(selectedProjectId);
+    async (paneId: string, projectId: string | null): Promise<void> => {
+      try {
+        // A global agent's Pane lives in the workspace it was started from; find which one.
+        let target = projectId;
+        if (target === null && !currentWorkspace()?.panes.some((pane) => pane.id === paneId)) {
+          for (const project of projects) {
+            const candidate = await api.workspace(project.id);
+            if (candidate.panes.some((pane) => pane.id === paneId)) {
+              target = project.id;
+              break;
+            }
+          }
+        }
+        setMainView("workspace");
+        if (target !== null && target !== selectedProjectId) {
+          if (!(await flushWorkspace())) return;
+          rememberProject(target);
+          clearWorkspace();
+          await loadWorkspace(target);
+        } else if (!currentWorkspace()?.panes.some((pane) => pane.id === paneId)) {
+          // An agent's Pane may have joined the workspace after this screen loaded it.
+          await loadWorkspace(selectedProjectId);
+        }
+        if (!currentWorkspace()?.panes.some((pane) => pane.id === paneId)) {
+          setNotice("이 에이전트의 화면을 작업공간에서 찾지 못했습니다.");
+          return;
+        }
+        activateAndAcknowledgePane(paneId);
+        focusPaneSoon(paneId);
+      } catch (error) {
+        setNotice(messageFrom(error));
       }
-      activateAndAcknowledgePane(paneId);
     },
-    [activateAndAcknowledgePane, currentWorkspace, loadWorkspace, selectedProjectId],
+    [
+      activateAndAcknowledgePane,
+      api,
+      clearWorkspace,
+      currentWorkspace,
+      flushWorkspace,
+      loadWorkspace,
+      projects,
+      rememberProject,
+      selectedProjectId,
+    ],
   );
 
   useEffect(() => {
@@ -874,9 +946,17 @@ export default function App(): React.JSX.Element {
           </h1>
         </div>
         <div className="topbar-actions">
+          {agentsAvailable && selectedProject && (
+            <MainViewTabs
+              className="topbar-view-switch"
+              view={mainView}
+              waiting={agentWaiting}
+              onChange={setMainView}
+            />
+          )}
           <ConnectionBadge snapshot={connectionStatus} />
           <div className="desktop-topbar-actions">
-            {selectedProject && (
+            {selectedProject && !(agentsAvailable && mainView === "agents") && (
               <div className="topbar-workspace-actions">
                 {canChooseWorkspaceView && (
                   <WorkspaceViewControl
@@ -959,11 +1039,26 @@ export default function App(): React.JSX.Element {
             screenReaderMode={screenReaderMode}
             terminalInputToolsAlways={terminalInputToolsAlways}
             canManagePasskeys={api.authMode() === "app-managed"}
-            onCreateTerminal={createTerminalFromActivePane}
-            onOpenFiles={() => openDocumentPane("files")}
-            onOpenDocs={() => openDocumentPane("docs")}
-            onOpenTasks={() => openDocumentPane("tasks")}
-            onWorkspaceViewChange={workspaceView.setMode}
+            onCreateTerminal={() => {
+              setMainView("workspace");
+              createTerminalFromActivePane();
+            }}
+            onOpenFiles={() => {
+              setMainView("workspace");
+              openDocumentPane("files");
+            }}
+            onOpenDocs={() => {
+              setMainView("workspace");
+              openDocumentPane("docs");
+            }}
+            onOpenTasks={() => {
+              setMainView("workspace");
+              openDocumentPane("tasks");
+            }}
+            onWorkspaceViewChange={(mode) => {
+              setMainView("workspace");
+              workspaceView.setMode(mode);
+            }}
             onToggleScreenReaderMode={toggleScreenReaderMode}
             onToggleTerminalInputToolsMode={toggleTerminalInputToolsMode}
             onManagePasskeys={openPasskeyDialog}
@@ -1099,22 +1194,32 @@ export default function App(): React.JSX.Element {
             />
           ) : agentsAvailable && mainView === "agents" ? (
             <>
-              <MainViewTabs view={mainView} onChange={setMainView} />
-              <AgentView
-                key={`${selectedProject.id}:${focusedHandoffId ?? ""}:${focusedAgentPaneId ?? ""}`}
-                api={api}
-                projectId={selectedProject.id}
-                projects={projects}
-                mutationAllowed={mutationAllowed}
-                onOpenPane={(paneId) => void openAgentPane(paneId)}
-                onSelectProject={selectProject}
-                initialHandoffId={focusedHandoffId}
-                initialAgentPaneId={focusedAgentPaneId}
-              />
+              <MainViewTabs view={mainView} waiting={agentWaiting} onChange={setMainView} />
+              <Suspense
+                fallback={
+                  <div className="inline-loading">
+                    <span /> 에이전트 화면을 여는 중…
+                  </div>
+                }
+              >
+                <AgentApp
+                  key={`${focusedHandoffId ?? ""}:${focusedAgentPaneId ?? ""}`}
+                  api={api}
+                  projects={projects}
+                  currentProjectId={selectedProject.id}
+                  mutationAllowed={mutationAllowed}
+                  onOpenPane={(paneId, projectId) => void openAgentPane(paneId, projectId)}
+                  initialHandoffId={focusedHandoffId}
+                  initialAgentPaneId={focusedAgentPaneId}
+                  onWaitingChange={setAgentWaiting}
+                />
+              </Suspense>
             </>
           ) : (
             <>
-              {agentsAvailable && <MainViewTabs view={mainView} onChange={setMainView} />}
+              {agentsAvailable && (
+                <MainViewTabs view={mainView} waiting={agentWaiting} onChange={setMainView} />
+              )}
               {workspace && workspace.panes.length > 1 && (
                 <PaneTabs
                   panes={workspace.panes}
@@ -2894,25 +2999,43 @@ function WorkspaceViewControl({
   );
 }
 
+/** Workspace or agents, and how many things wait for the person on the agent screen. */
 function MainViewTabs({
   view,
+  waiting,
   onChange,
+  className = "main-view-tabs",
 }: {
   view: "workspace" | "agents";
+  waiting: number;
   onChange: (view: "workspace" | "agents") => void;
+  className?: string;
 }): React.JSX.Element {
   return (
-    <div className="main-view-tabs" role="group" aria-label="화면">
-      <button
-        type="button"
-        aria-pressed={view === "workspace"}
-        onClick={() => onChange("workspace")}
-      >
-        작업공간
-      </button>
-      <button type="button" aria-pressed={view === "agents"} onClick={() => onChange("agents")}>
-        에이전트
-      </button>
+    <div className={className}>
+      <div className="main-view-switch" role="group" aria-label="화면">
+        <button
+          type="button"
+          aria-pressed={view === "workspace"}
+          onClick={() => onChange("workspace")}
+        >
+          작업공간
+        </button>
+        <button type="button" aria-pressed={view === "agents"} onClick={() => onChange("agents")}>
+          에이전트
+        </button>
+      </div>
+      {waiting > 0 && (
+        <button
+          className="agent-waiting-pill"
+          type="button"
+          aria-label={`나를 기다리는 것 ${waiting}개 보기`}
+          onClick={() => onChange("agents")}
+        >
+          <span aria-hidden="true" />
+          나를 기다림 {waiting}
+        </button>
+      )}
     </div>
   );
 }

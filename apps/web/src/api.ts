@@ -67,12 +67,34 @@ export interface AgentProjectView {
   readonly instructions: Instruction[];
   readonly processes: SharedProcess[];
   /** What managed agents wait for the person to allow (AP-D017). */
-  readonly pendingApprovals: {
-    readonly agentSessionId: string;
-    readonly requestId: string;
-    readonly kind: string;
-    readonly summary?: string;
-  }[];
+  readonly pendingApprovals: AgentPendingApproval[];
+}
+
+export interface AgentPendingApproval {
+  readonly agentSessionId: string;
+  readonly requestId: string;
+  readonly kind: string;
+  readonly summary?: string;
+}
+
+/** One project on the control room board: the project view without instruction text. */
+export interface AgentBoardProject extends Omit<AgentProjectView, "instructions"> {
+  readonly projectId: string;
+}
+
+/** Every project with agent work in one read (`GET /api/agent/board`, AP-D022). */
+export interface AgentBoard {
+  readonly projects: AgentBoardProject[];
+  readonly globalAgents: AgentSession[];
+  /** Open handoffs of every project and the global ones. */
+  readonly openHandoffs: Handoff[];
+  readonly globalPendingApprovals: AgentPendingApproval[];
+}
+
+/** Who asked an agent what, verbatim, and the user instructions those requests serve. */
+export interface AgentInstructions {
+  readonly instructions: Instruction[];
+  readonly origins: Instruction[];
 }
 
 function key(): string {
@@ -441,17 +463,29 @@ export class NaruApi {
     return this.#request<AgentProjectView>(`/api/agent/projects/${projectId}`);
   }
 
+  agentBoard(): Promise<AgentBoard> {
+    return this.#request<AgentBoard>("/api/agent/board");
+  }
+
+  agentInstructions(agentSessionId: string): Promise<AgentInstructions> {
+    return this.#request<AgentInstructions>(`/api/agent/agents/${agentSessionId}/instructions`);
+  }
+
   agentTask(taskId: string): Promise<AgentTaskDetail> {
     return this.#request<AgentTaskDetail>(`/api/agent/tasks/${taskId}`);
   }
 
-  /** Events after `after`; `latest` reads the newest page instead of the oldest (first load). */
+  /**
+   * Events after `after`, of one project or (null) of all; `latest` reads the newest page instead of
+   * the oldest (first load).
+   */
   agentEvents(
-    projectId: string,
+    projectId: string | null,
     after: number,
     options: { readonly limit?: number; readonly latest?: boolean } = {},
   ): Promise<AgentEvent[]> {
-    const query = new URLSearchParams({ projectId, after: String(after) });
+    const query = new URLSearchParams({ after: String(after) });
+    if (projectId !== null) query.set("projectId", projectId);
     if (options.limit !== undefined) query.set("limit", String(options.limit));
     if (options.latest === true) query.set("latest", "1");
     return this.#request<AgentEvent[]>(`/api/agent/events?${query.toString()}`);
@@ -499,15 +533,19 @@ export class NaruApi {
     return this.#agentWrite(`/api/agent/agents/${agentSessionId}/stop`, {});
   }
 
-  /** "직접 개입" (hold) in Chat or the TUI, or hand the agent back. */
+  /**
+   * "직접 개입" (hold) in Chat or the TUI, or hand the agent back. `interrupt` stops a running turn
+   * instead of waiting for it to end.
+   */
   setAgentHold(
     agentSessionId: string,
     held: boolean,
     surface: "chat" | "tui" = "chat",
+    interrupt = false,
   ): Promise<AgentSession> {
     return this.#agentWrite(`/api/agent/agents/${agentSessionId}/hold`, {
       held,
-      ...(held ? { surface } : {}),
+      ...(held ? { surface, ...(interrupt ? { interrupt } : {}) } : {}),
       idempotencyKey: key(),
     });
   }

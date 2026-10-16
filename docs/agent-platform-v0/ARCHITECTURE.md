@@ -241,3 +241,33 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - 화면에 바로 보이지 않는 경계
   - TUI는 작업공간의 실제 Pane을 연다. 에이전트 화면 안에 terminal을 다시 그리지 않는다.
   - native 보조 에이전트는 관찰만 한다(AP-D014).
+
+### 6.6.1 에이전트 화면 재설계 (AP-T20, AP-D022)
+
+AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. 위의 API와 쓰기 경로는 그대로 쓰고, 읽기
+두 개를 더했다.
+
+- 구성(`AgentApp`): 왼쪽 rail(휴대폰은 아래 탭)에 관제실, 대화, 흐름. 작업공간·에이전트 전환과
+  "나를 기다림 N"은 top bar에 있다. 에이전트 화면 코드는 열 때만 불러온다(lazy).
+  - 관제실(`ControlRoom`): 메인 오케스트레이터에게 맡기는 입력창(global 지시, 없으면 시작), 지표, project별
+    작업 흐름 그래프, 나를 기다리는 것(승인·Handoff·의도 계약), 에이전트 목록, 타임라인.
+  - 대화(`AgentChat`): 상태별 목록, 대화, 작업 맥락(맡은 작업, 진행 단계, 산출물, 리뷰, 프로세스, 함께
+    일하는 에이전트). 보내면 Chat으로 hold한 뒤 turn을 쓴다. 답하는 중이면 hold의 `interrupt`를 쓴다.
+  - 흐름(`FlowView`): 한 project의 단계별 작업 그래프와 선택한 작업의 기록·산출물·병합 조건. 휴대폰은
+    단계 목록이다.
+- 읽기 API(추가형, 기존 consumer 영향 없음)
+  - `GET /api/agent/board`: 에이전트 작업이 있는 모든 project의 project 응답(지시 원문 제외)과 global
+    에이전트, 모든 열린 Handoff, global 에이전트의 승인 대기. 3초마다 읽는다. 작업공간 화면은 top bar
+    숫자를 위해 15초마다 읽는다.
+  - `GET /api/agent/agents/:id/instructions`: 그 에이전트에게 한 말(위임, 사람의 직접 대화, project
+    오케스트레이터는 project 지시, 메인은 사용자 global 지시)과 각 위임의 원본 사용자 지시. 원문은 이미
+    저장된 지시다(AP-D002). 최신 200개.
+  - 이벤트는 project 없이 전체를 읽는다(`GET /api/agent/events?latest=1`, 처음 500개, 이후 이어 받기,
+    browser에 최대 3,000개).
+- 대화 구성(`agent-conversation.ts`): runtime 이력을 다시 읽어 만든다. Claude session message와 Codex
+  turn item을 요청, 답, 도구 묶음, 생각, 알림으로 나눈다.
+  - 요청은 기록된 지시 원문과 맞춰 누가 했는지(나, 오케스트레이터 이름)를 붙인다. Naru wakeup turn은
+    그 안의 `instruction.created`가 가리키는 지시로 바꾸고, 나머지 이벤트는 한 줄 알림이 된다.
+  - 이력은 마지막 page부터 다시 읽는다(답하는 중 2.5초, 아니면 8초, turn이 끝날 때).
+- 타임라인은 이벤트에서 만든다: runtime turn(`agent_session.updated` active→idle), 사람 hold, 질문
+  (`handoff.requested`), 병합(`artifact.published` commit). 불러온 이벤트보다 오래된 것은 그리지 않는다.
