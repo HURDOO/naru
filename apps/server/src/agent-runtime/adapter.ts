@@ -63,6 +63,8 @@ export interface HistoryPage {
   /** Runtime-native items as the conversation shows them (AP-D040); not persisted by Naru. */
   readonly items: readonly unknown[];
   readonly nextCursor: string | null;
+  /** Read newest first by Codex: the page before this one (AP-D046). */
+  readonly previousCursor?: string | null | undefined;
 }
 
 export interface AgentRuntimeHandle {

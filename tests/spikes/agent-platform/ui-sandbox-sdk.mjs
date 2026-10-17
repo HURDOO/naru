@@ -23,9 +23,9 @@ const STORE = join(tmpdir(), "naru-ui-sandbox-sdk");
 let session = SESSION;
 const said = [];
 
-/** Like Claude, a conversation is saved from its first prompt on. */
+/** Like Claude, a conversation is saved from its first prompt on, each message with its uuid. */
 function remember(message) {
-  said.push(message);
+  said.push({ ...message, uuid: message.uuid ?? randomUUID() });
   try {
     mkdirSync(STORE, { recursive: true });
     writeFileSync(join(STORE, `${session}.json`), JSON.stringify(said));

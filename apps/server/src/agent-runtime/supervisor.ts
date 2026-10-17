@@ -374,13 +374,12 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
   }
 
   /**
-   * A page of the conversation as the person reads it (AP-D045): forward, the newest page, or the
-   * page before one read newest first. A runtime that reads only forward (Codex, or a Claude runner
-   * an earlier Naru started) answers `latest` with its first page, and the person's view reads on.
+   * A page of the conversation as the person reads it (AP-D045, AP-D046): forward, the newest
+   * page, or the page before one read newest first. A runner an earlier Naru or Host started
+   * answers `latest` with its first page, and the person's view reads on.
    */
   async readHistoryWindow(agentSessionId: string, read: HistoryRead): Promise<AgentHistoryWindow> {
-    const claude = this.#core.getAgentSession(SYSTEM, agentSessionId).runtime === "claude";
-    if (read.kind !== "forward" && claude) {
+    if (read.kind !== "forward") {
       try {
         const page = await this.readHistory(
           agentSessionId,
@@ -391,14 +390,18 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
           items: [...page.items],
           cursor: start,
           nextCursor: null,
-          previousCursor: start === null || start === "0" ? null : start,
+          // Claude's start offset also ends the page before; Codex says where that one ends.
+          previousCursor:
+            page.previousCursor !== undefined
+              ? page.previousCursor
+              : start === null || start === "0"
+                ? null
+                : start,
         };
       } catch (error) {
         const refused = error instanceof SupervisorError && error.code === "HISTORY_REFUSED";
         if (read.kind === "before" || !refused) throw error;
       }
-    } else if (read.kind === "before") {
-      throw new SupervisorError("HISTORY_REFUSED", "This runtime reads history forward only.");
     }
     const cursor = read.kind === "forward" ? read.cursor : null;
     const page = await this.readHistory(agentSessionId, cursor);
@@ -478,6 +481,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       runtime.history.get(message.requestId)?.({
         items: message.items,
         nextCursor: message.nextCursor,
+        previousCursor: message.previousCursor,
       });
       runtime.history.delete(message.requestId);
       return;

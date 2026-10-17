@@ -1,6 +1,12 @@
 import type { Instruction } from "@naru/contracts/naru-agent/v1";
 import { describe, expect, it } from "vitest";
-import { changeSummary, conversationBlocks, diffCounts, toolSummary } from "./agent-conversation";
+import {
+  changeSummary,
+  conversationBlocks,
+  conversationPages,
+  diffCounts,
+  toolSummary,
+} from "./agent-conversation";
 
 const ME = "10000000-0000-4000-8000-000000000001";
 const ORCHESTRATOR = "20000000-0000-4000-8000-000000000002";
@@ -416,6 +422,40 @@ describe("agent conversation", () => {
       { instructions: [], origins: [] },
     );
     expect(shortened[0]).toMatchObject({ kind: "ask", handoffId: handoff.id });
+  });
+
+  it("keeps the blocks shown when a page is read in above them (AP-D046)", () => {
+    const said = (uuid: string, text: string) => ({
+      type: "user",
+      uuid,
+      message: { content: text },
+    });
+    const answered = (uuid: string, text: string) => ({
+      type: "assistant",
+      uuid,
+      message: { content: [{ type: "text", text }] },
+    });
+    const context = { instructions: [], origins: [] };
+    const newest = [said("u3", "세 번째 요청"), answered("a3", "세 번째 답")];
+    const older = [said("u1", "첫 요청"), answered("a1", "첫 답")];
+    const before = conversationPages([newest], context);
+    const after = conversationPages([older, newest], context);
+    expect(after.blocks.slice(-2).map((block) => block.key)).toEqual(
+      before.blocks.map((block) => block.key),
+    );
+    expect(after.blocks.map((block) => after.pageOf.get(block.key))).toEqual([0, 0, 1, 1]);
+    // Codex turns key by their ids too; the same turn twice still gives keys of its own.
+    const turn = {
+      id: "turn-1",
+      items: [
+        { type: "userMessage", id: "i1", content: [{ type: "text", text: "요청" }] },
+        { type: "agentMessage", id: "i2", text: "답" },
+      ],
+    };
+    const keys = conversationBlocks([turn, turn], context).map((block) => block.key);
+    expect(keys).toHaveLength(4);
+    expect(new Set(keys).size).toBe(4);
+    expect(keys[0]).toContain("turn-1");
   });
 
   it("counts diff lines without the file headers", () => {

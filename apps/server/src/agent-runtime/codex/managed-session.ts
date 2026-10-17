@@ -3,6 +3,7 @@ import type { AgentApprovalDecision } from "@naru/contracts/naru-agent/v1";
 import type { AgentRuntimeEvent } from "../adapter.js";
 import type { CodexRunnerPlan, NaruMessage } from "../channel-protocol.js";
 import { fitHistoryPage, historyMessage } from "../history-page.js";
+import { fitHistoryTail, newestFirstFrom } from "../history-window.js";
 import { RunnerChannelClient } from "../runner-channel.js";
 import type { WriterKind } from "../writer-gate.js";
 import {
@@ -286,6 +287,12 @@ export class CodexManagedSession {
 
   async #history(requestId: string, cursor: string | null): Promise<void> {
     try {
+      const newest = newestFirstFrom(cursor);
+      if (newest !== undefined) {
+        const page = await this.#newestFirst(newest);
+        this.#channel.send(historyMessage(requestId, page.items, page.start, page.previous));
+        return;
+      }
       let page = await this.#turns(cursor, HISTORY_PAGE);
       let items = fitHistoryPage(page.turns);
       // Fewer turns fit the channel (AP-D040): ask for that many so the cursor follows the last one.
@@ -299,22 +306,64 @@ export class CodexManagedSession {
     }
   }
 
+  /**
+   * The newest turns before `from` (null: of all) that fit a page, oldest first (AP-D046), with
+   * where the page starts (read forward from there to read it again) and where the page before it
+   * ends. Codex's descending cursor after a turn leaves that turn out, and a page's backwards cursor
+   * reads from its first turn on, so the page's oldest turn is read again alone for both.
+   */
+  async #newestFirst(
+    from: string | null,
+    attempt = 1,
+  ): Promise<{ items: unknown[]; start: string | null; previous: string | null }> {
+    const page = await this.#turns(from, HISTORY_PAGE, "desc");
+    const items = fitHistoryTail([...page.turns].reverse());
+    if (items.length === page.turns.length && page.nextCursor === null) {
+      return { items, start: null, previous: null };
+    }
+    // Read after the turns newer than the page's oldest; with one turn, from where the page is.
+    const newer =
+      items.length > 1 ? await this.#turns(from, items.length - 1, "desc", "notLoaded") : null;
+    const oldest =
+      newer?.nextCursor === null
+        ? null
+        : await this.#turns(newer === null ? from : newer.nextCursor, 1, "desc", "notLoaded");
+    const expected = turnId(page.turns[items.length - 1]);
+    if (
+      oldest?.backwardsCursor == null ||
+      expected === null ||
+      turnId(oldest.turns[0]) !== expected
+    ) {
+      // A turn began between the reads, and the newest turns moved: read them again.
+      if (attempt < 3) return this.#newestFirst(from, attempt + 1);
+      throw new Error("Codex history kept moving.");
+    }
+    return { items, start: oldest.backwardsCursor, previous: oldest.nextCursor };
+  }
+
   async #turns(
     cursor: string | null,
     limit: number,
-  ): Promise<{ readonly turns: unknown[]; readonly nextCursor: string | null }> {
+    sortDirection: "asc" | "desc" = "asc",
+    itemsView: "full" | "notLoaded" = "full",
+  ): Promise<{
+    readonly turns: unknown[];
+    readonly nextCursor: string | null;
+    readonly backwardsCursor: string | null;
+  }> {
     const page = asRecord(
       await this.#rpc?.request("thread/turns/list", {
         threadId: this.#threadId,
         limit,
-        sortDirection: "asc",
-        itemsView: "full",
+        sortDirection,
+        itemsView,
         ...(cursor === null ? {} : { cursor }),
       }),
     );
     return {
       turns: Array.isArray(page?.data) ? (page.data as unknown[]) : [],
       nextCursor: typeof page?.nextCursor === "string" ? page.nextCursor : null,
+      backwardsCursor: typeof page?.backwardsCursor === "string" ? page.backwardsCursor : null,
     };
   }
 
@@ -481,6 +530,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function turnId(turn: unknown): string | null {
+  const id = asRecord(turn)?.id;
+  return typeof id === "string" ? id : null;
 }
 
 /** "What it is doing now" for a Codex item (AP-D026): commands, file changes and tool calls. */

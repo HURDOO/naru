@@ -116,11 +116,25 @@ if (args.includes("app-server")) {
           return reply({});
         }
         case "thread/turns/list": {
+          // Codex's cursors: after a page's last turn (that turn left out) and, backwards, from its
+          // first turn (that turn read again); the direction defaults to descending.
           const turns = threads.get(p.threadId)?.turns ?? [];
-          const start = p.cursor === undefined ? 0 : Number(p.cursor);
           const size = Math.min(2, p.limit ?? 2);
-          const page = turns.slice(start, start + size);
-          return reply({ data: page, nextCursor: start + size < turns.length ? String(start + size) : null });
+          const at = p.cursor === undefined ? null : JSON.parse(p.cursor);
+          const cursor = (index, anchor) => JSON.stringify({ index, anchor });
+          const indexes = [];
+          if (p.sortDirection === "asc") {
+            for (let index = at === null ? 0 : at.anchor ? at.index : at.index + 1; index < turns.length && indexes.length <= size; index += 1) indexes.push(index);
+          } else {
+            for (let index = at === null ? turns.length - 1 : at.anchor ? at.index : at.index - 1; index >= 0 && indexes.length <= size; index -= 1) indexes.push(index);
+          }
+          const more = indexes.length > size;
+          const shown = indexes.slice(0, size);
+          return reply({
+            data: shown.map((index) => turns[index]),
+            nextCursor: more ? cursor(shown.at(-1), false) : null,
+            backwardsCursor: shown.length === 0 ? null : cursor(shown[0], true),
+          });
         }
         default: return reply({});
       }

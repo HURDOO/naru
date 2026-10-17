@@ -39,8 +39,15 @@ export function historyMessage(
   requestId: string,
   items: readonly unknown[],
   nextCursor: string | null,
+  previousCursor?: string | null,
 ): RunnerMessage {
-  const message: RunnerMessage = { type: "history", requestId, items: [...items], nextCursor };
+  const message: RunnerMessage = {
+    type: "history",
+    requestId,
+    items: [...items],
+    nextCursor,
+    ...(previousCursor === undefined ? {} : { previousCursor }),
+  };
   // Naru ends a connection that sends an oversized line; one unreadable page must not do that.
   return jsonBytes(message) + 1 > HISTORY_LINE_BYTES
     ? { type: "error", requestId, code: "HISTORY_TOO_LARGE" }

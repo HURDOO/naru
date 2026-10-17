@@ -101,14 +101,34 @@ export function conversationBlocks(
   items: readonly unknown[],
   context: ConversationContext,
 ): ConversationBlock[] {
+  return conversationPages([items], context).blocks;
+}
+
+/**
+ * The conversation over the pages held, oldest first, and the page each block began in (AP-D046).
+ * A block's key follows the runtime's own message or turn id, or else where the item is in a page
+ * that starts at `starts[page]`, so a page read in above leaves the blocks already shown as they
+ * were.
+ */
+export function conversationPages(
+  pages: readonly (readonly unknown[])[],
+  context: ConversationContext,
+  starts: readonly (string | null)[] = [],
+): { readonly blocks: ConversationBlock[]; readonly pageOf: ReadonlyMap<string, number> } {
   const builder = new Builder(context);
-  for (const item of items) {
-    const record = asRecord(item);
-    if (record === null) continue;
-    if (Array.isArray(record.items)) builder.codexTurn(record);
-    else builder.claudeMessage(record);
+  const pageOf = new Map<string, number>();
+  for (const [page, items] of pages.entries()) {
+    for (const [index, item] of items.entries()) {
+      const record = asRecord(item);
+      if (record === null) continue;
+      const id = typeof record.uuid === "string" ? record.uuid : record.id;
+      builder.from(typeof id === "string" ? id : `@${starts[page] ?? `#${page}`}+${index}`);
+      if (Array.isArray(record.items)) builder.codexTurn(record);
+      else builder.claudeMessage(record);
+    }
+    for (const block of builder.blocks.slice(pageOf.size)) pageOf.set(block.key, page);
   }
-  return builder.blocks;
+  return { blocks: builder.blocks, pageOf };
 }
 
 class Builder {
@@ -117,7 +137,10 @@ class Builder {
   readonly #used = new Set<string>();
   readonly #calls = new Map<string, ToolCall>();
   readonly #asks = new Map<string, AskBlock>();
-  #next = 0;
+  readonly #keys = new Set<string>();
+  /** The message or turn being read, and how many keys it gave so far. */
+  #source = "";
+  #fromSource = 0;
 
   constructor(context: ConversationContext) {
     this.#context = context;
@@ -479,9 +502,18 @@ class Builder {
     this.blocks.push({ kind: "notice", key: this.#key("notice"), text, details });
   }
 
+  from(source: string): void {
+    this.#source = source;
+    this.#fromSource = 0;
+  }
+
   #key(prefix: string): string {
-    this.#next += 1;
-    return `${prefix}-${this.#next}`;
+    this.#fromSource += 1;
+    let key = `${prefix}:${this.#source}:${this.#fromSource}`;
+    // The same message twice (a page that overlaps one held) still gives keys of its own.
+    while (this.#keys.has(key)) key = `${key}+`;
+    this.#keys.add(key);
+    return key;
   }
 }
 

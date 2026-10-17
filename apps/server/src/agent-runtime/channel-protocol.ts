@@ -76,6 +76,12 @@ export const RunnerMessageSchema = z.discriminatedUnion("type", [
     requestId: Id,
     items: z.array(z.unknown()).max(200),
     nextCursor: z.string().max(1_024).nullable(),
+    /**
+     * A page read newest first by a runtime whose cursors read one way (Codex, AP-D046): where the
+     * page before it ends, as `nextCursor` names where this one starts. Sent only for such reads,
+     * so a Naru that never asks for them never sees it.
+     */
+    previousCursor: z.string().max(1_024).nullable().optional(),
   }),
   z.strictObject({ type: z.literal("error"), requestId: Id.nullable(), code: z.string().max(80) }),
 ]);

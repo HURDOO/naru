@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { memo, type ReactNode, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentIdentity, Presence, Tone } from "./agent-model";
@@ -304,10 +304,20 @@ export function Sheet({
   );
 }
 
-/** Agent and user text as chat prose: GitHub markdown, no raw HTML, no remote images. */
-export function ChatMarkdown({ text }: { readonly text: string }): React.JSX.Element {
+/**
+ * Agent and user text as chat prose: GitHub markdown, no raw HTML, no remote images. Parsed again
+ * only when the text changes: the thread re-renders whenever it reads its pages (AP-D046).
+ */
+export const ChatMarkdown = memo(function ChatMarkdown({
+  text,
+  block,
+}: {
+  readonly text: string;
+  /** The conversation block this text is, for keeping the reader's place (AP-D046). */
+  readonly block?: string;
+}): React.JSX.Element {
   return (
-    <div className="ag-prose">
+    <div className="ag-prose" data-block={block}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
@@ -323,4 +333,4 @@ export function ChatMarkdown({ text }: { readonly text: string }): React.JSX.Ele
       </ReactMarkdown>
     </div>
   );
-}
+});

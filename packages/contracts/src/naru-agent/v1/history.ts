@@ -27,7 +27,8 @@ export const AgentHistoryWindowSchema = AgentHistoryPageSchema.extend({
   cursor: z.string().max(1_024).nullable(),
   /**
    * `before` for the page before this one. Null when this page starts the conversation, and for a
-   * forward read: a runtime that reads only forward answers `latest` with its first page.
+   * forward read: a runner an earlier Naru or Host started answers `latest` with its first page.
+   * Opaque: Claude's offsets and Codex's own cursors (AP-D046) both travel in it.
    */
   previousCursor: z.string().max(1_024).nullable(),
 });

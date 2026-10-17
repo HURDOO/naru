@@ -13,12 +13,13 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { useAgentApp, useTaskDetail } from "./agent-context";
 import {
   type AskBlock,
   changeSummary,
   type ConversationBlock,
-  conversationBlocks,
+  conversationPages,
   type ToolCall,
   type ToolKind,
   toolSummary,
@@ -53,6 +54,10 @@ const HISTORY_ACTIVE_MS = 2_500;
 const HISTORY_IDLE_MS = 8_000;
 /** Pages read on the first load; a longer history shows its newest part after a note. */
 const HISTORY_MAX_PAGES = 200;
+/** Pages and screens the thread keeps read in above what the person sees (AP-D046). */
+const OLDER_PAGES_AHEAD = 2;
+const OLDER_SCREENS_AHEAD = 2;
+const NO_PAGES: ReadonlyMap<string, number> = new Map();
 
 /**
  * Talking with agents (Figma v1 D2/M2, AP-D022): sessions grouped by what they need, the
@@ -293,7 +298,8 @@ function useAgentConversation(agent: AgentSession): {
   const [truncated, setTruncated] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null);
   const [olderLoading, setOlderLoading] = useState(false);
-  const [olderLoads, setOlderLoads] = useState(0);
+  const [olderFailed, setOlderFailed] = useState(false);
+  const olderBusy = useRef(false);
   const pagesRef = useRef<HistoryPages | null>(held?.pages ?? null);
   const instructionsRef = useRef<AgentInstructions>(
     held?.instructions ?? { instructions: [], origins: [] },
@@ -348,10 +354,10 @@ function useAgentConversation(agent: AgentSession): {
         const current = pagesRef.current;
         let next: HistoryPages;
         if (current === null) {
-          // Newest first (AP-D045): one page shows the conversation; earlier ones on request.
+          // Newest first (AP-D045): one page shows the conversation; the thread reads ahead.
           const latest = await api.agentHistory(agent.id, { latest: true });
           next = { cursors: [latest.cursor], items: [latest.items], older: latest.previousCursor };
-          // A runtime that reads only forward (Codex) sent its first page: read on from there.
+          // A runner an earlier Naru or Host started sent its first page: read on from there.
           if (latest.nextCursor !== null) {
             next = await readForward(next, latest.nextCursor, HISTORY_MAX_PAGES - 1);
           }
@@ -378,27 +384,37 @@ function useAgentConversation(agent: AgentSession): {
     }
   }, [api, agent.id, commit, readForward, serial]);
 
-  const loadOlder = useCallback(async () => {
-    if (pagesRef.current?.older == null || olderLoading) return;
-    setOlderLoading(true);
-    try {
-      await serial(async () => {
-        const current = pagesRef.current;
-        if (current?.older == null) return;
-        const page = await api.agentHistory(agent.id, { before: current.older });
-        commit({
-          cursors: [page.cursor, ...current.cursors],
-          items: [page.items, ...current.items],
-          older: page.previousCursor,
+  const loadOlder = useCallback(
+    async (keepPlace: () => void) => {
+      if (pagesRef.current?.older == null || olderBusy.current) return;
+      olderBusy.current = true;
+      setOlderLoading(true);
+      try {
+        await serial(async () => {
+          const current = pagesRef.current;
+          if (current?.older == null) return;
+          const page = await api.agentHistory(agent.id, { before: current.older });
+          // The thread notes what the person sees, then the page goes in above it at once.
+          flushSync(() => {
+            keepPlace();
+            commit({
+              cursors: [page.cursor, ...current.cursors],
+              items: [page.items, ...current.items],
+              older: page.previousCursor,
+            });
+          });
         });
-        setOlderLoads((count) => count + 1);
-      });
-    } catch (failure) {
-      setIssue(messageOf(failure));
-    } finally {
-      setOlderLoading(false);
-    }
-  }, [api, agent.id, commit, olderLoading, serial]);
+        setOlderFailed(false);
+      } catch {
+        // Not read again on its own: the thread offers to try again.
+        setOlderFailed(true);
+      } finally {
+        olderBusy.current = false;
+        setOlderLoading(false);
+      }
+    },
+    [api, agent.id, commit, serial],
+  );
 
   useEffect(() => {
     // A stopped runtime cannot answer; reading resumes when the agent runs again.
@@ -445,35 +461,44 @@ function useAgentConversation(agent: AgentSession): {
     };
   }, [api, agent.id, managed, paused, loadHistory]);
 
-  const blocks = useMemo(
-    () => (pages === null ? null : conversationBlocks(pages.items.flat(), instructions)),
+  const conversation = useMemo(
+    () => (pages === null ? null : conversationPages(pages.items, instructions, pages.cursors)),
     [pages, instructions],
   );
   return {
     runtime,
-    blocks,
+    blocks: conversation?.blocks ?? null,
     issue,
     truncated,
     turnStartedAt: runtime?.turnActive === true ? turnStartedAt : null,
     paused,
     reload: () => void loadHistory(),
     older: {
-      available: pages?.older != null,
+      available: pages?.older != null && !paused,
+      startHeld: pages !== null && pages.older === null,
       loading: olderLoading,
-      loads: olderLoads,
-      load: () => void loadOlder(),
+      failed: olderFailed,
+      pages: pages?.items.length ?? 0,
+      pageOf: conversation?.pageOf ?? NO_PAGES,
+      load: (keepPlace) => void loadOlder(keepPlace),
     },
   };
 }
 
-/** Reading the messages before the ones shown (AP-D045). */
+/** Reading the messages above the ones shown (AP-D045, AP-D046). */
 interface OlderHistory {
-  /** Earlier messages are not shown yet. */
+  /** Earlier messages are not held yet, and the runtime can be asked for them. */
   readonly available: boolean;
+  /** The conversation's start is held: nothing above is missing. */
+  readonly startHeld: boolean;
   readonly loading: boolean;
-  /** How many times earlier messages came in; the thread keeps its place each time. */
-  readonly loads: number;
-  readonly load: () => void;
+  /** The last read failed: the thread offers to try again rather than reading on its own. */
+  readonly failed: boolean;
+  /** Pages held, and the page (0: the oldest held) each block began in. */
+  readonly pages: number;
+  readonly pageOf: ReadonlyMap<string, number>;
+  /** Reads the page above; `keepPlace` runs right before it goes in. */
+  readonly load: (keepPlace: () => void) => void;
 }
 
 function Conversation({
@@ -807,18 +832,29 @@ function Thread({
   const scroller = useRef<HTMLDivElement | null>(null);
   const atBottom = useRef(true);
   const [behind, setBehind] = useState(false);
-  // The thread's height when the person asked for earlier messages, and the loads already placed.
-  const heightBeforeOlder = useRef(0);
-  const placedLoads = useRef(older.loads);
+  // Where the person was reading when a page went in above, and the latest view of earlier pages.
+  const place = useRef<KeptPlace | null>(null);
+  const olderNow = useRef(older);
+  const aheadFrame = useRef<number | null>(null);
   const identity = app.identity(agent);
   const approvals = runtime?.pendingApprovals ?? [];
   const working = runtime?.turnActive === true;
   const holdStart = agent.humanHoldSince === null ? null : Date.parse(agent.humanHoldSince);
 
   const groups = useMemo(() => groupBlocks(blocks ?? []), [blocks]);
-  // The person took over: the line goes before their first message since then.
+  // The person took over: the line goes before their first message since then. It waits until all
+  // said since is held (an earlier request is, or the start), or it would move when pages come in.
   const dividerAt =
-    holdStart === null
+    holdStart === null ||
+    !(
+      older.startHeld ||
+      groups.some(
+        (group) =>
+          group.kind === "request" &&
+          group.block.at !== null &&
+          Date.parse(group.block.at) < holdStart - 1_000,
+      )
+    )
       ? -1
       : (() => {
           const index = groups.findIndex(
@@ -833,17 +869,67 @@ function Thread({
           return index === -1 ? groups.length : index;
         })();
 
-  const content = `${blocks?.length ?? -1}:${approvals.length}:${working}:${dividerAt}:${older.loads}`;
+  const keepPlace = useCallback(() => {
+    const element = scroller.current;
+    if (element === null) return;
+    const block = firstBlockInView(element);
+    place.current = {
+      block: block?.dataset.block ?? null,
+      offset: block === null ? 0 : top(block) - top(element),
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+    };
+  }, []);
+
+  // Earlier pages are read before the person reaches them (AP-D046): two pages and two screens
+  // stay above what they see, and each goes in without moving it.
+  const readAhead = useCallback(() => {
+    const element = scroller.current;
+    const current = olderNow.current;
+    if (element === null || !current.available || current.loading || current.failed) return;
+    const block = firstBlockInView(element);
+    const page = current.pageOf.get(block?.dataset.block ?? "") ?? 0;
+    if (
+      page < OLDER_PAGES_AHEAD ||
+      element.scrollTop < OLDER_SCREENS_AHEAD * element.clientHeight
+    ) {
+      current.load(keepPlace);
+    }
+  }, [keepPlace]);
+
+  const content = `${blocks?.length ?? -1}:${approvals.length}:${working}:${dividerAt}:${older.pages}`;
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element === null) return;
-    if (placedLoads.current !== older.loads) {
-      // Earlier messages came in above: what the person was reading stays where it was.
-      placedLoads.current = older.loads;
-      element.scrollTop += element.scrollHeight - heightBeforeOlder.current;
+    const kept = place.current;
+    place.current = null;
+    if (kept !== null) {
+      // A page went in above: what the person reads stays where it was. A browser that anchors
+      // scrolling has done this already; otherwise the thread moves by what is left.
+      const block =
+        kept.block === null
+          ? null
+          : element.querySelector<HTMLElement>(`[data-block="${CSS.escape(kept.block)}"]`);
+      const moved =
+        block !== null
+          ? top(block) - top(element) - kept.offset
+          : element.scrollHeight - kept.scrollHeight - (element.scrollTop - kept.scrollTop);
+      if (Math.abs(moved) >= 1) element.scrollTop += moved;
     } else if (atBottom.current) element.scrollTop = element.scrollHeight;
     else setBehind(true);
-  }, [content, older.loads]);
+  }, [content]);
+
+  useEffect(() => {
+    olderNow.current = older;
+    readAhead();
+  }, [older, readAhead, content]);
+
+  useEffect(
+    () => () => {
+      if (aheadFrame.current !== null) cancelAnimationFrame(aheadFrame.current);
+    },
+    [],
+  );
 
   return (
     <div
@@ -853,25 +939,26 @@ function Thread({
         const element = event.currentTarget;
         atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
         if (atBottom.current) setBehind(false);
+        aheadFrame.current ??= requestAnimationFrame(() => {
+          aheadFrame.current = null;
+          readAhead();
+        });
       }}
     >
       <ol className="ag-thread" aria-label="대화" aria-busy={blocks === null}>
         {truncated && <li className="ag-notice-line">오래된 대화는 일부만 불러왔습니다.</li>}
         {older.available && blocks !== null && (
           <li className="ag-notice-line">
-            {/* Not disabled while loading: the button keeps focus for the next press. */}
-            <button
-              className="ag-link"
-              type="button"
-              aria-disabled={older.loading}
-              onClick={() => {
-                if (older.loading) return;
-                heightBeforeOlder.current = scroller.current?.scrollHeight ?? 0;
-                older.load();
-              }}
-            >
-              {older.loading ? "이전 대화를 불러오는 중…" : "이전 대화 보기"}
-            </button>
+            {older.failed ? (
+              <>
+                이전 대화를 불러오지 못했습니다.{" "}
+                <button className="ag-link" type="button" onClick={() => older.load(keepPlace)}>
+                  다시 시도
+                </button>
+              </>
+            ) : (
+              "이전 대화를 불러오는 중…"
+            )}
           </li>
         )}
         {blocks === null ? (
@@ -1009,6 +1096,35 @@ function groupBlocks(blocks: readonly ConversationBlock[]): ThreadGroupModel[] {
   return groups;
 }
 
+/** Where the person was reading: the first block in view and how far below the top edge. */
+interface KeptPlace {
+  readonly block: string | null;
+  readonly offset: number;
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+}
+
+/**
+ * The first conversation block not wholly above the thread's top edge. Blocks (a request, an
+ * answer, a row of tools) follow one another down the thread; a long turn holds many of them.
+ */
+function firstBlockInView(thread: HTMLElement): HTMLElement | null {
+  const blocks = thread.querySelectorAll<HTMLElement>("[data-block]");
+  const edge = top(thread);
+  let low = 0;
+  let high = blocks.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (blocks[middle]!.getBoundingClientRect().bottom <= edge) low = middle + 1;
+    else high = middle;
+  }
+  return blocks[low] ?? null;
+}
+
+function top(element: Element): number {
+  return element.getBoundingClientRect().top;
+}
+
 function TakeoverLine(): React.JSX.Element {
   return (
     <li className="ag-divider" role="separator">
@@ -1032,7 +1148,7 @@ function ThreadGroup({
     return (
       <>
         {line}
-        <li className="ag-notice">
+        <li className="ag-notice" data-block={group.key}>
           <FoldRow icon="bell" label={group.block.text} detail={group.block.details.join("\n")} />
         </li>
       </>
@@ -1059,7 +1175,7 @@ function ThreadGroup({
     return (
       <>
         {line}
-        <li className="ag-request" data-source={block.source.kind}>
+        <li className="ag-request" data-source={block.source.kind} data-block={group.key}>
           <span className="ag-request-label">
             {author !== undefined && <Avatar identity={app.identity(author)} size={16} />}
             {label}
@@ -1103,11 +1219,17 @@ function ThreadGroup({
         </span>
         {group.blocks.map((block) =>
           block.kind === "answer" ? (
-            <ChatMarkdown key={block.key} text={block.text} />
+            <ChatMarkdown key={block.key} text={block.text} block={block.key} />
           ) : block.kind === "thinking" ? (
-            <FoldRow key={block.key} icon="brain" label="생각함" detail={block.text} />
+            <FoldRow
+              key={block.key}
+              icon="brain"
+              label="생각함"
+              detail={block.text}
+              block={block.key}
+            />
           ) : block.kind === "tools" ? (
-            <ToolGroup key={block.key} calls={block.calls} />
+            <ToolGroup key={block.key} calls={block.calls} block={block.key} />
           ) : block.kind === "ask" ? (
             <AskCard key={block.key} ask={block} />
           ) : null,
@@ -1135,7 +1257,7 @@ function AskCard({ ask }: { readonly ask: AskBlock }): React.JSX.Element {
         ? "sent"
         : "closed";
   return (
-    <div className="ag-ask-card" data-state={state}>
+    <div className="ag-ask-card" data-state={state} data-block={ask.key}>
       <div className="ag-ask-card-head">
         <Icon name="hand" size={15} />
         <strong>사람에게 물음 · {askKindLabel(ask.handoffKind)}</strong>
@@ -1186,16 +1308,19 @@ function FoldRow({
   label,
   detail,
   meta,
+  block,
 }: {
   readonly icon: IconName;
   readonly label: string;
   readonly detail: string;
   readonly meta?: string;
+  /** The conversation block this row shows, for keeping the reader's place (AP-D046). */
+  readonly block?: string;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const expandable = detail.trim() !== "";
   return (
-    <div className="ag-fold" data-open={open}>
+    <div className="ag-fold" data-open={open} data-block={block}>
       <button
         type="button"
         className="ag-fold-row"
@@ -1224,13 +1349,19 @@ const TOOL_ICONS: Readonly<Record<ToolKind, IconName>> = {
   other: "spark",
 };
 
-function ToolGroup({ calls }: { readonly calls: readonly ToolCall[] }): React.JSX.Element {
+function ToolGroup({
+  calls,
+  block,
+}: {
+  readonly calls: readonly ToolCall[];
+  readonly block: string;
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const failed = calls.filter((call) => call.failed).length;
   const changes = changeSummary(calls);
   const duration = calls.reduce((sum, call) => sum + (call.durationMs ?? 0), 0);
   return (
-    <div className="ag-fold" data-open={open}>
+    <div className="ag-fold" data-open={open} data-block={block}>
       <button
         type="button"
         className="ag-fold-row"

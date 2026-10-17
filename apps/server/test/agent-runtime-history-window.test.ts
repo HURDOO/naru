@@ -5,10 +5,11 @@ import type { NaruMessage, RunnerMessage } from "../src/agent-runtime/channel-pr
 import {
   fitHistoryTail,
   historyBefore,
+  newestFirstFrom,
   parseHistoryCursor,
 } from "../src/agent-runtime/history-window.js";
 import type { RunnerConnection } from "../src/agent-runtime/runtime-channel-server.js";
-import { ManagedAgentSupervisor, SupervisorError } from "../src/agent-runtime/supervisor.js";
+import { ManagedAgentSupervisor } from "../src/agent-runtime/supervisor.js";
 import { NaruRepository } from "../src/database.js";
 
 const HUMAN: Actor = { kind: "human" };
@@ -17,7 +18,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 });
 
-describe("history read newest first (AP-D045)", () => {
+describe("history read newest first (AP-D045, AP-D046)", () => {
   it("reads cursors forward, from the newest page and before a page", () => {
     expect(parseHistoryCursor(null)).toEqual({ kind: "forward", offset: 0 });
     expect(parseHistoryCursor("70")).toEqual({ kind: "forward", offset: 70 });
@@ -26,6 +27,11 @@ describe("history read newest first (AP-D045)", () => {
     for (const bad of ["-1", "1.5", "before:", "before:x", "x"]) {
       expect(() => parseHistoryCursor(bad)).toThrow(/cursor/);
     }
+    // Codex's own cursors are opaque: only where a newest-first read starts is taken apart.
+    expect(newestFirstFrom("latest")).toBeNull();
+    expect(newestFirstFrom(historyBefore('{"index":3}'))).toBe('{"index":3}');
+    expect(newestFirstFrom('{"index":3}')).toBeUndefined();
+    expect(newestFirstFrom(null)).toBeUndefined();
   });
 
   it("keeps the newest items that fit a page, at least one", () => {
@@ -74,18 +80,43 @@ describe("history read newest first (AP-D045)", () => {
     });
     expect(f.cursors(older)).toEqual(["latest", null]);
 
-    // Codex reads forward only; nothing is asked of it that it cannot answer.
-    const codex = f.connect("codex", () => ({ items: ["turn"], nextCursor: null }));
+    // Codex's cursors read one way: its reply says where the page before ends (AP-D046).
+    const codex = f.connect("codex", (cursor) =>
+      cursor === "latest"
+        ? { items: ["t3", "t4"], nextCursor: "from-t3", previousCursor: "after-t3" }
+        : cursor === "before:after-t3"
+          ? { items: ["t1", "t2"], nextCursor: null, previousCursor: null }
+          : { items: ["t3", "t4", "t5"], nextCursor: null },
+    );
     expect(await f.supervisor.readHistoryWindow(codex, { kind: "latest" })).toEqual({
+      items: ["t3", "t4"],
+      cursor: "from-t3",
+      nextCursor: null,
+      previousCursor: "after-t3",
+    });
+    expect(
+      await f.supervisor.readHistoryWindow(codex, { kind: "before", cursor: "after-t3" }),
+    ).toEqual({ items: ["t1", "t2"], cursor: null, nextCursor: null, previousCursor: null });
+    expect(
+      await f.supervisor.readHistoryWindow(codex, { kind: "forward", cursor: "from-t3" }),
+    ).toEqual({
+      items: ["t3", "t4", "t5"],
+      cursor: "from-t3",
+      nextCursor: null,
+      previousCursor: null,
+    });
+
+    // A Codex runner an earlier Host started takes the cursor for its own and fails: read forward.
+    const earlier = f.connect("codex", (cursor) =>
+      cursor === null ? { items: ["turn"], nextCursor: null } : null,
+    );
+    expect(await f.supervisor.readHistoryWindow(earlier, { kind: "latest" })).toEqual({
       items: ["turn"],
       cursor: null,
       nextCursor: null,
       previousCursor: null,
     });
-    await expect(
-      f.supervisor.readHistoryWindow(codex, { kind: "before", cursor: "70" }),
-    ).rejects.toBeInstanceOf(SupervisorError);
-    expect(f.cursors(codex)).toEqual([null]);
+    expect(f.cursors(earlier)).toEqual(["latest", null]);
   });
 });
 
@@ -108,7 +139,9 @@ function fixture() {
   let ordinal = 0;
   const connect = (
     runtime: "claude" | "codex",
-    answer: (cursor: string | null) => { items: unknown[]; nextCursor: string | null } | null,
+    answer: (
+      cursor: string | null,
+    ) => { items: unknown[]; nextCursor: string | null; previousCursor?: string | null } | null,
   ): string => {
     const agentSessionId = core.registerAgentSession(
       {

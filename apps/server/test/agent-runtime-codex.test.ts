@@ -376,6 +376,26 @@ describe("managed Codex agent in a DurableSession Host PTY (AP-T13)", () => {
       })),
     );
 
+    // Newest first (AP-D046): the newest page, then the pages before it, are the same turns in
+    // the same order, and the newest page reads again forward from where it starts.
+    const ids = (items: readonly unknown[]) => items.map((turn) => (turn as { id: string }).id);
+    const latest = await supervisor.readHistoryWindow(worker, { kind: "latest" });
+    expect(ids(latest.items)).toEqual(ids(turns.slice(-latest.items.length)));
+    expect(latest.nextCursor).toBeNull();
+    let newestFirst = [...latest.items];
+    for (let before = latest.previousCursor; before !== null;) {
+      const page = await supervisor.readHistoryWindow(worker, { kind: "before", cursor: before });
+      expect(page.items.length).toBeGreaterThan(0);
+      newestFirst = [...page.items, ...newestFirst];
+      before = page.previousCursor;
+    }
+    expect(ids(newestFirst)).toEqual(ids(turns));
+    const reread = await supervisor.readHistoryWindow(worker, {
+      kind: "forward",
+      cursor: latest.cursor,
+    });
+    expect(ids(reread.items)).toEqual(ids(latest.items).slice(0, reread.items.length));
+
     // Naru restarts: the relay reconnects and the gate follows the writer Naru remembers.
     await supervisor.switchWriter(worker, "orchestrator", false);
     supervisor.close();
