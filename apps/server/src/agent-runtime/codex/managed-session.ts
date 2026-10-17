@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentApprovalDecision } from "@naru/contracts/naru-agent/v1";
 import type { AgentRuntimeEvent } from "../adapter.js";
 import type { CodexRunnerPlan, NaruMessage } from "../channel-protocol.js";
+import { fitHistoryPage, historyMessage } from "../history-page.js";
 import { RunnerChannelClient } from "../runner-channel.js";
 import type { WriterKind } from "../writer-gate.js";
 import {
@@ -285,21 +286,36 @@ export class CodexManagedSession {
 
   async #history(requestId: string, cursor: string | null): Promise<void> {
     try {
-      const page = asRecord(
-        await this.#rpc?.request("thread/turns/list", {
-          threadId: this.#threadId,
-          limit: HISTORY_PAGE,
-          sortDirection: "asc",
-          itemsView: "full",
-          ...(cursor === null ? {} : { cursor }),
-        }),
-      );
-      const items = Array.isArray(page?.data) ? (page.data as unknown[]) : [];
-      const next = typeof page?.nextCursor === "string" ? page.nextCursor : null;
-      this.#channel.send({ type: "history", requestId, items, nextCursor: next });
+      let page = await this.#turns(cursor, HISTORY_PAGE);
+      let items = fitHistoryPage(page.turns);
+      // Fewer turns fit the channel (AP-D040): ask for that many so the cursor follows the last one.
+      if (items.length < page.turns.length) {
+        page = await this.#turns(cursor, items.length);
+        items = fitHistoryPage(page.turns);
+      }
+      this.#channel.send(historyMessage(requestId, items, page.nextCursor));
     } catch {
       this.#channel.send({ type: "error", requestId, code: "HISTORY_FAILED" });
     }
+  }
+
+  async #turns(
+    cursor: string | null,
+    limit: number,
+  ): Promise<{ readonly turns: unknown[]; readonly nextCursor: string | null }> {
+    const page = asRecord(
+      await this.#rpc?.request("thread/turns/list", {
+        threadId: this.#threadId,
+        limit,
+        sortDirection: "asc",
+        itemsView: "full",
+        ...(cursor === null ? {} : { cursor }),
+      }),
+    );
+    return {
+      turns: Array.isArray(page?.data) ? (page.data as unknown[]) : [],
+      nextCursor: typeof page?.nextCursor === "string" ? page.nextCursor : null,
+    };
   }
 
   async #call(method: string, params: unknown): Promise<void> {

@@ -30,9 +30,9 @@ if (args.includes("app-server")) {
   const broadcast = (frame) => { for (const ws of sockets) ws.send(JSON.stringify(frame)); };
   // Like the real app-server, a thread carries its cwd, parent and status (Naru verifies them).
   const thread = (id) => ({ id, cwd: process.cwd(), parentThreadId: null, status: { type: active?.threadId === id ? "active" : "idle" } });
-  const finish = (threadId, turn, status) => {
+  const finish = (threadId, turn, status, items = []) => {
     active = null;
-    threads.get(threadId).turns.push({ id: turn, status });
+    threads.get(threadId).turns.push({ id: turn, status, items });
     broadcast({ method: "turn/completed", params: { threadId, turn: { id: turn, status } } });
   };
   const http = createServer();
@@ -101,7 +101,14 @@ if (args.includes("app-server")) {
               await new Promise((done) => setTimeout(done, 50));
             }
           }
-          return finish(p.threadId, turn, mine.interrupted ? "interrupted" : "completed");
+          // A big turn: a diff kept whole and a screenshot whose bytes a history page leaves out.
+          const items = text.includes("BIGDIFF")
+            ? [
+                { type: "fileChange", id: "change-" + turn, status: "completed", changes: [{ path: "big.txt", kind: "add", diff: "+x\\n".repeat(100000) }] },
+                { type: "mcpToolCall", id: "shot-" + turn, server: "browser", tool: "screenshot", status: "completed", result: { content: [{ type: "image", data: "A".repeat(2000000), mimeType: "image/png" }] } },
+              ]
+            : [];
+          return finish(p.threadId, turn, mine.interrupted ? "interrupted" : "completed", items);
         }
         case "turn/interrupt": {
           if (active === null || active.turn !== p.turnId) return error("no active turn");
@@ -111,8 +118,9 @@ if (args.includes("app-server")) {
         case "thread/turns/list": {
           const turns = threads.get(p.threadId)?.turns ?? [];
           const start = p.cursor === undefined ? 0 : Number(p.cursor);
-          const page = turns.slice(start, start + 2);
-          return reply({ data: page, nextCursor: start + 2 < turns.length ? String(start + 2) : null });
+          const size = Math.min(2, p.limit ?? 2);
+          const page = turns.slice(start, start + size);
+          return reply({ data: page, nextCursor: start + size < turns.length ? String(start + size) : null });
         }
         default: return reply({});
       }

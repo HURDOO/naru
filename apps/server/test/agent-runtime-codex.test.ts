@@ -345,6 +345,37 @@ describe("managed Codex agent in a DurableSession Host PTY (AP-T13)", () => {
     const second = await supervisor.readHistory(worker, first.nextCursor);
     expect(second.items.length).toBeGreaterThan(0);
 
+    // Two big turns are over a page: each comes alone, its diff whole and its screenshot without
+    // its bytes, and the next page starts right after it (AP-D040).
+    for (const word of ["BIGDIFF one", "BIGDIFF two", "BIGDIFF three"]) {
+      const before = env.codexEvents().filter((event) => event.event === "turn").length;
+      supervisor.sendTurn(worker, word, "gui", gui.generation);
+      await until(
+        () => env.codexEvents().filter((event) => event.event === "turn").length === before + 1,
+        `${word} starts`,
+      );
+      await until(() => agent().status === "idle", `${word} ends`);
+    }
+    const pages: unknown[][] = [];
+    for (let cursor: string | null = null; pages.length === 0 || cursor !== null;) {
+      const page = await supervisor.readHistory(worker, cursor);
+      expect(JSON.stringify(page.items).length).toBeLessThanOrEqual(512 * 1024);
+      pages.push([...page.items]);
+      cursor = page.nextCursor;
+    }
+    const big = (turn: unknown) => JSON.stringify(turn).includes('"fileChange"');
+    expect(pages.every((page) => page.filter(big).length <= 1)).toBe(true);
+    const turns = pages.flat();
+    expect(new Set(turns.map((turn) => (turn as { id: string }).id)).size).toBe(turns.length);
+    expect(turns.slice(-3)).toMatchObject(
+      [0, 1, 2].map(() => ({
+        items: [
+          { type: "fileChange", changes: [{ diff: "+x\n".repeat(100_000) }] },
+          { type: "mcpToolCall", result: { content: [{ type: "image" }] } },
+        ],
+      })),
+    );
+
     // Naru restarts: the relay reconnects and the gate follows the writer Naru remembers.
     await supervisor.switchWriter(worker, "orchestrator", false);
     supervisor.close();
