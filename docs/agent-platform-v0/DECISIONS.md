@@ -1098,7 +1098,8 @@ job`)에 들어가고, 머리줄에 작업 브랜치를 보인다.
   - Codex의 최신부터 읽기. Codex runner는 Host의 Codex launcher 안에 있어 바꾸면 Host가 재시작된다. 대기 중인 Codex
     변경(`4a8777d`)과 함께 Host 재시작 업그레이드 때 한다.
   - 위로 스크롤하면 저절로 받기. 지금은 버튼으로 받는다.
-- 호환: 새 계약은 `@naru/contracts/naru-agent/v1/history`(`AgentHistoryReadSchema`, `AgentHistoryWindowSchema`)에 둔다.
-  Host가 돌리는 코드는 v1 index를 import하므로 index를 바꾸면 Host가 재시작된다. 응답에 `cursor`·`previousCursor`가
+- 호환: 새 계약은 `@naru/contracts/naru-agent/v1/history`(`AgentHistoryReadSchema`, `AgentHistoryWindowSchema`)에 두고
+  v1의 `AgentHistoryQuerySchema`·`AgentHistoryPageSchema`를 확장한다. Host가 돌리는 코드는 v1 index를 import하므로
+  index를 바꾸거나, 서버가 index의 export를 덜 쓰게 되어 묶음 chunk의 export가 줄어도 Host가 재시작된다. 응답에 `cursor`·`previousCursor`가
   더해지고 `?cursor=`와 빈 요청은 그대로다. 같은 release의 웹만 쓴다. runner 통로 메시지 형식은 그대로다
   (cursor는 문자열이고 답의 필드도 같다).
