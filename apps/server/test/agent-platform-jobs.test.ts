@@ -322,3 +322,87 @@ describe("reopening a job (AP-D036)", () => {
     expect(batches).toEqual([]);
   });
 });
+
+describe("what agents read leaves completed jobs (AP-D044)", () => {
+  it("drops a completed job's instructions, work and words until the job is reopened", async () => {
+    const f = fixture();
+    const delegation = f.core.delegate(f.ctx(agent(f.orchestrator)), {
+      scope: { kind: "agent", projectId: f.project.id, agentSessionId: f.worker },
+      verbatim: "태그 목록을 만들어라",
+      originUserInstructionId: f.goal.id,
+    });
+    const listed = f.task("태그 목록", f.worker, delegation.id);
+    const later = f.core.createHumanInstruction(f.ctx(HUMAN), {
+      scope: { kind: "project", projectId: f.project.id },
+      verbatim: "검색을 고쳐 줘",
+    });
+    f.task("검색 고치기", f.other, later.id);
+    const word = f.core.createHumanInstruction(f.ctx(HUMAN), {
+      scope: { kind: "agent", projectId: f.project.id, agentSessionId: f.worker },
+      verbatim: "서버는 내가 껐어",
+    });
+    const reads = () => ({
+      inForce: f.core
+        .getInstructionsInForce(agent(f.orchestrator), { projectId: f.project.id })
+        .instructions.map((item) => item.id),
+      addressed: f.core.getDelegatedWork(agent(f.orchestrator)).instructions.map((item) => item.id),
+      work: f.core.getProjectWork(agent(f.orchestrator), f.project.id),
+    });
+    expect(reads().inForce).toEqual([f.goal.id, later.id, word.id]);
+    expect(reads().addressed).toEqual([f.goal.id, later.id]);
+    expect(
+      reads()
+        .work.tasks.map((task) => task.title)
+        .sort(),
+    ).toEqual(["검색 고치기", "태그 목록"]);
+    expect(f.core.getDelegatedWork(agent(f.worker)).instructions.map((item) => item.id)).toEqual([
+      delegation.id,
+      word.id,
+    ]);
+
+    f.finish(listed.id);
+    const { runtime } = fakeRuntime(f.core);
+    const jobs = new JobLifecycle({ core: f.core, runtime, stopWaitMs: 1_000 });
+    await jobs.complete(f.ctx(HUMAN), f.goal.id, []);
+    // The goal, its delegation and task, and words to the cleaned-up worker are done with.
+    expect(reads().inForce).toEqual([later.id]);
+    expect(reads().addressed).toEqual([later.id]);
+    expect(reads().work).toMatchObject({ tasksOfCompletedJobs: 1 });
+    expect(reads().work.tasks.map((task) => task.title)).toEqual(["검색 고치기"]);
+    // The person's own views still show everything.
+    expect(
+      f.core.getApplicableInstructions(HUMAN, { projectId: f.project.id }).map((item) => item.id),
+    ).toEqual([f.goal.id, later.id]);
+    expect(f.core.getProjectState(HUMAN, f.project.id).tasks).toHaveLength(2);
+    expect(
+      f.core.getAgentInstructions(HUMAN, f.worker).instructions.map((item) => item.id),
+    ).toEqual([delegation.id, word.id]);
+
+    const reopened = await jobs.reopen(f.ctx(HUMAN), f.goal.id, "태그 색도 바꿔 줘");
+    expect(reads().inForce).toEqual([f.goal.id, later.id, word.id, reopened.instruction.id]);
+    expect(reads().work).toMatchObject({ tasksOfCompletedJobs: 0 });
+    expect(reads().work.tasks).toHaveLength(2);
+  });
+
+  it("keeps an open job's instructions and only the latest 20 other words", () => {
+    const f = fixture();
+    f.task("태그 목록", f.worker);
+    const words = Array.from({ length: 23 }, (_, index) =>
+      f.core.createHumanInstruction(f.ctx(HUMAN), {
+        scope: { kind: "global" },
+        verbatim: `지금 어때? ${index}`,
+      }),
+    );
+    const read = f.core.getInstructionsInForce(agent(f.orchestrator), {
+      projectId: f.project.id,
+    });
+    // The oldest instruction is the goal being worked on: it stays; the oldest words go.
+    expect(read.instructions.map((item) => item.id)).toEqual([
+      f.goal.id,
+      ...words.slice(3).map((item) => item.id),
+    ]);
+    expect(read.earlierWordsLeftOut).toBe(3);
+    // The person reads them all.
+    expect(f.core.getApplicableInstructions(HUMAN, { projectId: f.project.id })).toHaveLength(24);
+  });
+});

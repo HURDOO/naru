@@ -360,7 +360,11 @@ export function query({ prompt, options }) {
         const delegated =
           role === "main-orchestrator"
             ? {
-                instructions: (await act(options, "get_applicable_user_instructions", {})) ?? [],
+                instructions: (
+                  (await act(options, "get_applicable_user_instructions", {})) ?? {
+                    instructions: [],
+                  }
+                ).instructions,
                 origins: [],
               }
             : ((await act(options, "get_delegated_work", {})) ?? { instructions: [], origins: [] });

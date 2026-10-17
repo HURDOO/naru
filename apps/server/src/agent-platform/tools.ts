@@ -197,9 +197,10 @@ function ownProject(core: AgentPlatformCore, actor: Actor, projectId: string | u
 export const AGENT_TOOLS: readonly AgentTool[] = [
   readTool(
     "get_project_state",
-    "Read the approved intent contract, active plan, tasks and open handoffs of a project.",
+    "Read the approved intent contract, active plan, tasks and open handoffs of a project. Tasks " +
+      "of jobs the user completed are only counted; reopening a job lists them again.",
     z.strictObject({ project_id: Id.optional() }),
-    (core, actor, input) => core.getProjectState(actor, ownProject(core, actor, input.project_id)),
+    (core, actor, input) => core.getProjectWork(actor, ownProject(core, actor, input.project_id)),
   ),
   readTool(
     "list_projects",
@@ -212,11 +213,13 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     "get_applicable_user_instructions",
     "Read the verbatim user instructions in force for you (global, project, task and your own). " +
       "Orchestrators also get what the person said directly to any agent of that project " +
-      "(scope agent, with its agentSessionId). The latest user instruction wins over agent " +
+      "(scope agent, with its agentSessionId). It holds every instruction of the user's open jobs " +
+      "and their latest 20 other words (earlierWordsLeftOut counts the older ones); a job the " +
+      "user completed leaves it until they reopen it. The latest user instruction wins over agent " +
       "reinterpretations.",
     z.strictObject({ project_id: Id.optional(), task_id: Id.optional() }),
     (core, actor, input) =>
-      core.getApplicableInstructions(actor, {
+      core.getInstructionsInForce(actor, {
         projectId:
           input.project_id ?? (actor.kind === "agent" ? ownProjectOrNull(core, actor) : null),
         ...(input.task_id === undefined ? {} : { taskId: input.task_id }),
@@ -226,8 +229,8 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   readTool(
     "get_delegated_work",
     "Read the work given to you, your tasks or (project orchestrators) your project, verbatim, by " +
-      "orchestrators or the user, and the original user instruction each one serves. Call it when " +
-      "Naru wakes you.",
+      "orchestrators or the user, and the original user instruction each one serves; work of jobs " +
+      "the user completed is left out. Call it when Naru wakes you with work.",
     z.strictObject({}),
     (core, actor) => core.getDelegatedWork(actor),
   ),

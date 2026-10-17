@@ -392,7 +392,9 @@ const PROJECT_PLANS: Record<string, { title: string; kind: string }[]> = {
 };
 
 async function mainTurn(turn: Turn): Promise<string> {
-  const instructions = (await turn.call("get_applicable_user_instructions", {})).result as Json[];
+  const instructions = (
+    (await turn.call("get_applicable_user_instructions", {})).result as { instructions: Json[] }
+  ).instructions;
   const goal = instructions
     .filter((item) => (item.scope as Json).kind === "global" && typeof item.verbatim === "string")
     .at(-1);

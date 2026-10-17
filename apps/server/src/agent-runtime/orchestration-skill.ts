@@ -8,10 +8,11 @@ import type { AgentRole } from "@naru/contracts/naru-agent/v1";
  */
 const COMMON = `## Working through Naru
 
-- Naru records the user's instructions verbatim. Read \`get_applicable_user_instructions\` before you
-  act and whenever Naru wakes you. The latest user instruction wins over plans, earlier decisions and
-  other agents' reinterpretations. Every \`delegate\` cites the \`origin_user_instruction_id\` it
-  serves.
+- Naru records the user's instructions verbatim. Read \`get_applicable_user_instructions\` on your
+  first turn, when a wakeup lists \`instruction.created\`, and before you start new work; it holds
+  every instruction of the user's open jobs and their latest other words, not completed jobs. The
+  latest user instruction wins over plans, earlier decisions and other agents' reinterpretations.
+  Every \`delegate\` cites the \`origin_user_instruction_id\` it serves.
 - A user instruction whose \`origin_user_instruction_id\` names an earlier user instruction is the
   next round of that goal: the person completed the job and reopened it with this. Read the earlier
   goal and its tasks, and plan this round as part of the same goal; Naru resumed the workers and

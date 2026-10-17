@@ -83,7 +83,8 @@ export class AgentPlatformStore {
 
   /**
    * Human instructions that apply to a project, task or agent, oldest first, excluding ones that a
-   * later instruction superseded. Global instructions always apply.
+   * later instruction superseded. Global instructions always apply. With `openJobsOnly` (what agents
+   * work by, AP-D044), a completed job's instructions and words to a cleaned-up agent are left out.
    */
   listApplicableHumanInstructions(target: {
     readonly projectId: string | null;
@@ -91,6 +92,7 @@ export class AgentPlatformStore {
     readonly agentSessionId: string | null;
     /** Also what the person said directly to any agent of the project (orchestrators). */
     readonly agentWords?: boolean;
+    readonly openJobsOnly?: boolean;
   }): Instruction[] {
     const rows = this.#database
       .prepare(
@@ -106,20 +108,36 @@ export class AgentPlatformStore {
            AND NOT EXISTS (
              SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id
            )
+           ${
+             target.openJobsOnly === true
+               ? `AND NOT ${inCompletedJob("i.id")}
+                  AND NOT (i.scope_kind = 'agent' AND EXISTS (
+                    SELECT 1 FROM agent_sessions AS s
+                    WHERE s.id = i.agent_session_id AND s.retired_at IS NOT NULL
+                  ))`
+               : ""
+           }
          ORDER BY i.created_at, i.rowid`,
       )
-      .all({ ...target, agentWords: target.agentWords === true ? 1 : 0 }) as InstructionRow[];
+      .all({
+        projectId: target.projectId,
+        taskId: target.taskId,
+        agentSessionId: target.agentSessionId,
+        agentWords: target.agentWords === true ? 1 : 0,
+      }) as InstructionRow[];
     return rows.map(instructionFromRow);
   }
 
   /**
    * Instructions addressed to an agent or its tasks (and, for a project orchestrator, to its
-   * project), by anyone, still in force, oldest first.
+   * project), by anyone, still in force, oldest first. With `openJobsOnly` (AP-D044), not those of
+   * a job the person completed.
    */
   listAddressedInstructions(
     agentSessionId: string,
     projectId: string | null,
     limit: number,
+    options: { readonly openJobsOnly?: boolean } = {},
   ): Instruction[] {
     const rows = this.#database
       .prepare(
@@ -135,6 +153,7 @@ export class AgentPlatformStore {
              AND NOT EXISTS (
                SELECT 1 FROM agent_instructions AS later WHERE later.supersedes_id = i.id
              )
+             ${options.openJobsOnly === true ? `AND NOT ${inCompletedJob("i.id")}` : ""}
            ORDER BY i.created_at DESC, i.rowid DESC
            LIMIT @limit
          ) ORDER BY created_at, position`,
@@ -303,11 +322,28 @@ export class AgentPlatformStore {
     return row === undefined ? null : this.#taskFromRow(row);
   }
 
-  listTasks(projectId: string): AgentTask[] {
+  /** A project's tasks; with `openJobsOnly`, not those of a job the person completed (AP-D044). */
+  listTasks(projectId: string, options: { readonly openJobsOnly?: boolean } = {}): AgentTask[] {
     const rows = this.#database
-      .prepare("SELECT * FROM agent_tasks WHERE project_id = ? ORDER BY priority DESC, created_at")
+      .prepare(
+        `SELECT * FROM agent_tasks AS t WHERE t.project_id = ?
+         ${options.openJobsOnly === true ? `AND NOT ${inCompletedJob("t.origin_instruction_id")}` : ""}
+         ORDER BY t.priority DESC, t.created_at`,
+      )
       .all(projectId) as TaskRow[];
     return rows.map((row) => this.#taskFromRow(row));
+  }
+
+  /** How many of a project's tasks belong to jobs the person completed (AP-D044). */
+  countCompletedJobTasks(projectId: string): number {
+    return (
+      this.#database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM agent_tasks AS t
+           WHERE t.project_id = ? AND ${inCompletedJob("t.origin_instruction_id")}`,
+        )
+        .get(projectId) as { count: number }
+    ).count;
   }
 
   /** Writes a whole task row only when the stored revision still matches. */
@@ -1359,6 +1395,25 @@ export class AgentPlatformStore {
 }
 
 const StringListSchema = z.array(z.string());
+
+/**
+ * Whether the instruction in `column` belongs to a job the person completed (AP-D036, AP-D044). A
+ * job is its goal; the goal's next rounds cite it, and delegations and tasks cite the goal or a
+ * round, so the goal is the instruction itself, its origin, or its origin's origin.
+ */
+function inCompletedJob(column: string): string {
+  return `EXISTS (
+    SELECT 1 FROM agent_jobs AS job
+    WHERE job.completed_at IS NOT NULL AND job.goal_instruction_id IN (
+      ${column},
+      (SELECT origin.origin_user_instruction_id FROM agent_instructions AS origin
+       WHERE origin.id = ${column}),
+      (SELECT root.origin_user_instruction_id FROM agent_instructions AS origin
+       JOIN agent_instructions AS root ON root.id = origin.origin_user_instruction_id
+       WHERE origin.id = ${column})
+    )
+  )`;
+}
 
 function nextVersion(database: Database.Database, table: string, projectId: string): number {
   const current = database

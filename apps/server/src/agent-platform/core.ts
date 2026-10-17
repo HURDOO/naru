@@ -235,13 +235,44 @@ export class AgentPlatformCore {
   }
 
   /** Human instructions in force for a target; agents may only read inside their own scope. */
-  getApplicableInstructions(
+  getApplicableInstructions(actor: Actor, target: InstructionTarget): Instruction[] {
+    return this.#applicableInstructions(actor, target, false);
+  }
+
+  /**
+   * The person's words an agent works by (AP-D044): every instruction of an open job that has work,
+   * and the latest of the rest (a goal not taken up yet, words typed to an agent). A completed job's
+   * instructions and words to a cleaned-up agent leave it; reopening the job brings them back.
+   */
+  getInstructionsInForce(
     actor: Actor,
-    target: {
-      readonly projectId: string | null;
-      readonly taskId?: string;
-      readonly agentSessionId?: string;
-    },
+    target: InstructionTarget,
+  ): { readonly instructions: Instruction[]; readonly earlierWordsLeftOut: number } {
+    const all = this.#applicableInstructions(actor, target, true);
+    // A goal is its own job; its next rounds name it (AP-D036).
+    const jobOf = (instruction: Instruction): string | null =>
+      instruction.originUserInstructionId ??
+      (instruction.scope.kind === "global" || instruction.scope.kind === "project"
+        ? instruction.id
+        : null);
+    const jobs = [...new Set(all.map(jobOf).filter((id): id is string => id !== null))];
+    const work = this.#store.listGoalWork(jobs);
+    const working = new Set([...work.tasks, ...work.delegations].map((item) => item.goalId));
+    const words = all.filter((instruction) => !working.has(jobOf(instruction) ?? ""));
+    const recent = new Set(words.slice(-RECENT_WORDS).map((instruction) => instruction.id));
+    const left = new Set(
+      words.filter((instruction) => !recent.has(instruction.id)).map((item) => item.id),
+    );
+    return {
+      instructions: all.filter((instruction) => !left.has(instruction.id)),
+      earlierWordsLeftOut: left.size,
+    };
+  }
+
+  #applicableInstructions(
+    actor: Actor,
+    target: InstructionTarget,
+    openJobsOnly: boolean,
   ): Instruction[] {
     const agent = this.#authorize(actor, "state.read", target.projectId);
     // Orchestrators also read what the person said directly to the project's agents, so a word
@@ -254,6 +285,7 @@ export class AgentPlatformCore {
       taskId: target.taskId ?? null,
       agentSessionId: target.agentSessionId ?? null,
       agentWords: orchestrator,
+      openJobsOnly,
     });
   }
 
@@ -276,10 +308,12 @@ export class AgentPlatformCore {
       agent.role === "project-orchestrator" &&
       agent.projectId !== null &&
       this.leadProjectOrchestrator(agent.projectId)?.id === agent.id;
+    // A completed job's work is done (AP-D044); reopening it addresses it again.
     const instructions = this.#store.listAddressedInstructions(
       agent.id,
       leads ? agent.projectId : null,
       50,
+      { openJobsOnly: true },
     );
     return { instructions, origins: this.#origins(instructions) };
   }
@@ -1462,6 +1496,31 @@ export class AgentPlatformCore {
       intentContract: this.#store.getApprovedIntentContract(projectId),
       activePlan: this.#store.getActivePlan(projectId),
       tasks: this.#store.listTasks(projectId),
+      openHandoffs: this.#store.listOpenHandoffs(projectId),
+    };
+  }
+
+  /**
+   * The project as an agent works on it (AP-D044): the tasks of completed jobs are counted, not
+   * listed, so the snapshot does not grow with every job done.
+   */
+  getProjectWork(
+    actor: Actor,
+    projectId: string,
+  ): {
+    readonly intentContract: IntentContract | null;
+    readonly activePlan: Plan | null;
+    readonly tasks: AgentTask[];
+    readonly tasksOfCompletedJobs: number;
+    readonly openHandoffs: Handoff[];
+  } {
+    this.#authorize(actor, "state.read", projectId);
+    this.#requireProject(projectId);
+    return {
+      intentContract: this.#store.getApprovedIntentContract(projectId),
+      activePlan: this.#store.getActivePlan(projectId),
+      tasks: this.#store.listTasks(projectId, { openJobsOnly: true }),
+      tasksOfCompletedJobs: this.#store.countCompletedJobTasks(projectId),
       openHandoffs: this.#store.listOpenHandoffs(projectId),
     };
   }
@@ -3018,6 +3077,14 @@ export class AgentPlatformCore {
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 /** Instructions one conversation view reads: the newest, enough for a long-running agent. */
 const CONVERSATION_INSTRUCTIONS = 200;
+/** The person's words outside an open job's work that an agent still reads (AP-D044). */
+const RECENT_WORDS = 20;
+
+interface InstructionTarget {
+  readonly projectId: string | null;
+  readonly taskId?: string;
+  readonly agentSessionId?: string;
+}
 
 /** The `--name` Naru gives a managed Claude session; recipients are resolved from it (AP-D015). */
 export function nativeSessionName(agentSessionId: string): string {
