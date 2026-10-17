@@ -446,7 +446,9 @@
   - 검증: [validation/web-ui.md](validation/web-ui.md)의 AP-T22 1단계. lint, typecheck, vitest 전체 통과.
   - 남음:
     - 2단계: 맡긴 일 작업공간, 새 프로젝트를 기본 작업공간대로 만들어 실행(AP-D032). 대화를 에이전트 Pane으로
-      옮기는 것은 AP-D039로 했다(2026-10-17, 테스트 앱 반영 전, 검증은 validation/web-ui.md의 AP-D039).
+      옮기는 것은 AP-D039로 했다(2026-10-17, 검증은 validation/web-ui.md의 AP-D039). 2026-10-17 사용자 승인으로
+      build `9cd2de8`을 테스트 앱에 올렸다. Naru만 재시작, DB 변경 없음, status healthy, doctor 25/25. 실제 Claude
+      Code TUI로 바꾸는 것은 테스트 앱에서 아직 확인하지 않았다.
     - 내 Pane에 대한 쓰기 요청과 허락(AP-D030): 새 MCP 경로가 필요하다.
     - 편집의 배치 틀 고르기.
   - 꺼진 에이전트 정리(AP-D033, 2026-10-16): 관제실 "꺼진 에이전트 정리", DB v22 `retired_at`. 완료 때 정리와
