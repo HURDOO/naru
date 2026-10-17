@@ -450,7 +450,9 @@
       build `9cd2de8`을 테스트 앱에 올렸다. Naru만 재시작, DB 변경 없음, status healthy, doctor 25/25. 실제 Claude
       Code TUI로 바꾸는 것은 테스트 앱에서 아직 확인하지 않았다.
     - 큰 대화 기록(AP-D040, 2026-10-17, 테스트 앱 반영 전): 스크린샷이 많은 작업자 3과 리뷰어의 대화가 열리지 않던
-      결함을 고쳤다. 검증은 validation/web-ui.md의 AP-D040.
+      결함을 고쳤다. 검증은 validation/web-ui.md의 AP-D040. Claude 쪽(`50e30ec`)은 Naru만 재시작해 올릴 수 있다.
+      Codex 쪽(`4a8777d`)은 Host가 실행하는 Codex launcher를 바꾸므로 그 업그레이드는 Host까지 재시작한다. 이미 떠
+      있는 runner는 예전 코드로 돌므로, 올린 뒤 한 번 다시 띄워야 고친 것이 적용된다.
     - 내 Pane에 대한 쓰기 요청과 허락(AP-D030): 새 MCP 경로가 필요하다.
     - 편집의 배치 틀 고르기.
   - 꺼진 에이전트 정리(AP-D033, 2026-10-16): 관제실 "꺼진 에이전트 정리", DB v22 `retired_at`. 완료 때 정리와
