@@ -312,4 +312,48 @@ describe("Claude SDK runner", () => {
     await expect(runner.readHistory("-1")).rejects.toThrow(/cursor/);
     await runner.stop();
   });
+
+  it("ends a page where it would outgrow the channel; the next starts after it (AP-D040)", async () => {
+    const { port } = fakeSdk();
+    const long = (index: number) => ({
+      type: "assistant",
+      index,
+      message: { role: "assistant", content: [{ type: "text", text: "x".repeat(20_000) }] },
+    });
+    const offsets: number[] = [];
+    const runner = new ClaudeRunner(
+      {
+        ...port,
+        getSessionMessages: (_sessionId, options) => {
+          const offset = options.offset ?? 0;
+          offsets.push(offset);
+          const count = Math.min(options.limit ?? 50, Math.max(0, 60 - offset));
+          return Promise.resolve(Array.from({ length: count }, (_, index) => long(offset + index)));
+        },
+      },
+      PLAN,
+    );
+    const events: AgentRuntimeEvent[] = [];
+    runner.onEvent((event) => events.push(event));
+    runner.start();
+    runner.sendTurn("history");
+    await until(events, (event) => event.type === "conversation-ready");
+    const first = await runner.readHistory(null);
+    // 50 answers of 20 KB are over a page; the text itself is never cut.
+    expect(first.items.length).toBeGreaterThan(0);
+    expect(first.items.length).toBeLessThan(50);
+    expect(JSON.stringify(first.items).length).toBeLessThanOrEqual(512 * 1024);
+    expect(first.items.at(-1)).toEqual(long(first.items.length - 1));
+    expect(first.nextCursor).toBe(String(first.items.length));
+    const read: unknown[] = [...first.items];
+    let cursor = first.nextCursor;
+    while (cursor !== null) {
+      const page = await runner.readHistory(cursor);
+      read.push(...page.items);
+      cursor = page.nextCursor;
+    }
+    expect(read).toEqual(Array.from({ length: 60 }, (_, index) => long(index)));
+    expect(offsets[1]).toBe(first.items.length);
+    await runner.stop();
+  });
 });

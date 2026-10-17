@@ -7,6 +7,7 @@ import {
 } from "./agent-runtime/channel-protocol.js";
 import { ClaudeRunner, resumableRef } from "./agent-runtime/claude/runner.js";
 import { loadClaudeSdk } from "./agent-runtime/claude/sdk-port.js";
+import { historyMessage } from "./agent-runtime/history-page.js";
 import { RunnerChannelClient } from "./agent-runtime/runner-channel.js";
 
 /**
@@ -73,12 +74,7 @@ async function handle(message: NaruMessage): Promise<void> {
       try {
         const page = await (runner?.readHistory(message.cursor) ??
           Promise.resolve({ items: [], nextCursor: null }));
-        channel.send({
-          type: "history",
-          requestId: message.requestId,
-          items: [...page.items],
-          nextCursor: page.nextCursor,
-        });
+        channel.send(historyMessage(message.requestId, page.items, page.nextCursor));
       } catch {
         channel.send({ type: "error", requestId: message.requestId, code: "HISTORY_FAILED" });
       }

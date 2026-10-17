@@ -91,6 +91,8 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - `apps/server/src/agent-runtime/adapter.ts`의 `AgentRuntimeAdapter`가 런타임별 차이를 흡수한다. 하는 일은
   세션 시작과 resume, turn 전송, interrupt, 승인 응답, 이력 조회, 재시작 probe다.
 - 어댑터는 이력을 저장하지 않는다. Chat 화면은 런타임의 공식 history API로 다시 읽는다(AP-D002).
+  - runner는 한 쪽을 대화가 보이는 만큼만 보낸다. 이미지 바이트를 빼고 도구 출력은 8,000자까지 남기며, 한 쪽은
+    512KB 이하다. 그래도 runner 통로 한 줄(1MB)을 넘으면 `HISTORY_TOO_LARGE`로 답한다(AP-D040).
 - `writer-gate.ts`의 reducer가 대화 writer를 하나로 강제한다(INV-05). 이유는 세 런타임 모두 동시 입력을
   진행 중인 turn에 합치거나 유실하기 때문이다.
 - 사람 hold(AP-D005)는 writer를 `gui`나 `tui`(사람)로 옮기는 것으로 표현한다. hold 중

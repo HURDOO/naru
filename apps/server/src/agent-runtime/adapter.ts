@@ -60,7 +60,7 @@ export type AgentRuntimeEvent =
   | { readonly type: "exited"; readonly reason: "stopped" | "crashed" };
 
 export interface HistoryPage {
-  /** Runtime-native items, passed to the UI as-is for rendering; not persisted by Naru. */
+  /** Runtime-native items as the conversation shows them (AP-D040); not persisted by Naru. */
   readonly items: readonly unknown[];
   readonly nextCursor: string | null;
 }

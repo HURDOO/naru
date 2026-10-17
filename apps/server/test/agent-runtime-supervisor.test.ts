@@ -52,7 +52,13 @@ export function query({ prompt, options }) {
   return iterator;
 }
 export async function getSessionMessages(sessionId) {
-  return [{ type: "user", session_id: sessionId }, { type: "assistant", session_id: sessionId }];
+  // A screenshot a tool returned: its bytes alone are over the channel's line bound (AP-D040).
+  const screenshot = { type: "image", source: { type: "base64", media_type: "image/png", data: "A".repeat(2 * 1024 * 1024) } };
+  return [
+    { type: "user", session_id: sessionId },
+    { type: "assistant", session_id: sessionId },
+    { type: "user", session_id: sessionId, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-1", content: [screenshot] }] } },
+  ];
 }
 `;
 
@@ -179,8 +185,13 @@ describe("managed agent supervisor with a real runner process", () => {
     expect(fixture.attention.at(-1)).toBe(false);
     await until(() => fixture.status(first.core) === "idle", "approved turn ends");
 
+    // The screenshot comes without its bytes, and the runner's connection stays (AP-D040).
     const history = await first.supervisor.readHistory(fixture.worker, null);
-    expect(history.items).toHaveLength(2);
+    expect(history.items).toHaveLength(3);
+    expect(history.items[2]).toMatchObject({
+      message: { content: [{ type: "tool_result", content: [{ type: "image" }] }] },
+    });
+    expect(JSON.stringify(history.items).length).toBeLessThan(1_000);
 
     // Naru restarts while a turn is still running; the runner keeps going and reconnects.
     first.supervisor.sendTurn(fixture.worker, "SLOW600 work", "gui", 2);

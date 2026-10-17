@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentApprovalDecision } from "@naru/contracts/naru-agent/v1";
 import type { AgentRuntimeEvent, HistoryPage } from "../adapter.js";
+import { fitHistoryPage } from "../history-page.js";
 import type {
   ClaudePermissionResult,
   ClaudePermissionUpdate,
@@ -149,20 +150,22 @@ export class ClaudeRunner {
     return true;
   }
 
-  /** Official SDK history (AP-D002): Naru re-reads instead of storing the conversation. */
+  /**
+   * Official SDK history (AP-D002): Naru re-reads instead of storing the conversation. A page holds
+   * as many messages as fit the channel (AP-D040); the next page starts after the last one sent.
+   */
   async readHistory(cursor: string | null): Promise<HistoryPage> {
     if (this.#sessionId === null) return { items: [], nextCursor: null };
     const offset = cursor === null ? 0 : Number(cursor);
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Invalid history cursor.");
-    const items = await this.#port.getSessionMessages(this.#sessionId, {
+    const read = await this.#port.getSessionMessages(this.#sessionId, {
       dir: this.#plan.cwd,
       offset,
       limit: HISTORY_PAGE,
     });
-    return {
-      items,
-      nextCursor: items.length === HISTORY_PAGE ? String(offset + HISTORY_PAGE) : null,
-    };
+    const items = fitHistoryPage(read);
+    const more = items.length < read.length || read.length === HISTORY_PAGE;
+    return { items, nextCursor: more ? String(offset + items.length) : null };
   }
 
   /** Ends input after the running turn; pending approvals are denied so nothing hangs. */

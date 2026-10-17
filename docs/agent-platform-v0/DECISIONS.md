@@ -928,3 +928,25 @@
   대화). 맡긴 일 작업공간과 새 프로젝트 기본 배치(AP-D028, AP-D032)는 AP-T22 2단계의 남은 일이다.
 - 호환: API, 이벤트, DB는 바뀌지 않는다. 작업공간은 agent API가 있는 server에서만 대화를 덮는다. 터미널 Pane의 DOM에
   `.pane-body`가 하나 더 생긴다.
+
+## AP-D040. 대화 기록 한 쪽은 대화가 보이는 만큼만 runner 통로로 보낸다
+
+- 상태: accepted (2026-10-17, 사용자 보고로 찾은 결함). 사용자: "근데 왜 아직 작업자3 채팅은 못읽음?"
+- 원인: 테스트 앱 blog의 작업자 3은 브라우저 스크린샷을 도구로 자주 받았다. Claude 대화 기록에 base64 이미지가 그대로
+  있어 기록 50개 한 쪽이 최대 3.6MB였다(11쪽 중 5쪽이 1MB 초과). runner 통로는 한 줄을 1MB까지만 받고 넘으면 연결을
+  끊는다(AP-D002의 runtime channel). 그래서 대화를 열 때마다 runner 연결이 끊기고, 기록 요청은 15초 뒤
+  `AGENT_RUNTIME_UNAVAILABLE`로 끝났다. 대화 화면은 한 쪽이라도 실패하면 대화 전체를 보이지 않는다. 같은 프로젝트의
+  리뷰어(최대 7.1MB)도 같았다. Codex도 turn 20개를 한 번에 보내 같은 위험이 있었다.
+- 결정:
+  - runner(Claude, Codex)가 기록 한 쪽을 보내기 전에 대화가 보이는 만큼만 남긴다. 이미지 블록은 `{type: "image"}`만
+    남기고 바이트를 뺀다. 도구 출력(Claude `tool_result`의 content, Codex `commandExecution.aggregatedOutput`,
+    `mcpToolCall.result`, `dynamicToolCall.contentItems`)은 8,000자까지 남긴다. 대화 화면은 4,000자를 보인다. 사람과
+    에이전트가 한 말, 도구 입력, diff는 그대로 둔다.
+  - 한 쪽은 512KB를 넘지 않는다. Claude는 들어가는 만큼 담고 다음 쪽은 마지막으로 보낸 메시지 다음부터다. Codex는
+    들어가는 turn 수만큼 다시 요청해 cursor가 그 turn 뒤를 가리키게 한다. 혼자서 512KB를 넘는 항목 하나는 긴 문자열을
+    1,000자로 줄인다.
+  - 그래도 통로 한도를 넘는 쪽은 보내지 않고 `HISTORY_TOO_LARGE` 오류로 답한다. runner 연결은 끊기지 않는다.
+- 하지 않은 것: 통로의 1MB 한도는 그대로 둔다. 대화 화면이 기록 전체를 다 읽은 뒤에 보이는 방식도 그대로다.
+- 호환: `GET /api/agent/agents/:id/history`의 형식(`items: unknown[]`, `nextCursor`)은 그대로다. 내용에서 이미지 바이트와
+  긴 도구 출력이 빠지고, Claude cursor는 50 단위가 아닐 수 있다. 쓰는 곳은 웹 대화 화면뿐이다. 대화 기록 원본(런타임의
+  파일)은 바뀌지 않는다.
