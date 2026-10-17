@@ -406,3 +406,29 @@ sandbox(stand-in Claude SDK와 stand-in Claude TUI)에서 `.local/ap-t22/agent-p
 - 실제 Host 테스트 둘(`agent-runtime-host`, `agent-runtime-codex`의 TUI 전환)은 공백이 있는 경로의 Node로 돌리면 바꾸기
   전 코드에서도 실패했다. 공백 없는 Node 24로는 통과한다.
 - 확인하지 못한 것: 테스트 앱의 긴 대화(700개)가 처음 열 때 얼마나 빨라지는지는 올린 뒤 로그로 본다.
+
+# AP-D046 검증: 위쪽 두 쪽 미리 받기와 Codex 최신부터 읽기
+
+- 날짜: 2026-10-18. 격리 UI sandbox(Node 24, 공백 없는 경로), 저장소의 Playwright Chromium과 WebKit(Safari 엔진, scroll
+  anchoring 없음). 검사 script는 `.local/ap-d046/prefetch.mjs`(git 밖). 매 프레임 화면 맨 위 블록과 그 위치를 기록해, 블록이
+  들어온 프레임에 그 블록이 몇 px 움직였는지 센다. sandbox 대역의 메시지에 SDK처럼 `uuid`를 붙이고, `LONG` 세 번으로 약
+  10쪽짜리 대화를 만들었다. WebKit은 service worker가 받은 요청을 Playwright가 가로채지 못해 service worker를 막고 돌렸다.
+
+| 항목                                                                                                                                               | 근거                                                     | Chromium | WebKit   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------- | -------- |
+| 열면 `latest` 1번 뒤에 손대지 않아도 `before` 2번을 받고, 맨 아래(최신)에 머묾                                                                     | Playwright, sandbox                                      | **PASS** | **PASS** |
+| 멈춰 있을 때 위에 쪽이 들어오면 보는 블록이 0px 움직임(WebKit 한 번 1px, 소수 픽셀)                                                                | 같은 검사                                                | **PASS** | **PASS** |
+| 계속 휠로 올리는 중에도 쪽이 들어온 프레임에 페이지만큼 뛰지 않음                                                                                  | 같은 검사                                                | **PASS** | **PASS** |
+| 처음까지 휠로 올라가는 동안 "이전 대화를 불러오는 중…"이 화면에 보인 프레임 0, 처음에 닿으면 줄이 사라짐                                           | 같은 검사                                                | **PASS** | **PASS** |
+| 이전 쪽 받기가 503이면 "이전 대화를 불러오지 못했습니다 · 다시 시도", 키보드로 누르면 받고 줄이 사라짐. focus 표시(Chromium `:focus-visible` 실선) | 같은 검사                                                | **PASS** | **PASS** |
+| 다른 Pane을 열었다 돌아오면 바로 보이고 `latest`를 다시 읽지 않음                                                                                  | 같은 검사                                                | **PASS** | **PASS** |
+| 768·360 화면(동적 resize): 휠로 올리며 쪽이 들어와도 0~1px, 가로 넘침 0, 콘솔 오류 0                                                               | 같은 검사                                                | **PASS** | **PASS** |
+| "여기부터 내가 직접 대화 중" 줄이 쪽이 들어올 때 맨 아래에서 옮겨 가 30px 움직이던 것(WebKit)을 고친 뒤 0px                                        | 같은 검사                                                | —        | **PASS** |
+| 블록 key가 메시지 id라 위에 쪽이 붙어도 기존 블록 key가 같고, 같은 turn이 두 번 와도 key가 겹치지 않음                                             | `agent-conversation.test.ts`                             | **PASS** |          |
+| Codex: 최신 쪽, 그 앞 쪽들을 이어 붙이면 앞에서부터 읽은 turn과 같은 순서로 빠짐없이 같고, 최신 쪽의 `cursor`로 다시 읽으면 같은 turn부터 옴       | `agent-runtime-codex.test.ts`(실제 Host PTY, Codex 대역) | **PASS** |          |
+| supervisor: Codex 답의 `previousCursor`를 그대로 쓰고, 이전 Host의 Codex runner가 거부하면 앞에서부터                                              | `agent-runtime-history-window.test.ts`                   | **PASS** |          |
+| lint, typecheck, format, vitest 전체(1070 통과, 7 skip; 배포 테스트 하나가 부하로 시간 초과 뒤 다시 돌려 통과)                                     | 명령 결과                                                | **PASS** |          |
+
+- Codex 대역은 실제 Codex(0.162.1)의 cursor 규칙을 따른다: `nextCursor`는 쪽의 마지막 turn을 빼고, `backwardsCursor`는 첫
+  turn을 포함한다(Codex `thread-store` `finish_page`). 실제 Codex로 최신부터 읽기는 테스트 앱에 올린 뒤 확인한다.
+- WebKit에서 프로그램으로 준 focus는 `:focus-visible`이 되지 않아 focus 표시는 Chromium으로만 확인했다. 같은 CSS 규칙이다.

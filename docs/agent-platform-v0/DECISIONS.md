@@ -1103,3 +1103,42 @@ job`)에 들어가고, 머리줄에 작업 브랜치를 보인다.
   index를 바꾸거나, 서버가 index의 export를 덜 쓰게 되어 묶음 chunk의 export가 줄어도 Host가 재시작된다. 응답에 `cursor`·`previousCursor`가
   더해지고 `?cursor=`와 빈 요청은 그대로다. 같은 release의 웹만 쓴다. runner 통로 메시지 형식은 그대로다
   (cursor는 문자열이고 답의 필드도 같다).
+
+## AP-D046. 위쪽 두 쪽은 미리 받아 그려 두고, Codex도 최신 쪽부터 읽는다
+
+- 상태: accepted (2026-10-18). AP-D045의 "이전 대화 보기" 버튼을 대신한다. 사용자: "이전 대화 보기 누르면이 아니라.
+  지금 보고있는 대화의 상위 두 대화를 미리 받아서 그려놔야지. 지금 보는 뷰도 방해하지 않으면서." "코덱스도 포함해서
+  배포해도 될듯".
+- 결정:
+  - 미리 받기: 대화창은 보고 있는 곳 위에 늘 두 쪽과 두 화면 높이가 받아져 그려져 있게 한다. 처음 열면 최신 쪽을
+    보인 뒤 그 앞 두 쪽을 이어 받고, 위로 스크롤해 남은 쪽이 둘보다 적어지면 다음 쪽을 받는다. 한 번에 한 쪽씩
+    받는다. 버튼은 없다. 맨 위에는 "이전 대화를 불러오는 중…"이 있지만 미리 받으므로 보통 보이지 않는다. 받기가
+    실패하면 저절로 다시 받지 않고 "이전 대화를 불러오지 못했습니다 · 다시 시도"를 둔다.
+  - 보는 곳 지키기: 쪽을 넣기 직전에 화면 맨 위 블록(요청, 답, 도구 줄 하나)과 그 위치를 재고, 넣은 직후 같은
+    블록이 같은 자리에 있게 scroll을 그 차이만큼만 옮긴다. 재기·넣기·옮기기는 한 번의 동기 commit(`flushSync`와
+    layout effect) 안에서 해서 그사이 그려지는 프레임이 없다. 브라우저가 스스로 scroll을 고정하면(Chrome·Firefox의
+    scroll anchoring) 차이가 0이라 아무것도 하지 않고, 고정 기능이 없는 Safari에서는 그 차이를 옮긴다. 그 블록이
+    합쳐져 사라졌으면 높이 차이로 옮긴다.
+  - 블록 key: 쪽이 위에 붙어도 이미 그린 블록이 그대로 남도록 key를 런타임의 메시지 id(Claude `uuid`, Codex turn
+    id)로 만든다. 순서 번호로 만들던 key는 쪽이 붙을 때마다 바뀌어 모든 블록을 다시 만들었다. id가 없는 항목은
+    그 쪽의 시작 cursor와 쪽 안 순번으로 만든다. "몇 쪽 위인가"는 블록마다 처음 나온 쪽 번호로 센다. 긴 작업 하나가
+    한 묶음(turn)이어도 그 안의 블록 단위로 센다.
+  - 답 본문(markdown)은 글이 바뀔 때만 다시 그린다. 대화창은 이력을 읽을 때마다 다시 그려지고, 미리 받은 쪽만큼
+    그릴 것이 늘었다.
+  - "여기부터 내가 직접 대화 중" 줄은 직접 대화를 시작한 뒤의 말이 모두 받아졌을 때(그 전 요청이 받아졌거나 대화의
+    처음까지 받았을 때)만 그린다. 그 전에는 맨 아래에 잘못 그렸다가 쪽이 들어오면 위로 옮겨 가 보는 곳이 30px
+    움직였다(WebKit에서 확인).
+  - Codex 최신부터 읽기: Codex app-server `thread/turns/list`를 `sortDirection: "desc"`로 읽는다. Codex의 내림차순
+    `nextCursor`는 쪽의 마지막(가장 오래된) turn을 빼고 이어지고, `backwardsCursor`는 쪽의 첫 turn부터 다시 읽는다.
+    그래서 한 쪽(최신 turn부터 512KB까지)을 읽은 뒤, 그 쪽의 가장 오래된 turn 하나를 따로 다시 읽어(`notLoaded`)
+    그 turn부터 앞으로 다시 읽는 cursor(`backwardsCursor`)와 그 앞 쪽을 읽는 cursor(`nextCursor`)를 얻는다. 그사이 새
+    turn이 시작돼 turn id가 어긋나면 다시 읽는다(세 번까지).
+  - runner 통로의 `history` 답에 `previousCursor`(선택)를 더한다. Codex의 최신부터 읽기 답에만 담는다. Claude의
+    offset은 쪽의 시작이 곧 앞 쪽의 끝이라 지금처럼 `nextCursor` 하나로 둘 다 나타낸다.
+- 호환:
+  - 이 변경으로 Host의 Codex launcher가 바뀌어 업그레이드 때 Host가 재시작된다. 사용자가 받아들였다(돌고 있는
+    Codex가 없다).
+  - 이전 Host가 띄운 Codex runner는 `latest`를 자기 cursor로 넘겨 Codex가 거부하고, Naru는 AP-D045처럼 앞에서부터
+    읽는다. 이전 Naru는 Codex에 최신부터 읽기를 묻지 않으므로 `previousCursor`가 든 답을 받지 않는다.
+  - HTTP 계약(`@naru/contracts/naru-agent/v1/history`)은 그대로다. cursor는 불투명한 문자열이고 Codex cursor도
+    1,024자 안이다.
