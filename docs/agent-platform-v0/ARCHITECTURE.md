@@ -147,6 +147,11 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
   다르거나 시간 안에 오지 않으면 이전 형태로 rollback한다.
 - runner는 Naru 재시작을 넘어 살아 있다가 다시 접속한다. 아직 시작 전인 runner가 접속하면 Naru가
   Core 기록으로 plan을 다시 만든다. 접속이 끊긴 채 15초가 지나면 상태를 `unknown`으로 둔다.
+- 이전 Naru process가 띄운 Claude runner(재시작 뒤 `started`로 다시 접속한 것)는 그 Naru의 코드와 지침으로
+  돈다. orchestrator가 writer이고, 차례 사이이고, 승인 대기와 사람 hold가 없으면 writer gate의
+  `request-restart`로 같은 writer의 runner를 끝내고 같은 대화로 다시 띄운다(AP-D042). 접속 때와 차례가 끝날
+  때 확인한다. 그사이 온 wakeup turn은 gate가 받지 않아 5초 뒤 다시 보낸다. 시작 직후 확인
+  (`reconcileAfterStart`)은 전환·재시작 중인 에이전트를 건너뛴다.
 - browser API(사람, device lease 필요):
   - `POST /api/agent/agents`(생성과 실행), `/launch`, `/stop`, `GET /runtime`, `GET /history`
   - `POST /hold`: 개입은 Core hold를 먼저 걸고 writer를 Chat 또는 TUI로 옮긴다. 해제는 writer를

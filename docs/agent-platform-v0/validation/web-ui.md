@@ -358,3 +358,16 @@ sandbox(stand-in Claude SDK와 stand-in Claude TUI)에서 `.local/ap-t22/agent-p
 | lint, typecheck, format, vitest 전체(1060 통과)                                                                                                                                                                        | 명령 결과                         | **PASS** |
 
 - 확인하지 못한 것: 실제 오케스트레이터와 작업자가 지침대로 Ctrl+C 뒤 닫는지는 테스트 앱에 올리고 다시 띄운 뒤 본다.
+
+# AP-D042 검증: 이전 Naru가 띄운 runner를 쉬는 때 다시 띄우기
+
+| 항목                                                                                                                                                                                                                                  | 근거                                                             | 상태     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------- |
+| 실제 runner 프로세스: 차례가 도는 중에 Naru가 바뀌면 그 차례가 먼저 끝나고(`idle`이 `starting`보다 먼저), runner가 한 번 다시 떠 같은 대화(`fake-session-1`)로 이어지고 generation이 2가 됨. 새 runner의 차례 뒤에는 다시 띄우지 않음 | `agent-runtime-supervisor.test.ts`                               | **PASS** |
+| gate: `request-restart`는 차례 사이에만, `stop-resume`에서만 받고, 같은 writer로 멈춤→다시 시작→확인                                                                                                                                  | `agent-runtime-writer-gate.test.ts`                              | **PASS** |
+| 기존 대화↔TUI 전환, Naru 재시작 재접속, 실제 Host 테스트                                                                                                                                                                              | `agent-runtime-supervisor.test.ts`, `agent-runtime-host.test.ts` | **PASS** |
+| lint, typecheck, format, vitest 전체(1062 통과)                                                                                                                                                                                       | 명령 결과                                                        | **PASS** |
+
+- 테스트 앱: 리뷰어 4 runner는 `naru-next-9b2147c`, 2026-10-16 23:44(KST)부터 그대로였고, AP-D040을 올린 뒤에도
+  기록 요청 5건이 15초 뒤 503이었다.
+- 확인하지 못한 것: 올린 뒤 실제 에이전트 넷이 쉬는 때 다시 뜨고 대화가 열리는지는 테스트 앱에서 본다.

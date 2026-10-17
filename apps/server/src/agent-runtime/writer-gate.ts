@@ -33,6 +33,7 @@ export type WriteKind = "turn" | "approval-response" | "interrupt";
 
 export type WriterCommand =
   | { readonly type: "request-switch"; readonly to: WriterKind; readonly interrupt: boolean }
+  | { readonly type: "request-restart" }
   | { readonly type: "cancel-switch" }
   | { readonly type: "turn-started" }
   | { readonly type: "turn-ended" }
@@ -107,6 +108,14 @@ export function reduceWriterGate(state: WriterGateState, command: WriterCommand)
       if (!state.turnActive) return afterQuiesced(quiescing);
       return accept(quiescing, command.interrupt ? [{ type: "interrupt-turn" }] : []);
     }
+    case "request-restart":
+      // The same writer's backend starts again on newer code (AP-D042), only between turns. It
+      // resumes the same conversation like a switch, and rolls back the same way.
+      if (state.phase !== "active" || state.turnActive) return reject("SWITCH_IN_PROGRESS", state);
+      if (state.strategy !== "stop-resume") return reject("NO_SWITCH", state);
+      return accept({ ...state, phase: "stopping", target: state.writer }, [
+        { type: "stop-backend", writer: state.writer },
+      ]);
     case "cancel-switch":
       // Only before anything irreversible: once the backend is stopping, finish or roll back.
       if (state.phase !== "quiescing") return reject("NO_SWITCH", state);

@@ -981,3 +981,26 @@
   도구는 에이전트를 다시 띄울 때 들어간다.
 - 다음에 볼 것(사용자 제안): 사람이 일을 완료할 때 맡겼던 작업자·리뷰어를 끄는 것(AP-D027의 완료 정리)도 Naru가
   직접 하지 않고 오케스트레이터가 정리하는 방식으로 설계할 수 있다.
+
+## AP-D042. 이전 Naru가 띄운 runner는 쉬는 때 새 Naru로 다시 띄운다
+
+- 상태: accepted (2026-10-17, 사용자 결정 "쉼 때 자동으로 다시 띄움"). 사용자: "뭐야 지금 리뷰어4도 안보이는데."
+- 원인: 테스트 앱 blog의 리뷰어 4는 runner가 2026-10-16에 뜬 뒤 다시 뜨지 않아 AP-D040 전 코드(`9b2147c`)로
+  돌았다. 대화 기록 한 쪽이 1MB를 넘어 연결이 끊기고, AP-D040을 올린 뒤에도 기록 요청이 15초 뒤 503으로 끝났다.
+  runner는 Naru 재시작을 넘어 살아 있으므로(AP-T10) 올린 수정과 지침(AP-D041)은 에이전트를 다시 띄워야 들어간다.
+  사람이 에이전트마다 대화↔TUI 전환이나 정지 후 실행으로 다시 띄워야 했다.
+- 결정:
+  - 이 Naru process가 plan을 보내지 않은 runner, 곧 Naru 재시작 뒤 다시 접속한 runner는 쉬는 때 한 번 다시
+    띄운다. 쉬는 때는 차례가 없고, orchestrator가 writer이고, 승인 대기가 없고, 사람이 잡고 있지 않고, runner
+    형태일 때다. 접속할 때와 차례가 끝날 때 확인한다.
+  - writer gate에 `request-restart`를 둔다. `stop-resume`(Claude)에서 차례 사이에만 받는다. 같은 writer의 runner를
+    끝내고 같은 대화로 다시 띄운 뒤 `conversation-ready`로 확인한다. 다른 대화거나 오지 않으면 대화↔TUI 전환과
+    같은 rollback을 쓴다. 끝나면 generation이 하나 오른다.
+  - 그사이 orchestrator wakeup turn은 gate가 받지 않는다. wakeup은 5초 뒤 다시 보낸다. 차례가 끝났다는 보고는
+    다시 띄우기 전에 처리해 같은 묶음을 두 번 보내지 않는다.
+  - 시작 직후 확인(`reconcileAfterStart`)은 전환·다시 띄우는 중인 에이전트를 `unknown`으로 두거나 또 띄우지 않는다.
+  - 켜는 곳은 `autoRelaunch`(index.ts)와 같다.
+- 하지 않은 것: runner가 어느 build인지 통로로 알리지 않는다(통로 형식이 바뀌면 Host의 Codex launcher가 바뀐다).
+  그래서 업그레이드 없이 Naru만 재시작해도 한 번 다시 띄운다. Codex(`live`)는 runner 코드가 Host에 있어 Naru만
+  올려서는 바뀌지 않으므로 대상이 아니다. TUI 형태와 사람이 잡은 에이전트는 그대로 둔다.
+- 호환: 계약·DB 변경 없음. 화면에는 다시 띄우는 동안 상태가 `starting`으로 보인다.

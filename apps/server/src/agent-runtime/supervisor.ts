@@ -95,6 +95,11 @@ interface ManagedRuntime {
   readonly switchWaiters: (() => void)[];
   /** When the running turn began, and the tool call it makes now (AP-D034); memory only. */
   turnStartedAt: string | null;
+  /**
+   * This Naru process sent the runner its plan. A runner an earlier Naru started runs that Naru's
+   * code and is started again on this one once it is idle (AP-D042).
+   */
+  startedHere: boolean;
   activity: {
     readonly tool: string;
     readonly target: string | null;
@@ -391,6 +396,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     runtime.disconnectTimer = null;
     if (!hello.started) {
       // A fresh runner process numbers its events from 1 and has nothing in flight.
+      runtime.startedHere = true;
       runtime.lastSeq = 0;
       runtime.approvals.clear();
       runtime.children.clear();
@@ -418,12 +424,14 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     connection.send({ type: "ack", seq: runtime.lastSeq });
     // A live runtime (Codex) fences its own TUI by the writer Naru remembers.
     this.#announceWriter(runtime);
-    this.#trackWakeups(connection.agentSessionId);
     this.#core.updateAgentRuntimeState(SYSTEM, {
       agentSessionId: connection.agentSessionId,
       ...(hello.runtimeSessionRef === null ? {} : { runtimeSessionRef: hello.runtimeSessionRef }),
       status: hello.busy ? "active" : "idle",
     });
+    // Before wakeups: a turn they send now would be cut by the restart; mid-restart they retry.
+    this.#refreshIfInherited(connection.agentSessionId, runtime);
+    this.#trackWakeups(connection.agentSessionId);
   }
 
   message(connection: RunnerConnection, message: RunnerMessage): void {
@@ -478,6 +486,8 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       for (const agent of this.#core.listLiveManagedAgents(SYSTEM)) {
         const runtime = this.#runtimes.get(agent.id);
         if (runtime?.connection != null) continue;
+        // Between runners in a switch or restart (AP-D042): that change decides the outcome.
+        if (runtime !== undefined && runtime.gate.phase !== "active") continue;
         if (agent.launchMode === "tui" && agent.runtime === "claude" && agent.paneId !== null) {
           if (isPaneRunning(agent.paneId)) continue;
         }
@@ -513,6 +523,22 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
     if (now - (this.#relaunchedAt.get(agent.id) ?? 0) < RELAUNCH_COOLDOWN_MS) return;
     this.#relaunchedAt.set(agent.id, now);
     void this.launch(agent.id).catch(() => undefined); // a failed launch marks the agent failed
+  }
+
+  /**
+   * A runner an earlier Naru process started (it reattached after a Naru restart, e.g. an upgrade)
+   * still runs that Naru's code and guidance. Between turns, while the orchestrator writes and
+   * nothing waits on a person, it starts again on this Naru and resumes the same conversation
+   * (AP-D042). Returns whether the restart began.
+   */
+  #refreshIfInherited(agentSessionId: string, runtime: ManagedRuntime): boolean {
+    if (!this.#autoRelaunch || runtime.startedHere || runtime.connection === null) return false;
+    if (runtime.gate.writer !== "orchestrator" || runtime.approvals.size > 0) return false;
+    const agent = this.#core.getAgentSession(SYSTEM, agentSessionId);
+    if (agent.retiredAt || agent.humanHoldSince !== null || agent.launchMode !== "runner") {
+      return false;
+    }
+    return this.#transition(agentSessionId, runtime, { type: "request-restart" });
   }
 
   /** Releases timers when this Naru process shuts down; runners keep running. */
@@ -568,7 +594,9 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         this.#core.updateAgentRuntimeState(SYSTEM, { agentSessionId, status: "idle" });
         // May finish a quiescing switch, which then stops this runner.
         this.#transition(agentSessionId, runtime, { type: "turn-ended" });
-        if (runtime.gate.phase === "active") this.#wakeups?.turnCompleted(agentSessionId);
+        if (this.#refreshIfInherited(agentSessionId, runtime) || runtime.gate.phase === "active") {
+          this.#wakeups?.turnCompleted(agentSessionId);
+        }
         return;
       case "approval-requested":
         runtime.approvals.set(event.requestId, {
@@ -749,6 +777,7 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
         resumeTimer: null,
         switchWaiters: [],
         turnStartedAt: null,
+        startedHere: false,
         activity: null,
       };
       this.#runtimes.set(agentSessionId, runtime);

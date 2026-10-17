@@ -10,7 +10,11 @@ import {
   RuntimeChannelServer,
   runtimeChannelSocketPath,
 } from "../src/agent-runtime/runtime-channel-server.js";
-import { ManagedAgentSupervisor, SupervisorError } from "../src/agent-runtime/supervisor.js";
+import {
+  ManagedAgentSupervisor,
+  SupervisorError,
+  type RunnerLauncher,
+} from "../src/agent-runtime/supervisor.js";
 import { OrchestratorWakeups } from "../src/agent-platform/wakeups.js";
 import { NaruRepository } from "../src/database.js";
 
@@ -117,13 +121,22 @@ function setup() {
     onOutput: (_agent, line) => consoleLines.push(line),
   });
   cleanups.push(() => launcher.killAll());
+  const launches: string[] = [];
+  const counted: RunnerLauncher = {
+    launch: (agentSessionId) => {
+      launches.push(agentSessionId);
+      return launcher.launch(agentSessionId);
+    },
+    stop: (agentSessionId) => launcher.stop(agentSessionId),
+  };
 
   /** One "Naru process": core + supervisor + channel server over the shared database. */
-  async function naru() {
+  async function naru(options: { readonly autoRelaunch?: boolean } = {}) {
     const core = new AgentPlatformCore(repository.agentPlatform);
     const supervisor = new ManagedAgentSupervisor({
       core,
-      launcher,
+      launcher: counted,
+      ...(options.autoRelaunch === true ? { autoRelaunch: true } : {}),
       channelSocketPath: runtimeChannelSocketPath(directory),
       planFor: (agent) => plan(agent.runtimeSessionRef),
       attention: (agentSessionId, required) => {
@@ -137,7 +150,7 @@ function setup() {
     return { core, supervisor, server };
   }
   const status = (core: AgentPlatformCore) => core.getAgentSession(HUMAN, worker).status;
-  return { naru, worker, status, consoleLines, attention, ctx };
+  return { naru, worker, status, consoleLines, attention, ctx, launches };
 }
 
 describe("managed agent supervisor with a real runner process", () => {
@@ -239,6 +252,56 @@ describe("managed agent supervisor with a real runner process", () => {
     third.supervisor.stop(fixture.worker);
     await until(() => fixture.status(third.core) === "stopped", "stopped");
     await third.server.close();
+  }, 60_000);
+
+  it("starts a runner an earlier Naru started again on this Naru once its turn ends (AP-D042)", async () => {
+    const fixture = setup();
+    const first = await fixture.naru();
+    await first.supervisor.launch(fixture.worker);
+    await until(
+      () =>
+        first.core.getAgentSession(HUMAN, fixture.worker).runtimeSessionRef === "fake-session-1",
+      "conversation ready",
+    );
+    // Naru is upgraded while a turn runs: the runner reconnects with the earlier Naru's code.
+    first.supervisor.sendTurn(fixture.worker, "SLOW800 work", "orchestrator", 1);
+    await until(() => fixture.status(first.core) === "active", "slow turn starts");
+    await first.server.close();
+    first.supervisor.close();
+    const second = await fixture.naru({ autoRelaunch: true });
+    const statuses: string[] = [];
+    second.core.subscribe(() => statuses.push(fixture.status(second.core)));
+
+    // The turn finishes first; then the runner starts again and resumes the same conversation.
+    await until(() => fixture.launches.length === 2, "started again", 20_000);
+    await until(
+      () =>
+        second.supervisor.runtimeState(fixture.worker).phase === "active" &&
+        second.supervisor.runtimeState(fixture.worker).connected,
+      "resumed",
+      20_000,
+    );
+    expect(statuses.indexOf("idle")).toBeGreaterThanOrEqual(0);
+    expect(statuses.indexOf("idle")).toBeLessThan(statuses.indexOf("starting"));
+    expect(second.supervisor.writer(fixture.worker)).toEqual({
+      writer: "orchestrator",
+      generation: 2,
+    });
+    expect(second.core.getAgentSession(HUMAN, fixture.worker).runtimeSessionRef).toBe(
+      "fake-session-1",
+    );
+
+    // The new runner is this Naru's own: its turns do not start it again.
+    const before = statuses.length;
+    second.supervisor.sendTurn(fixture.worker, "after the restart", "orchestrator", 2);
+    await until(
+      () => statuses.slice(before).includes("active") && fixture.status(second.core) === "idle",
+      "turn on the new runner",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(fixture.launches).toHaveLength(2);
+    expect(second.supervisor.runtimeState(fixture.worker).phase).toBe("active");
+    await second.server.close();
   }, 60_000);
 
   it("marks an agent failed when its launch never starts, so its orchestrator hears of it", async () => {

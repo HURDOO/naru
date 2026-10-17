@@ -79,6 +79,33 @@ describe("conversation writer gate", () => {
     expect(active.state).toMatchObject({ phase: "active", writer: "tui", generation: 2 });
   });
 
+  it("starts the same writer's runner again between turns only (AP-D042)", () => {
+    const idle = initialWriterGate("stop-resume", "orchestrator", REF);
+    const restarting = run(idle, { type: "request-restart" });
+    expect(restarting.state).toMatchObject({ phase: "stopping", target: "orchestrator" });
+    expect(restarting.effects).toEqual([{ type: "stop-backend", writer: "orchestrator" }]);
+    expect(authorizeWrite(restarting.state, "orchestrator", 1, "turn")).toBe(false);
+    const resumed = run(
+      restarting.state,
+      { type: "backend-stopped" },
+      { type: "resume-confirmed", runtimeSessionRef: REF },
+    );
+    expect(resumed.state).toMatchObject({ phase: "active", writer: "orchestrator", generation: 2 });
+    expect(resumed.effects).toEqual([
+      { type: "start-backend", writer: "orchestrator", runtimeSessionRef: REF },
+      { type: "writer-changed", writer: "orchestrator", generation: 2 },
+    ]);
+
+    const working = run(idle, { type: "turn-started" }).state;
+    expect(reduceWriterGate(working, { type: "request-restart" })).toMatchObject({
+      ok: false,
+      code: "SWITCH_IN_PROGRESS",
+    });
+    expect(
+      reduceWriterGate(initialWriterGate("live", "orchestrator", REF), { type: "request-restart" }),
+    ).toMatchObject({ ok: false, code: "NO_SWITCH" });
+  });
+
   it("rolls back when the target resumes a different or no conversation", () => {
     const resuming = run(
       initialWriterGate("stop-resume", "gui", REF),
