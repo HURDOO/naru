@@ -93,6 +93,11 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
 - 어댑터는 이력을 저장하지 않는다. Chat 화면은 런타임의 공식 history API로 다시 읽는다(AP-D002).
   - runner는 한 쪽을 대화가 보이는 만큼만 보낸다. 이미지 바이트를 빼고 도구 출력은 8,000자까지 남기며, 한 쪽은
     512KB 이하다. 그래도 runner 통로 한 줄(1MB)을 넘으면 `HISTORY_TOO_LARGE`로 답한다(AP-D040).
+  - 최신 쪽부터 읽기(AP-D045): Claude runner는 `latest`·`before:<n>` cursor를 받아 끝에서 거꾸로 한 쪽을 채우고
+    `nextCursor`에 그 쪽의 시작을 담는다(`history-window.ts`). supervisor `readHistoryWindow`가 이를
+    `cursor`·`previousCursor`로 바꾼다. runner가 거부하면(`HISTORY_REFUSED`, 이전 Naru가 띄운 runner) 첫 쪽을
+    앞에서부터 읽는다. Codex는 앞에서부터만 읽는다. 계약은 `@naru/contracts/naru-agent/v1/history`에 둔다(v1
+    index는 Host가 돌리는 코드가 import한다).
 - `writer-gate.ts`의 reducer가 대화 writer를 하나로 강제한다(INV-05). 이유는 세 런타임 모두 동시 입력을
   진행 중인 turn에 합치거나 유실하기 때문이다.
 - 사람 hold(AP-D005)는 writer를 `gui`나 `tui`(사람)로 옮기는 것으로 표현한다. hold 중
@@ -295,6 +300,8 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
   - 요청은 기록된 지시 원문과 맞춰 누가 했는지(나, 오케스트레이터 이름)를 붙인다. Naru wakeup turn은
     그 안의 `instruction.created`가 가리키는 지시로 바꾸고, `handoff.resolved`·`intent_contract.approved`가
     `decisions`에 있으면 사람의 말풍선으로 바꾼다(AP-D035). 나머지 이벤트는 한 줄 알림이 된다.
+  - 처음에는 최신 한 쪽만 받고, "이전 대화 보기"로 그 앞 쪽을 받아 위에 붙인다. 읽던 자리는 높이 차이만큼
+    scroll을 옮겨 지킨다(AP-D045). 받은 대화는 탭 메모리에 에이전트별로 남겨(최근 8개) 다시 열면 바로 보인다.
   - 이력은 마지막 page부터 다시 읽는다(답하는 중 2.5초, 아니면 8초, turn이 끝날 때).
   - 에이전트의 질문(`request_human_handoff`, `propose_design_change`)은 도구 묶음에서 빼서 카드로 둔다.
     결과의 handoff id로 열린 질문과 이어 "답하기"를 붙인다(AP-D025).
@@ -412,6 +419,11 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
     runner는 저장된 대화가 없으면 새로 시작한다(`resumableRef`).
 - wakeup: `job.completed`·`job.reopened`는 알림만이다. 정리하거나 되살린 기록(`retired`), 정리된 에이전트의
   상태 보고는 오케스트레이터를 깨우지 않는다. 라운드 지시의 `instruction.created`는 평소처럼 깨운다.
+- 에이전트가 읽는 것(AP-D044): store의 `inCompletedJob`이 지시·작업이 완료한 일에 속하는지 본다(자신, 원본, 원본의
+  원본이 완료한 목표인지). `get_applicable_user_instructions`는 Core `getInstructionsInForce`로 완료한 일과 정리된
+  에이전트에게 한 말을 빼고, 위임·작업이 있는 열린 일의 지시는 모두, 나머지는 최근 20개만 준다.
+  `get_delegated_work`는 완료한 일의 위임을, `get_project_state`(`getProjectWork`)는 완료한 일의 작업을 뺀다. 사람의
+  화면이 읽는 `getApplicableInstructions`, `getAgentInstructions`, `getProjectState`는 그대로다.
 - web:
   - `jobs-model.ts`의 `awaitingCompletion`·`jobCompleted`, `stageStates(stage, completed)`. 다시 연 일은 라운드
     지시 뒤에 움직인 작업이 없으면 "계획"이다.
