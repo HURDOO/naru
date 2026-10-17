@@ -445,7 +445,9 @@
     §6.6.2. agent API가 있는 server에서만 켠다.
   - 검증: [validation/web-ui.md](validation/web-ui.md)의 AP-T22 1단계. lint, typecheck, vitest 전체 통과.
   - 남음:
-    - 2단계: 맡긴 일 작업공간, 새 프로젝트를 기본 작업공간대로 만들어 실행(AP-D032). 대화를 에이전트 Pane으로
+    - 2단계: 맡긴 일 작업공간, 새 프로젝트를 기본 작업공간대로 만들어 실행(AP-D032). 맡긴 일 작업공간은 AP-D043의
+      소속을 따른다: 작업자·리뷰어와 그 일의 프로세스는 그 일의 작업공간에, 작업자·리뷰어 cwd는 맡은 worktree,
+      Naru가 만든 worktree는 왼쪽 프로젝트 목록에서 빼고 기본 Pane을 만들지 않는다. 대화를 에이전트 Pane으로
       옮기는 것은 AP-D039로 했다(2026-10-17, 검증은 validation/web-ui.md의 AP-D039). 2026-10-17 사용자 승인으로
       build `9cd2de8`을 테스트 앱에 올렸다. Naru만 재시작, DB 변경 없음, status healthy, doctor 25/25. 실제 Claude
       Code TUI로 바꾸는 것은 테스트 앱에서 아직 확인하지 않았다.
