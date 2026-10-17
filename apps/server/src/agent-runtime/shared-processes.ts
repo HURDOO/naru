@@ -176,6 +176,27 @@ export class SharedProcessRuntime implements PaneControlPolicy {
   }
 
   /**
+   * The agent closes its process's terminal once it ended what runs there, e.g. a server with
+   * Ctrl+C (AP-D041): the shell left in it ends, the record leaves the lists and the Pane goes. A
+   * retry after a Pane that could not be removed tries the Pane again.
+   */
+  async closeProcess(context: CommandContext, processId: string): Promise<SharedProcess> {
+    const process = this.#core.authorizeSharedProcessStop(context.actor, processId);
+    if (!process.retiredAt) {
+      if (process.humanHoldSince !== null) {
+        throw new AgentPlatformError(
+          "AGENT_HELD_BY_HUMAN",
+          "The person holds this process; it stays until they return it.",
+        );
+      }
+      await this.stop(context.actor, processId);
+      this.#core.closeSharedProcess(context, { processId });
+    }
+    if (process.paneId !== null) await this.#removePane(process.paneId);
+    return this.#core.getSharedProcess(context.actor, processId);
+  }
+
+  /**
    * A person takes over or returns a process. On takeover the agent lets go of Host control before
    * the person's browser asks for it; on return the browser lets go and the agent takes it back
    * with a new generation (it should read the screen again before typing).
@@ -290,6 +311,14 @@ export class SharedProcessRuntime implements PaneControlPolicy {
       exitCode,
     });
     this.notifyControlChanged(watch.paneId);
+  }
+
+  async #removePane(paneId: string): Promise<void> {
+    const context = this.#repository.getPaneContext(paneId);
+    if (context === undefined) return;
+    await this.#sessions().remove(paneId);
+    const version = this.#repository.getWorkspace(context.pane.projectId).version;
+    this.#repository.deletePane(paneId, version);
   }
 
   async #reacquire(watch: Watch): Promise<void> {

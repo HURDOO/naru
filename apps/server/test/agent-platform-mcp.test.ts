@@ -35,6 +35,7 @@ describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
 
     const started: unknown[] = [];
     const spawned: unknown[] = [];
+    const closed: unknown[] = [];
     fixture.server.useRuntime({
       processes: {
         start: (context, input) => {
@@ -44,6 +45,14 @@ describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
         input: () => Promise.reject(new Error("unused")),
         read: () => Promise.reject(new Error("unused")),
         stop: () => Promise.reject(new Error("unused")),
+        closeProcess: (context, processId) => {
+          closed.push({ actor: context.actor, processId });
+          fixture.core.updateSharedProcessState(
+            { kind: "system" },
+            { processId, status: "stopped" },
+          );
+          return Promise.resolve(fixture.core.closeSharedProcess(context, { processId }));
+        },
       },
       agents: {
         spawn: (context, input) => {
@@ -82,6 +91,20 @@ describe("runtime-backed Naru tools (AP-D004 L2/L3)", () => {
       ok: true,
       result: [{ purpose: "dev server" }],
     });
+    // AP-D041: the agent closes its own process once it ended what ran there.
+    const processId = (reply as { result: { id: string } }).result.id;
+    const closeReply = (await call(fixture.workerToken, "close_process", {
+      process_id: processId,
+    })) as { ok: boolean; result: { id: string; retiredAt: string | null } };
+    expect(closeReply).toMatchObject({ ok: true, result: { id: processId } });
+    expect(closeReply.result.retiredAt).toEqual(expect.any(String));
+    expect(closed).toEqual([
+      { actor: { kind: "agent", agentSessionId: fixture.worker }, processId },
+    ]);
+    expect(await call(fixture.workerToken, "list_processes", {})).toMatchObject({
+      ok: true,
+      result: [],
+    });
   });
 });
 
@@ -101,6 +124,7 @@ describe("Agent Platform socket and MCP bin", () => {
         input: () => Promise.reject(new Error("secret argument text")),
         read: () => Promise.reject(new Error("unused")),
         stop: () => Promise.reject(new Error("unused")),
+        closeProcess: () => Promise.reject(new Error("unused")),
       },
     });
     const call = (tool: string, args: Record<string, unknown>) =>
@@ -205,6 +229,7 @@ describe("Agent Platform socket and MCP bin", () => {
         "request_human_handoff",
         "propose_design_change",
         "get_merge_gate",
+        "close_process",
       ]),
     );
     expect(listed.result.tools.every((tool) => tool.inputSchema.type === "object")).toBe(true);

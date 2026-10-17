@@ -494,6 +494,45 @@ describe("managed Claude agent in a DurableSession Host PTY", () => {
     expect(stopped.status).toBe("stopped");
     await until(() => !env.facade.isRunning(paneId), "terminal stopped");
   }, 120_000);
+
+  it("ends a server with Ctrl+C and then closes its terminal (AP-D041)", async () => {
+    const env = await startFixture();
+    const worker = env.registerWorker();
+    const asWorker: Actor = { kind: "agent", agentSessionId: worker };
+    const context = (actor: Actor) => ({ actor, idempotencyKey: randomUUID() });
+    const runtime = new SharedProcessRuntime({
+      core: env.core,
+      repository: env.repository,
+      sessions: () => env.facade,
+    });
+    cleanups.push(() => runtime.close());
+    const process = await runtime.start(context(asWorker), {
+      projectId: env.project.id,
+      purpose: "preview",
+      command: "printf 'SERV''ING\\n'; while :; do sleep 1; done",
+      ports: [],
+      keep: "keep",
+    });
+    const paneId = process.paneId!;
+    const screen = async () => (await runtime.read(asWorker, process.id, 40)).screen;
+    await untilAsync(async () => (await screen()).includes("SERVING"), "server up");
+
+    // What the guidance asks: Ctrl+C first, and the shell prompt is back.
+    await runtime.input(context(asWorker), process.id, "\u0003");
+    await runtime.input(context(asWorker), process.id, "echo BACK-$((40+2))\r");
+    await untilAsync(async () => (await screen()).includes("BACK-42"), "shell back");
+
+    const closeContext = context(asWorker);
+    const closed = await runtime.closeProcess(closeContext, process.id);
+    expect(closed).toMatchObject({ status: "stopped", paneId: null });
+    expect(closed.retiredAt).toEqual(expect.any(String));
+    expect(env.facade.isRunning(paneId)).toBe(false);
+    const workspace = env.repository.getWorkspace(env.project.id);
+    expect(workspace.panes.some((pane) => pane.id === paneId)).toBe(false);
+    expect(env.core.listSharedProcesses({ kind: "human" }, env.project.id)).toEqual([]);
+    // A retry changes nothing.
+    expect(await runtime.closeProcess(closeContext, process.id)).toEqual(closed);
+  }, 120_000);
 });
 
 async function untilAsync(

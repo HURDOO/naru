@@ -2121,6 +2121,47 @@ export class AgentPlatformCore {
     );
   }
 
+  /**
+   * The agent that ran a process closes it once nobody needs it (AP-D041): it ended what ran in the
+   * terminal first, so only the record leaves the lists here, as in the person's cleanup.
+   */
+  closeSharedProcess(
+    context: CommandContext,
+    input: { readonly processId: string },
+  ): SharedProcess {
+    return this.#command(
+      context,
+      "shared_process.close",
+      input,
+      "shared_process",
+      (events) => {
+        const process = this.authorizeSharedProcessStop(context.actor, input.processId);
+        if (process.retiredAt) return process.id;
+        if (process.humanHoldSince !== null) {
+          throw new AgentPlatformError(
+            "AGENT_HELD_BY_HUMAN",
+            "The person holds this process; it stays until they return it.",
+          );
+        }
+        if (!RETIRABLE_PROCESS_STATUSES.has(process.status)) {
+          throw new AgentPlatformError(
+            "AGENT_INVALID_STATE",
+            "Stop the process before closing it.",
+          );
+        }
+        this.#store.retireSharedProcess(process.id, this.#timestamp());
+        events.push({
+          type: "shared_process.updated",
+          projectId: process.projectId,
+          subjectId: process.id,
+          data: { status: process.status, retired: true },
+        });
+        return process.id;
+      },
+      (id) => this.#requireSharedProcess(id),
+    );
+  }
+
   getHandoff(actor: Actor, handoffId: string): Handoff {
     const handoff = this.#requireHandoff(handoffId);
     this.#authorize(actor, "state.read", handoff.projectId);

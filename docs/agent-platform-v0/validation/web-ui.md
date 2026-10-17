@@ -346,3 +346,15 @@ sandbox(stand-in Claude SDK와 stand-in Claude TUI)에서 `.local/ap-t22/agent-p
 
 - 테스트 앱 로그: 대화 기록 요청 50건이 503 `AGENT_RUNTIME_UNAVAILABLE`로 끝났고, 오늘 것은 모두 15초 대기 뒤였다.
 - 확인하지 못한 것: 테스트 앱에 올린 뒤 작업자 3의 대화가 열리는지는 사용자 화면에서 본다.
+
+# AP-D041 검증: 띄운 에이전트가 서버를 끝내고 터미널을 닫기
+
+| 항목                                                                                                                                                                                                                   | 근거                              | 상태     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | -------- |
+| 실제 Host 터미널에서 서버(무한 반복)를 Ctrl+C(`"\u0003"`)로 끝내고 shell이 돌아온 뒤 닫으면, shell이 끝나고 Pane이 작업공간에서 빠지고 목록에서 사라짐. 다시 불러도 같음                                               | `agent-runtime-host.test.ts`      | **PASS** |
+| 돌고 있으면 닫기 거부(먼저 끝내야 함), 다른 작업자의 것은 `AGENT_SCOPE_DENIED`, 리뷰어는 `AGENT_ROLE_DENIED`, 같은 key는 한 번만 적용, 오케스트레이터는 프로젝트의 것을 닫음, 사람이 잡고 있으면 `AGENT_HELD_BY_HUMAN` | `agent-platform-core.test.ts`     | **PASS** |
+| MCP `close_process`가 목록에 보이고, 요청한 에이전트로 묶여 runtime에 전달되고, 닫은 뒤 `list_processes`가 비어 있음                                                                                                   | `agent-platform-mcp.test.ts`      | **PASS** |
+| 지침 문구가 역할별 system prompt에 들어감(모든 역할의 닫기, 오케스트레이터의 사람 확인용 서버)                                                                                                                         | `orchestrationGuidance` 출력 확인 | **PASS** |
+| lint, typecheck, format, vitest 전체(1060 통과)                                                                                                                                                                        | 명령 결과                         | **PASS** |
+
+- 확인하지 못한 것: 실제 오케스트레이터와 작업자가 지침대로 Ctrl+C 뒤 닫는지는 테스트 앱에 올리고 다시 띄운 뒤 본다.

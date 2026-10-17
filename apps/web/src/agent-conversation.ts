@@ -664,6 +664,7 @@ const NARU_TOOL_LABELS: Readonly<Record<string, string>> = {
   send_process_input: "프로세스에 입력",
   read_process_screen: "프로세스 화면 읽음",
   stop_process: "프로세스 정지",
+  close_process: "프로세스 닫음",
 };
 
 function naruToolLabel(tool: string): string {

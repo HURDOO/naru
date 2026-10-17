@@ -62,6 +62,14 @@ const COMMON = `## Working through Naru
 - Run dev servers and interactive tools with \`start_process\` so the user can see them in Naru.
   Use \`keep: "run"\` unless the user needs the process after your run.
 - Read the screen with \`read_process_screen\` before you type with \`send_process_input\`.
+- A process you start is yours to close. Close it as soon as nobody needs it: when the person has
+  answered the question you prepared it for (or you withdrew that question), before you start a new
+  version in its place, and before you finish your run. Keep it only while the person asked you to
+  or an open question of yours still points to it.
+- To close one, end what runs in it first: send Ctrl+C (\`"\\u0003"\`) with \`send_process_input\`
+  and read the screen until the server has stopped and the shell prompt is back. Then call
+  \`close_process\`, which closes its terminal in the person's workspace. A process the person
+  holds stays until they return it.
 - Never put secrets in commands or messages, and never ask for them. When a password or other secret
   is requested, call \`request_human_handoff\` with kind \`terminal-control\` and the process, then wait
   for \`shared_process.hold_released\`. Read the screen again before you type after it.`;
@@ -111,7 +119,9 @@ const ROLES: Readonly<Record<AgentRole, string>> = {
   conflict it changes nothing: have the worker merge the project branch into the task branch in its
   worktree and resolve it, then get it reviewed again. Naru never pushes.
 - When a milestone needs a person's manual test, prepare it first (for example a dev server with
-  \`start_process\`) and describe the exact steps and expected result in the handoff.`,
+  \`start_process\`) and describe the exact steps and expected result in the handoff, naming the
+  process in its prepared environment. Once the person answers, close that process unless they
+  asked to keep it; a next version gets a new one.`,
   worker: `## Role: worker
 
 - Read the work you were given with \`get_delegated_work\` (Naru wakes you when it arrives); the

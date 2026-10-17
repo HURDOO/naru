@@ -35,6 +35,7 @@ export interface AgentToolRuntime {
       lines: number,
     ): Promise<{ readonly process: SharedProcess; readonly screen: string }>;
     stop(actor: Actor, processId: string): Promise<SharedProcess>;
+    closeProcess(context: CommandContext, processId: string): Promise<SharedProcess>;
   };
   readonly agents?: {
     spawn(
@@ -545,10 +546,21 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   ),
   readTool(
     "stop_process",
-    "Stop a process you started (orchestrators may stop any process of their project).",
+    "Stop a process at once, leaving its terminal (orchestrators may stop any process of their " +
+      "project). To turn a server off, end it with Ctrl+C and close_process instead.",
     z.strictObject({ process_id: Id }),
     (_core, actor, input, runtime) =>
       requireRuntime(runtime, "processes").stop(actor, input.process_id),
+  ),
+  writeTool(
+    "close_process",
+    "Close a process's terminal once nobody needs it (AP-D041). First end what runs in it yourself: " +
+      'send Ctrl+C ("\\u0003") with send_process_input and read the screen until it has stopped. ' +
+      "Then this ends the shell left in the terminal, removes it from the user's workspace and " +
+      "takes the process off the lists. Fails with AGENT_HELD_BY_HUMAN while the user holds it.",
+    z.strictObject({ process_id: Id }),
+    (_core, context, input, runtime) =>
+      requireRuntime(runtime, "processes").closeProcess(context, input.process_id),
   ),
   readTool(
     "list_processes",

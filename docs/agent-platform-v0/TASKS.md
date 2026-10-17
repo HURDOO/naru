@@ -160,7 +160,7 @@
       - `keep: run`인 process는 Run이 끝나면 정지한다.
       - 재시작 뒤에는 살아 있는 Host session에 다시 붙는다.
     - MCP 도구: `start_process`, `send_process_input`(재전송해도 한 번만 입력), `read_process_screen`
-      (headless terminal로 텍스트화, 저장하지 않음), `stop_process`, `list_processes`, `spawn_agent`
+      (headless terminal로 텍스트화, 저장하지 않음), `stop_process`, `close_process`(AP-D041), `list_processes`, `spawn_agent`
       (부모 기록, 자기보다 낮은 역할만).
     - holder와 hold
       - 만든 에이전트만 입력할 수 있다. 사람이 hold하면 입력을 queue에 넣지 않고 거부한다.
@@ -455,6 +455,10 @@
       runner는 예전 코드로 돌므로, 올린 뒤 한 번 다시 띄워야 고친 것이 적용된다. 2026-10-17 사용자 승인으로 build
       `50e30ec`을 테스트 앱에 올렸다. Naru만 재시작, DB 변경 없음, status healthy, doctor 25/25. Codex 쪽은 아직
       올리지 않았다.
+    - 띄운 서버 정리(AP-D041, 2026-10-17, 테스트 앱 반영 전): 사람에게 보여 준 preview가 결정 뒤에도 남던 것을
+      고쳤다. 띄운 에이전트가 Ctrl+C로 끝내고 `close_process`로 터미널을 닫는다. 검증은 validation/web-ui.md의
+      AP-D041. 올린 뒤 오케스트레이터와 작업자를 한 번씩 다시 띄워야 지침과 도구가 들어간다.
+    - 다음에 볼 것: 일을 완료할 때 작업자·리뷰어 정리도 오케스트레이터가 하도록(AP-D041 "다음에 볼 것").
     - 내 Pane에 대한 쓰기 요청과 허락(AP-D030): 새 MCP 경로가 필요하다.
     - 편집의 배치 틀 고르기.
   - 꺼진 에이전트 정리(AP-D033, 2026-10-16): 관제실 "꺼진 에이전트 정리", DB v22 `retired_at`. 완료 때 정리와

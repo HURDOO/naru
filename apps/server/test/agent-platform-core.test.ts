@@ -957,6 +957,63 @@ describe("cleaning up agents that no longer run (AP-D033)", () => {
   });
 });
 
+describe("an agent closes the processes it no longer needs (AP-D041)", () => {
+  it("closes its own ended process once, lets the orchestrator close any and keeps held ones", () => {
+    const fixture = platform();
+    const { orchestrator, worker, reviewer } = fixture.team();
+    const start = (owner: string, purpose: string) =>
+      fixture.core.startSharedProcess(fixture.ctx(agent(owner)), {
+        projectId: fixture.projectId,
+        purpose,
+        command: "pnpm preview",
+        ports: [4321],
+        keep: "keep",
+      });
+    const preview = start(worker, "preview");
+    const close = (actor: Actor, processId: string, key = fixture.key()) =>
+      fixture.core.closeSharedProcess({ actor, idempotencyKey: key }, { processId });
+
+    // The agent ends what runs in the terminal first.
+    fixture.core.updateSharedProcessState(SYSTEM, { processId: preview.id, status: "running" });
+    expectCode(() => close(agent(worker), preview.id), "AGENT_INVALID_STATE");
+    fixture.core.updateSharedProcessState(SYSTEM, { processId: preview.id, status: "stopped" });
+    // Another worker's process is not theirs to close; a reviewer runs none.
+    const otherWorker = fixture.core.registerAgentSession(fixture.ctx(HUMAN), {
+      projectId: fixture.projectId,
+      role: "worker",
+      runtime: "claude",
+      native: false,
+      observation: "pty",
+      conversationWriter: "orchestrator",
+    }).id;
+    expectCode(() => close(agent(otherWorker), preview.id), "AGENT_SCOPE_DENIED");
+    expectCode(() => close(agent(reviewer), preview.id), "AGENT_ROLE_DENIED");
+
+    const key = fixture.key();
+    const closed = close(agent(worker), preview.id, key);
+    expect(closed.retiredAt).toEqual(expect.any(String));
+    expect(close(agent(worker), preview.id, key)).toEqual(closed);
+    expect(close(agent(worker), preview.id).retiredAt).toBe(closed.retiredAt);
+    expect(fixture.core.listSharedProcesses(HUMAN, fixture.projectId)).toEqual([]);
+
+    // The project orchestrator closes any process of its project; a held one stays.
+    const other = start(worker, "comparison");
+    fixture.core.updateSharedProcessState(SYSTEM, { processId: other.id, status: "exited" });
+    fixture.core.setSharedProcessHold(fixture.ctx(HUMAN), {
+      processId: other.id,
+      held: true,
+      reason: "takeover",
+    });
+    expectCode(() => close(agent(orchestrator), other.id), "AGENT_HELD_BY_HUMAN");
+    fixture.core.setSharedProcessHold(fixture.ctx(HUMAN), {
+      processId: other.id,
+      held: false,
+      reason: "release",
+    });
+    expect(close(agent(orchestrator), other.id).retiredAt).toEqual(expect.any(String));
+  });
+});
+
 function platform() {
   const repository = new NaruRepository(":memory:");
   const project = repository.createProject("/tmp/naru-agent-project", "agent-project");

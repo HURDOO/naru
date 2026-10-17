@@ -185,6 +185,8 @@ terminal Session 바인딩, SharedProcess, 사람 hold, 에이전트의 PTY 입�
     `agent_shared_process_inputs`에 남긴다(AP-D003).
   - 화면(`read_process_screen`)은 headless terminal로 텍스트화해 에이전트에게만 돌려준다. 저장하지
     않는다.
+- 닫기(AP-D041): 띄운 에이전트가 Ctrl+C로 서버를 끝낸 뒤 `close_process`를 부른다. Naru는 남은 shell을 끝내고
+  `retiredAt`을 남긴 뒤 Pane을 지운다. 사람이 잡고 있으면 거부한다. 언제 닫을지는 지침을 따라 에이전트가 정한다.
 - `PaneControlPolicy`: 에이전트가 운영하는 Pane(공유 프로세스, runner 형태의 관리형 에이전트)에는
   사람 기기도 observer로 붙는다. 그래서 화면을 보기만 해서는 에이전트의 제어권을 빼앗지 않는다.
   - hold하면 에이전트 attachment가 제어권을 놓고 기기가 받는다.
