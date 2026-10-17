@@ -3,8 +3,6 @@ import { z } from "zod";
 import {
   AgentApprovalResponseRequestSchema,
   AgentEventsQuerySchema,
-  AgentHistoryPageSchema,
-  AgentHistoryQuerySchema,
   AgentInterruptRequestSchema,
   AgentTurnRequestSchema,
   ApproveIntentContractRequestSchema,
@@ -23,7 +21,12 @@ import {
   type AgentSession,
   type SharedProcess,
 } from "@naru/contracts/naru-agent/v1";
-import type { HistoryPage } from "../agent-runtime/adapter.js";
+import {
+  AgentHistoryReadSchema,
+  AgentHistoryWindowSchema,
+  type AgentHistoryWindow,
+} from "@naru/contracts/naru-agent/v1/history";
+import type { HistoryRead } from "../agent-runtime/history-window.js";
 import type { JobLifecycle } from "../agent-runtime/jobs.js";
 import { SupervisorError } from "../agent-runtime/supervisor.js";
 import type { WriterKind } from "../agent-runtime/writer-gate.js";
@@ -64,7 +67,7 @@ export interface AgentRuntimeControl {
     requestId: string,
     decision: AgentApprovalDecision,
   ): void;
-  readHistory(agentSessionId: string, cursor: string | null): Promise<HistoryPage>;
+  readHistoryWindow(agentSessionId: string, read: HistoryRead): Promise<AgentHistoryWindow>;
   switchWriter(agentSessionId: string, to: WriterKind, interrupt: boolean): Promise<unknown>;
 }
 
@@ -482,10 +485,19 @@ export function registerAgentPlatformRoutes(
   app.get("/api/agent/agents/:id/history", async (request) => {
     guards.requireSession(request);
     const { id } = IdParamsSchema.parse(request.params);
-    const { cursor } = AgentHistoryQuerySchema.parse(request.query);
+    const query = AgentHistoryReadSchema.parse(request.query);
     core.getAgentSession(HUMAN, id);
-    const page = await runtimeCall(() => runtime.readHistory(id, cursor ?? null));
-    return AgentHistoryPageSchema.parse(page);
+    const page = await runtimeCall(() =>
+      runtime.readHistoryWindow(
+        id,
+        query.latest !== undefined
+          ? { kind: "latest" }
+          : query.before !== undefined
+            ? { kind: "before", cursor: query.before }
+            : { kind: "forward", cursor: query.cursor ?? null },
+      ),
+    );
+    return AgentHistoryWindowSchema.parse(page);
   });
 
   /** A person writing to the conversation they hold; recorded verbatim as their instruction. */
@@ -567,6 +579,7 @@ function translateRuntimeError(error: unknown): unknown {
       return new AgentPlatformError("AGENT_INVALID_STATE", "The approval is no longer pending.");
     case "RUNTIME_NOT_CONNECTED":
     case "HISTORY_TIMEOUT":
+    case "HISTORY_REFUSED":
       return new AgentPlatformError(
         "AGENT_RUNTIME_UNAVAILABLE",
         "The agent runtime is unavailable.",

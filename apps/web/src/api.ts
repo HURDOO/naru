@@ -26,6 +26,7 @@ import {
   type TerminalRestoreProtocol,
   type Workspace,
 } from "@naru/contracts";
+import type { AgentHistoryWindow } from "@naru/contracts/naru-agent/v1/history";
 import {
   GatewayBrowserFailureResponseV1Schema,
   WORKSTATION_GATEWAY_CSRF_HEADER,
@@ -680,12 +681,23 @@ export class NaruApi {
     return this.#request<AgentRuntimeState>(`/api/agent/agents/${agentSessionId}/runtime`);
   }
 
+  /**
+   * A page of an agent's conversation (AP-D045): the newest, the one before a page read newest
+   * first, or forward from a page's cursor (null: the start).
+   */
   agentHistory(
     agentSessionId: string,
-    cursor: string | null,
-  ): Promise<{ items: unknown[]; nextCursor: string | null }> {
-    const query = cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`;
-    return this.#request(`/api/agent/agents/${agentSessionId}/history${query}`);
+    read:
+      { readonly latest: true } | { readonly before: string } | { readonly cursor: string | null },
+  ): Promise<AgentHistoryWindow> {
+    const query = new URLSearchParams();
+    if ("latest" in read) query.set("latest", "1");
+    else if ("before" in read) query.set("before", read.before);
+    else if (read.cursor !== null) query.set("cursor", read.cursor);
+    const search = query.toString();
+    return this.#request<AgentHistoryWindow>(
+      `/api/agent/agents/${agentSessionId}/history${search === "" ? "" : `?${search}`}`,
+    );
   }
 
   createInstruction(scope: InstructionScope, verbatim: string): Promise<Instruction> {

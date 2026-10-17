@@ -469,6 +469,17 @@ export function query({ prompt, options }) {
           tool("Bash", { command: "pnpm test" }, `(${answer})\nTests  12 passed`);
         }
         if (text.includes("SLOW")) await sleep(8000);
+        // A long conversation in one turn: 60 commands, read newest first (AP-D045).
+        if (text.includes("LONG")) {
+          for (let index = 1; index <= 60; index += 1) {
+            tool("Bash", { command: `pnpm test --shard ${index}/60` }, `shard ${index}: 4 passed`);
+            if (index % 5 === 0) {
+              answer(
+                `샤드 ${index}까지 통과했습니다.\n\n- 실패 0\n- 건너뜀 0\n- 다음 샤드로 넘어갑니다.`,
+              );
+            }
+          }
+        }
         answer(
           `알겠습니다. ${text.slice(0, 60)}\n\n- 먼저 지금 상태를 확인하고\n- 바꾼 뒤 테스트로 확인하겠습니다.`,
         );
@@ -484,6 +495,8 @@ export function query({ prompt, options }) {
   return iterator;
 }
 
-export async function getSessionMessages(sessionId, { offset = 0, limit = 50 } = {}) {
-  return (sessionId === session ? said : saved(sessionId)).slice(offset, offset + limit);
+/** Like the SDK: without a limit, everything from `offset` on. */
+export async function getSessionMessages(sessionId, { offset = 0, limit } = {}) {
+  const messages = sessionId === session ? said : saved(sessionId);
+  return messages.slice(offset, limit === undefined ? undefined : offset + limit);
 }

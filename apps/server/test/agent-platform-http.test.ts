@@ -13,8 +13,10 @@ import type {
   Handoff,
   Instruction,
 } from "@naru/contracts/naru-agent/v1";
+import type { AgentHistoryWindow } from "@naru/contracts/naru-agent/v1/history";
 import { AgentPlatformCore, AgentPlatformError } from "../src/agent-platform/core.js";
 import type { AgentRuntimeControl } from "../src/agent-platform/http-routes.js";
+import type { HistoryRead } from "../src/agent-runtime/history-window.js";
 import { SupervisorError } from "../src/agent-runtime/supervisor.js";
 import type { WriterKind } from "../src/agent-runtime/writer-gate.js";
 import { buildApp } from "../src/app.js";
@@ -970,12 +972,29 @@ describe("Agent Platform managed runtime API", () => {
       "request-3:approve-session",
     ]);
 
-    const history = await fixture.app.inject({
-      method: "GET",
-      url: `/api/agent/agents/${agent.id}/history`,
-      headers: { cookie: login.cookie },
+    const history = (query: string) =>
+      fixture.app.inject({
+        method: "GET",
+        url: `/api/agent/agents/${agent.id}/history${query}`,
+        headers: { cookie: login.cookie },
+      });
+    expect((await history("?latest=1")).json()).toEqual({
+      items: [{ type: "user" }],
+      cursor: "40",
+      nextCursor: null,
+      previousCursor: "40",
     });
-    expect(history.json()).toEqual({ items: [{ type: "user" }], nextCursor: null });
+    await history("?before=40");
+    await history("?cursor=40");
+    await history("");
+    // Newest first (AP-D045); one way of reading at a time.
+    expect((await history("?latest=1&before=40")).statusCode).toBe(400);
+    expect(runtime.historyReads).toEqual([
+      { kind: "latest" },
+      { kind: "before", cursor: "40" },
+      { kind: "forward", cursor: "40" },
+      { kind: "forward", cursor: null },
+    ]);
 
     // Release hands the writer back before the hold lifts, so a woken orchestrator can write.
     const released = await post(`/api/agent/agents/${agent.id}/hold`, {
@@ -1064,8 +1083,15 @@ class FakeRuntime implements AgentRuntimeControl {
   respondApprovalAsPerson(_id: string, requestId: string, decision: string): void {
     this.approvals.push(`${requestId}:${decision}`);
   }
-  readHistory(): Promise<{ items: unknown[]; nextCursor: string | null }> {
-    return Promise.resolve({ items: [{ type: "user" }], nextCursor: null });
+  readonly historyReads: HistoryRead[] = [];
+  readHistoryWindow(_id: string, read: HistoryRead): Promise<AgentHistoryWindow> {
+    this.historyReads.push(read);
+    return Promise.resolve({
+      items: [{ type: "user" }],
+      cursor: "40",
+      nextCursor: null,
+      previousCursor: "40",
+    });
   }
   switchWriter(_id: string, to: WriterKind): Promise<unknown> {
     this.switches.push({ to, heldDuringSwitch: this.heldNow() });

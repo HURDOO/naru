@@ -205,6 +205,10 @@ describe("managed agent supervisor with a real runner process", () => {
       message: { content: [{ type: "tool_result", content: [{ type: "image" }] }] },
     });
     expect(JSON.stringify(history.items).length).toBeLessThan(1_000);
+    // Read newest first, the same three fit one page that starts the conversation (AP-D045).
+    expect(
+      await first.supervisor.readHistoryWindow(fixture.worker, { kind: "latest" }),
+    ).toMatchObject({ cursor: "0", nextCursor: null, previousCursor: null });
 
     // Naru restarts while a turn is still running; the runner keeps going and reconnects.
     first.supervisor.sendTurn(fixture.worker, "SLOW600 work", "gui", 2);

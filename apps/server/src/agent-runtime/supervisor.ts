@@ -16,6 +16,7 @@ import type {
   OrchestratorWakeups,
   WakeupBatch,
 } from "../agent-platform/wakeups.js";
+import type { AgentHistoryWindow } from "@naru/contracts/naru-agent/v1/history";
 import type { HistoryPage } from "./adapter.js";
 import {
   NARU_RUNTIME_SOCKET_ENV,
@@ -23,6 +24,7 @@ import {
   type AnyRunnerPlan,
   type RunnerMessage,
 } from "./channel-protocol.js";
+import { historyBefore, LATEST_HISTORY, type HistoryRead } from "./history-window.js";
 import type { RunnerConnection, RuntimeChannelHandlers } from "./runtime-channel-server.js";
 import {
   authorizeWrite,
@@ -69,7 +71,11 @@ export interface RunnerEnvironment {
 export class SupervisorError extends Error {
   constructor(
     readonly code:
-      "RUNTIME_NOT_CONNECTED" | "WRITER_REQUIRED" | "APPROVAL_UNKNOWN" | "HISTORY_TIMEOUT",
+      | "RUNTIME_NOT_CONNECTED"
+      | "WRITER_REQUIRED"
+      | "APPROVAL_UNKNOWN"
+      | "HISTORY_TIMEOUT"
+      | "HISTORY_REFUSED",
     message: string,
   ) {
     super(message);
@@ -360,11 +366,43 @@ export class ManagedAgentSupervisor implements RuntimeChannelHandlers, Orchestra
       runtime.history.set(requestId, (page) => {
         clearTimeout(timer);
         if (page === null)
-          reject(new SupervisorError("HISTORY_TIMEOUT", "History is unavailable."));
+          reject(new SupervisorError("HISTORY_REFUSED", "History is unavailable."));
         else resolve(page);
       });
       runtime.connection!.send({ type: "history", requestId, cursor });
     });
+  }
+
+  /**
+   * A page of the conversation as the person reads it (AP-D045): forward, the newest page, or the
+   * page before one read newest first. A runtime that reads only forward (Codex, or a Claude runner
+   * an earlier Naru started) answers `latest` with its first page, and the person's view reads on.
+   */
+  async readHistoryWindow(agentSessionId: string, read: HistoryRead): Promise<AgentHistoryWindow> {
+    const claude = this.#core.getAgentSession(SYSTEM, agentSessionId).runtime === "claude";
+    if (read.kind !== "forward" && claude) {
+      try {
+        const page = await this.readHistory(
+          agentSessionId,
+          read.kind === "latest" ? LATEST_HISTORY : historyBefore(read.cursor),
+        );
+        const start = page.nextCursor;
+        return {
+          items: [...page.items],
+          cursor: start,
+          nextCursor: null,
+          previousCursor: start === null || start === "0" ? null : start,
+        };
+      } catch (error) {
+        const refused = error instanceof SupervisorError && error.code === "HISTORY_REFUSED";
+        if (read.kind === "before" || !refused) throw error;
+      }
+    } else if (read.kind === "before") {
+      throw new SupervisorError("HISTORY_REFUSED", "This runtime reads history forward only.");
+    }
+    const cursor = read.kind === "forward" ? read.cursor : null;
+    const page = await this.readHistory(agentSessionId, cursor);
+    return { items: [...page.items], cursor, nextCursor: page.nextCursor, previousCursor: null };
   }
 
   stop(agentSessionId: string): void {

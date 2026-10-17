@@ -10,6 +10,7 @@
     "./durable-session/v0/test-vectors": "./src/durable-session/v0/test-vectors.ts",
     "./naru-app/v1": "./src/naru-app/v1/index.ts",
     "./naru-agent/v1": "./src/naru-agent/v1/index.ts",
+    "./naru-agent/v1/history": "./src/naru-agent/v1/history.ts",
     "./private-ingress/v0": "./src/private-ingress/v0/index.ts",
     "./private-ingress/v0/test-vectors": "./src/private-ingress/v0/test-vectors.ts",
     "./workstation-gateway/v1": "./src/workstation-gateway/v1/index.ts"

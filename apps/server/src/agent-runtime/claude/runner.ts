@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentApprovalDecision } from "@naru/contracts/naru-agent/v1";
 import type { AgentRuntimeEvent, HistoryPage } from "../adapter.js";
 import { fitHistoryPage } from "../history-page.js";
+import { fitHistoryTail, parseHistoryCursor } from "../history-window.js";
 import type {
   ClaudePermissionResult,
   ClaudePermissionUpdate,
@@ -153,19 +154,32 @@ export class ClaudeRunner {
   /**
    * Official SDK history (AP-D002): Naru re-reads instead of storing the conversation. A page holds
    * as many messages as fit the channel (AP-D040); the next page starts after the last one sent.
+   * Read newest first (AP-D045), a page ends at the newest message or where a later page starts,
+   * and its own start goes back as `nextCursor`.
    */
   async readHistory(cursor: string | null): Promise<HistoryPage> {
     if (this.#sessionId === null) return { items: [], nextCursor: null };
-    const offset = cursor === null ? 0 : Number(cursor);
-    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Invalid history cursor.");
-    const read = await this.#port.getSessionMessages(this.#sessionId, {
-      dir: this.#plan.cwd,
-      offset,
-      limit: HISTORY_PAGE,
-    });
-    const items = fitHistoryPage(read);
-    const more = items.length < read.length || read.length === HISTORY_PAGE;
-    return { items, nextCursor: more ? String(offset + items.length) : null };
+    const read = parseHistoryCursor(cursor);
+    const dir = this.#plan.cwd;
+    if (read.kind === "forward") {
+      const page = await this.#port.getSessionMessages(this.#sessionId, {
+        dir,
+        offset: read.offset,
+        limit: HISTORY_PAGE,
+      });
+      const items = fitHistoryPage(page);
+      const more = items.length < page.length || page.length === HISTORY_PAGE;
+      return { items, nextCursor: more ? String(read.offset + items.length) : null };
+    }
+    if (read.kind === "before" && read.offset === 0) return { items: [], nextCursor: "0" };
+    // The SDK reads the transcript from its start either way; the newest page needs its length.
+    const from = read.kind === "latest" ? 0 : Math.max(0, read.offset - HISTORY_PAGE);
+    const messages = await this.#port.getSessionMessages(
+      this.#sessionId,
+      read.kind === "latest" ? { dir } : { dir, offset: from, limit: read.offset - from },
+    );
+    const items = fitHistoryTail(messages.slice(-HISTORY_PAGE));
+    return { items, nextCursor: String(from + messages.length - items.length) };
   }
 
   /** Ends input after the running turn; pending approvals are denied so nothing hangs. */

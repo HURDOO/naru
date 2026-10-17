@@ -313,6 +313,91 @@ describe("Claude SDK runner", () => {
     await runner.stop();
   });
 
+  it("reads the newest page first, then the pages before it (AP-D045)", async () => {
+    const { port } = fakeSdk();
+    const all = Array.from({ length: 120 }, (_, index) => ({ index }));
+    const reads: { offset: number | undefined; limit: number | undefined }[] = [];
+    const runner = new ClaudeRunner(
+      {
+        ...port,
+        getSessionMessages: (_sessionId, options) => {
+          reads.push({ offset: options.offset, limit: options.limit });
+          const offset = options.offset ?? 0;
+          const end = options.limit === undefined ? undefined : offset + options.limit;
+          return Promise.resolve(all.slice(offset, end));
+        },
+      },
+      PLAN,
+    );
+    expect(await runner.readHistory("latest")).toEqual({ items: [], nextCursor: null });
+    const events: AgentRuntimeEvent[] = [];
+    runner.onEvent((event) => events.push(event));
+    runner.start();
+    runner.sendTurn("history");
+    await until(events, (event) => event.type === "conversation-ready");
+    // Each page says where it starts; the one before ends there.
+    expect(await runner.readHistory("latest")).toEqual({ items: all.slice(70), nextCursor: "70" });
+    expect(await runner.readHistory("before:70")).toEqual({
+      items: all.slice(20, 70),
+      nextCursor: "20",
+    });
+    expect(await runner.readHistory("before:20")).toEqual({
+      items: all.slice(0, 20),
+      nextCursor: "0",
+    });
+    expect(await runner.readHistory("before:0")).toEqual({ items: [], nextCursor: "0" });
+    // Read forward from a page's start, it comes again with what was added after it.
+    expect(await runner.readHistory("70")).toEqual({ items: all.slice(70), nextCursor: "120" });
+    expect(reads).toEqual([
+      { offset: undefined, limit: undefined },
+      { offset: 20, limit: 50 },
+      { offset: 0, limit: 20 },
+      { offset: 70, limit: 50 },
+    ]);
+    await expect(runner.readHistory("before:x")).rejects.toThrow(/cursor/);
+    await runner.stop();
+  });
+
+  it("keeps the newest page within the channel too (AP-D045)", async () => {
+    const { port } = fakeSdk();
+    const long = (index: number) => ({
+      type: "assistant",
+      index,
+      message: { role: "assistant", content: [{ type: "text", text: "x".repeat(20_000) }] },
+    });
+    const all = Array.from({ length: 60 }, (_, index) => long(index));
+    const runner = new ClaudeRunner(
+      {
+        ...port,
+        getSessionMessages: (_sessionId, options) => {
+          const offset = options.offset ?? 0;
+          const end = options.limit === undefined ? undefined : offset + options.limit;
+          return Promise.resolve(all.slice(offset, end));
+        },
+      },
+      PLAN,
+    );
+    const events: AgentRuntimeEvent[] = [];
+    runner.onEvent((event) => events.push(event));
+    runner.start();
+    runner.sendTurn("history");
+    await until(events, (event) => event.type === "conversation-ready");
+    const latest = await runner.readHistory("latest");
+    expect(latest.items.length).toBeGreaterThan(0);
+    expect(latest.items.length).toBeLessThan(50);
+    expect(JSON.stringify(latest.items).length).toBeLessThanOrEqual(512 * 1024);
+    expect(latest.items.at(-1)).toEqual(long(59));
+    expect(latest.nextCursor).toBe(String(60 - latest.items.length));
+    const read: unknown[] = [...latest.items];
+    for (let start = latest.nextCursor; start !== "0";) {
+      const page = await runner.readHistory(`before:${start}`);
+      read.unshift(...page.items);
+      start = page.nextCursor!;
+    }
+    expect(read).toEqual(all);
+    await runner.stop();
+  });
+
   it("ends a page where it would outgrow the channel; the next starts after it (AP-D040)", async () => {
     const { port } = fakeSdk();
     const long = (index: number) => ({

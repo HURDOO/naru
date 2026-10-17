@@ -240,8 +240,32 @@ function CreateAgent({ onDone }: { readonly onDone: () => void }): React.JSX.Ele
 // Conversation ----------------------------------------------------------------------------------
 
 interface HistoryPages {
+  /** Where each page starts, to read it again forward (null: the start). */
   readonly cursors: (string | null)[];
   readonly items: unknown[][];
+  /** `before` for the page before the first one held; null once the start is held. */
+  readonly older: string | null;
+}
+
+interface HeldConversation {
+  readonly pages: HistoryPages;
+  readonly instructions: AgentInstructions;
+}
+
+/**
+ * Conversations read in this tab, by agent (AP-D045): opening one again shows it at once and reads
+ * only what was added. The agents opened last are kept.
+ */
+const heldConversations = new Map<string, HeldConversation>();
+const HELD_CONVERSATIONS = 8;
+
+function holdConversation(agentId: string, held: HeldConversation): void {
+  heldConversations.delete(agentId);
+  heldConversations.set(agentId, held);
+  for (const oldest of heldConversations.keys()) {
+    if (heldConversations.size <= HELD_CONVERSATIONS) break;
+    heldConversations.delete(oldest);
+  }
 }
 
 /** Runtime state, instructions and history of one agent, re-read while the chat is open. */
@@ -254,59 +278,127 @@ function useAgentConversation(agent: AgentSession): {
   /** The runtime is down: nothing to read until it is launched again. */
   readonly paused: boolean;
   readonly reload: () => void;
+  readonly older: OlderHistory;
 } {
   const { api } = useAgentApp();
   const managed = agent.paneId !== null;
   const paused = managed && !isLive(agent);
+  const held = heldConversations.get(agent.id);
   const [runtime, setRuntime] = useState<AgentRuntimeState | null>(null);
-  const [pages, setPages] = useState<HistoryPages | null>(null);
-  const [instructions, setInstructions] = useState<AgentInstructions>({
-    instructions: [],
-    origins: [],
-  });
+  const [pages, setPages] = useState<HistoryPages | null>(held?.pages ?? null);
+  const [instructions, setInstructions] = useState<AgentInstructions>(
+    held?.instructions ?? { instructions: [], origins: [] },
+  );
   const [issue, setIssue] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null);
-  const pagesRef = useRef<HistoryPages | null>(null);
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [olderLoads, setOlderLoads] = useState(0);
+  const pagesRef = useRef<HistoryPages | null>(held?.pages ?? null);
+  const instructionsRef = useRef<AgentInstructions>(
+    held?.instructions ?? { instructions: [], origins: [] },
+  );
   const loading = useRef(false);
   const active = useRef(false);
+  // Reading the newest pages and an older one each start from what is held: one at a time.
+  const queue = useRef<Promise<void>>(Promise.resolve());
 
-  const loadHistory = useCallback(async () => {
-    if (loading.current) return;
-    loading.current = true;
-    try {
-      const current = pagesRef.current;
-      // Re-read from the last page: new messages append there (Claude offsets, Codex turns).
-      const from = current === null ? 0 : Math.max(0, current.cursors.length - 1);
-      let cursor = current === null ? null : (current.cursors[from] ?? null);
-      const cursors: (string | null)[] = [];
-      const items: unknown[][] = [];
-      const limit = current === null ? HISTORY_MAX_PAGES : 20;
+  const commit = useCallback(
+    (next: HistoryPages, said: AgentInstructions = instructionsRef.current) => {
+      pagesRef.current = next;
+      instructionsRef.current = said;
+      setPages(next);
+      setInstructions(said);
+      holdConversation(agent.id, { pages: next, instructions: said });
+    },
+    [agent.id],
+  );
+
+  const serial = useCallback((work: () => Promise<void>): Promise<void> => {
+    const run = queue.current.then(work);
+    queue.current = run.catch(() => undefined);
+    return run;
+  }, []);
+
+  /** Pages forward from `cursor` after those of `base`, at most `limit` of them. */
+  const readForward = useCallback(
+    async (base: HistoryPages, from: string | null, limit: number): Promise<HistoryPages> => {
+      const cursors = [...base.cursors];
+      const items = [...base.items];
+      let cursor = from;
       for (let page = 0; page < limit; page += 1) {
-        const result = await api.agentHistory(agent.id, cursor);
+        const result = await api.agentHistory(agent.id, { cursor });
         cursors.push(cursor);
         items.push(result.items);
         if (result.nextCursor === null) break;
         cursor = result.nextCursor;
         if (page === limit - 1) setTruncated(true);
       }
-      const [next, said] = await Promise.all([
-        Promise.resolve({
-          cursors: [...(current?.cursors.slice(0, from) ?? []), ...cursors],
-          items: [...(current?.items.slice(0, from) ?? []), ...items],
-        }),
-        api.agentInstructions(agent.id),
-      ]);
-      pagesRef.current = next;
-      setPages(next);
-      setInstructions(said);
-      setIssue(null);
+      return { cursors, items, older: base.older };
+    },
+    [api, agent.id],
+  );
+
+  const loadHistory = useCallback(async () => {
+    if (loading.current) return;
+    loading.current = true;
+    try {
+      await serial(async () => {
+        const said = api.agentInstructions(agent.id);
+        const current = pagesRef.current;
+        let next: HistoryPages;
+        if (current === null) {
+          // Newest first (AP-D045): one page shows the conversation; earlier ones on request.
+          const latest = await api.agentHistory(agent.id, { latest: true });
+          next = { cursors: [latest.cursor], items: [latest.items], older: latest.previousCursor };
+          // A runtime that reads only forward (Codex) sent its first page: read on from there.
+          if (latest.nextCursor !== null) {
+            next = await readForward(next, latest.nextCursor, HISTORY_MAX_PAGES - 1);
+          }
+        } else {
+          // Re-read from the last page: new messages append there (Claude offsets, Codex turns).
+          const from = Math.max(0, current.cursors.length - 1);
+          next = await readForward(
+            {
+              cursors: current.cursors.slice(0, from),
+              items: current.items.slice(0, from),
+              older: current.older,
+            },
+            current.cursors[from] ?? null,
+            20,
+          );
+        }
+        commit(next, await said);
+        setIssue(null);
+      });
     } catch (failure) {
       setIssue(messageOf(failure));
     } finally {
       loading.current = false;
     }
-  }, [api, agent.id]);
+  }, [api, agent.id, commit, readForward, serial]);
+
+  const loadOlder = useCallback(async () => {
+    if (pagesRef.current?.older == null || olderLoading) return;
+    setOlderLoading(true);
+    try {
+      await serial(async () => {
+        const current = pagesRef.current;
+        if (current?.older == null) return;
+        const page = await api.agentHistory(agent.id, { before: current.older });
+        commit({
+          cursors: [page.cursor, ...current.cursors],
+          items: [page.items, ...current.items],
+          older: page.previousCursor,
+        });
+        setOlderLoads((count) => count + 1);
+      });
+    } catch (failure) {
+      setIssue(messageOf(failure));
+    } finally {
+      setOlderLoading(false);
+    }
+  }, [api, agent.id, commit, olderLoading, serial]);
 
   useEffect(() => {
     // A stopped runtime cannot answer; reading resumes when the agent runs again.
@@ -365,7 +457,23 @@ function useAgentConversation(agent: AgentSession): {
     turnStartedAt: runtime?.turnActive === true ? turnStartedAt : null,
     paused,
     reload: () => void loadHistory(),
+    older: {
+      available: pages?.older != null,
+      loading: olderLoading,
+      loads: olderLoads,
+      load: () => void loadOlder(),
+    },
   };
+}
+
+/** Reading the messages before the ones shown (AP-D045). */
+interface OlderHistory {
+  /** Earlier messages are not shown yet. */
+  readonly available: boolean;
+  readonly loading: boolean;
+  /** How many times earlier messages came in; the thread keeps its place each time. */
+  readonly loads: number;
+  readonly load: () => void;
 }
 
 function Conversation({
@@ -379,7 +487,7 @@ function Conversation({
   const phone = useMedia(PHONE);
   const wide = useMedia("(min-width: 1180px)");
   const [contextOpen, setContextOpen] = useState(false);
-  const { runtime, blocks, issue, truncated, turnStartedAt, paused, reload } =
+  const { runtime, blocks, issue, truncated, turnStartedAt, paused, reload, older } =
     useAgentConversation(agent);
   const identity = app.identity(agent);
   const presence = app.presence(agent);
@@ -453,6 +561,7 @@ function Conversation({
           blocks={blocks}
           runtime={runtime}
           truncated={truncated}
+          older={older}
           turnStartedAt={turnStartedAt}
           paused={paused}
         />
@@ -487,7 +596,7 @@ export function PaneConversation({
 }): React.JSX.Element {
   const app = useAgentApp();
   const [contextOpen, setContextOpen] = useState(false);
-  const { runtime, blocks, issue, truncated, turnStartedAt, paused, reload } =
+  const { runtime, blocks, issue, truncated, turnStartedAt, paused, reload, older } =
     useAgentConversation(agent);
   const presence = app.presence(agent);
   const task = currentTask(
@@ -530,6 +639,7 @@ export function PaneConversation({
           blocks={blocks}
           runtime={runtime}
           truncated={truncated}
+          older={older}
           turnStartedAt={turnStartedAt}
           paused={paused}
         />
@@ -681,6 +791,7 @@ function Thread({
   blocks,
   runtime,
   truncated,
+  older,
   turnStartedAt,
   paused,
 }: {
@@ -688,6 +799,7 @@ function Thread({
   readonly blocks: ConversationBlock[] | null;
   readonly runtime: AgentRuntimeState | null;
   readonly truncated: boolean;
+  readonly older: OlderHistory;
   readonly turnStartedAt: number | null;
   readonly paused: boolean;
 }): React.JSX.Element {
@@ -695,6 +807,9 @@ function Thread({
   const scroller = useRef<HTMLDivElement | null>(null);
   const atBottom = useRef(true);
   const [behind, setBehind] = useState(false);
+  // The thread's height when the person asked for earlier messages, and the loads already placed.
+  const heightBeforeOlder = useRef(0);
+  const placedLoads = useRef(older.loads);
   const identity = app.identity(agent);
   const approvals = runtime?.pendingApprovals ?? [];
   const working = runtime?.turnActive === true;
@@ -718,13 +833,17 @@ function Thread({
           return index === -1 ? groups.length : index;
         })();
 
-  const content = `${blocks?.length ?? -1}:${approvals.length}:${working}:${dividerAt}`;
+  const content = `${blocks?.length ?? -1}:${approvals.length}:${working}:${dividerAt}:${older.loads}`;
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element === null) return;
-    if (atBottom.current) element.scrollTop = element.scrollHeight;
+    if (placedLoads.current !== older.loads) {
+      // Earlier messages came in above: what the person was reading stays where it was.
+      placedLoads.current = older.loads;
+      element.scrollTop += element.scrollHeight - heightBeforeOlder.current;
+    } else if (atBottom.current) element.scrollTop = element.scrollHeight;
     else setBehind(true);
-  }, [content]);
+  }, [content, older.loads]);
 
   return (
     <div
@@ -738,6 +857,23 @@ function Thread({
     >
       <ol className="ag-thread" aria-label="대화" aria-busy={blocks === null}>
         {truncated && <li className="ag-notice-line">오래된 대화는 일부만 불러왔습니다.</li>}
+        {older.available && blocks !== null && (
+          <li className="ag-notice-line">
+            {/* Not disabled while loading: the button keeps focus for the next press. */}
+            <button
+              className="ag-link"
+              type="button"
+              aria-disabled={older.loading}
+              onClick={() => {
+                if (older.loading) return;
+                heightBeforeOlder.current = scroller.current?.scrollHeight ?? 0;
+                older.load();
+              }}
+            >
+              {older.loading ? "이전 대화를 불러오는 중…" : "이전 대화 보기"}
+            </button>
+          </li>
+        )}
         {blocks === null ? (
           <li className="ag-notice-line">
             {paused
