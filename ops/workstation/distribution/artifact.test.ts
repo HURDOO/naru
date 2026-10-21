@@ -70,7 +70,7 @@ describe("T14 standalone artifact", () => {
     const verified = verifyDistributionArtifact(root);
 
     expect(verified.summary.nodeRuntime).toMatchObject({
-      nodeVersion: "v24.20.0",
+      nodeVersion: "v24.22.1",
       architecture: "arm64",
       executableRelativePath: "runtime/node/bin/node",
     });

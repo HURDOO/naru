@@ -45,8 +45,8 @@ browser 자동화만 sandbox 안에서 실행할 수 있다.
 ## 3. standalone artifact 만들기
 
 builder는 clean committed worktree, Node 24가 실행되는 darwin-arm64 host와 공식
-`node-v24.20.0-darwin-arm64.tar.gz`를 요구한다. Node archive의 고정 SHA-256은
-`40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8`이다. builder는 network에서
+`node-v24.22.1-darwin-arm64.tar.gz`를 요구한다. Node archive의 고정 SHA-256은
+`89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7`이다. builder는 network에서
 download하지 않는다.
 
 ```bash
@@ -54,7 +54,7 @@ node ops/workstation/dev/run-node24.mjs \
   --import tsx ops/workstation/distribution/build-artifact.ts --json \
   --output-parent /absolute/private/output \
   --build-id v0-candidate \
-  --node-runtime-archive /absolute/private/node-v24.20.0-darwin-arm64.tar.gz
+  --node-runtime-archive /absolute/private/node-v24.22.1-darwin-arm64.tar.gz
 ```
 
 결과에는 expanded artifact와 `naru-workstation-darwin-arm64-v0-candidate.tar.zst`가 생긴다.

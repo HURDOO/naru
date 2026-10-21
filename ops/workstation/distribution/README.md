@@ -130,8 +130,8 @@ browser-owned 이전 Origin 상태는 doctor가 알리지만 강제 삭제하지
 ## artifact build
 
 builder는 Node 24가 실행되는 clean committed darwin-arm64 worktree에서만 동작하며 기존 output을
-덮어쓰지 않는다. 공식 `node-v24.20.0-darwin-arm64.tar.gz`를 별도로 받아 official checksum
-`40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8`과 대조할 build input으로 준다.
+덮어쓰지 않는다. 공식 `node-v24.22.1-darwin-arm64.tar.gz`를 별도로 받아 official checksum
+`89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7`과 대조할 build input으로 준다.
 builder 자체는 network download를 하지 않는다.
 
 ```text
@@ -139,7 +139,7 @@ node ops/workstation/dev/run-node24.mjs \
   --import tsx ops/workstation/distribution/build-artifact.ts --json \
   --output-parent <private-absolute-directory> \
   --build-id <release-id> \
-  --node-runtime-archive <absolute-node-v24.20.0-darwin-arm64.tar.gz>
+  --node-runtime-archive <absolute-node-v24.22.1-darwin-arm64.tar.gz>
 ```
 
 결과는 `naru-workstation-darwin-arm64-<build-id>.tar.zst`와 검증 가능한 expanded root다. manifest는

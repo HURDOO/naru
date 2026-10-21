@@ -132,7 +132,7 @@ describe("T14 deterministic maintenance transactions", () => {
     expect(result.status).toBe("completed");
     const receipt = readCurrentReceipt(plan.layout);
     expect(receipt?.intent.nodeExecutable).toBe(plan.layout.runtime.nodeExecutable);
-    expect(receipt?.artifact.nodeRuntime?.nodeVersion).toBe("v24.20.0");
+    expect(receipt?.artifact.nodeRuntime?.nodeVersion).toBe("v24.22.1");
     for (const service of ["host", "gateway", "naru", "maintenance"] as const) {
       expect(readFileSync(plan.layout.launchAgentFiles[service], "utf8")).toContain(
         plan.layout.runtime.nodeExecutable,
@@ -836,7 +836,7 @@ describe("T14 deterministic maintenance transactions", () => {
       operation: "upgrade",
       artifact: {
         buildId: "fixture-packaged-migration",
-        nodeRuntime: { nodeVersion: "v24.20.0" },
+        nodeRuntime: { nodeVersion: "v24.22.1" },
       },
       intent: { nodeExecutable: plan.layout.runtime.nodeExecutable },
     });

@@ -6,13 +6,13 @@ const SAFE_RELATIVE_PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9.
 
 export const PACKAGED_NODE_RUNTIME = {
   version: 1,
-  nodeVersion: "v24.20.0",
+  nodeVersion: "v24.22.1",
   platform: ARTIFACT_PLATFORM,
   architecture: ARTIFACT_ARCHITECTURE,
-  archiveName: "node-v24.20.0-darwin-arm64.tar.gz",
-  archiveSha256: "40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8",
-  executableSha256: "9d050fd455b56426e25d4d603c7c501cbb2630348e836cf221dcce748e90588a",
-  sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-darwin-arm64.tar.gz",
+  archiveName: "node-v24.22.1-darwin-arm64.tar.gz",
+  archiveSha256: "89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7",
+  executableSha256: "6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329",
+  sourceUrl: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz",
   executableRelativePath: "runtime/node/bin/node",
   licenseRelativePath: "runtime/node/LICENSE",
 } as const;

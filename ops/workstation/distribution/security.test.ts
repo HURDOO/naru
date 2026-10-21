@@ -38,7 +38,7 @@ describe("T14 T02 security regressions", () => {
     if (runtime === undefined) throw new Error("Fixture packaged runtime is missing.");
     expect(
       inspectPackagedNodeRuntime(fixture.nodeExecutable, process.getuid?.() ?? 501, runtime),
-    ).toMatchObject({ version: "v24.20.0" });
+    ).toMatchObject({ version: "v24.22.1" });
 
     writeFileSync(
       fixture.nodeExecutable,

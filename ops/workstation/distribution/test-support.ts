@@ -190,7 +190,7 @@ export function createArtifactFixture(
   const artifactRoot = join(parent, buildId);
   mkdirSync(artifactRoot, { mode: PRIVATE_DIRECTORY_MODE });
   const packagedNodeContents =
-    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v24.20.0; exit 0; fi\nif [ "$1" = "--print" ]; then echo arm64; exit 0; fi\nif [ "$2" = "--help" ]; then echo "Usage:"; exit 0; fi\nexit 0\n';
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v24.22.1; exit 0; fi\nif [ "$1" = "--print" ]; then echo arm64; exit 0; fi\nif [ "$2" = "--help" ]; then echo "Usage:"; exit 0; fi\nexit 0\n';
   const packagedNodeRuntime = {
     ...PACKAGED_NODE_RUNTIME,
     executableSha256: createHash("sha256").update(packagedNodeContents).digest("hex"),

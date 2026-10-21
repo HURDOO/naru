@@ -32,7 +32,7 @@ command above and from each bundled package's metadata.
 
 ## Bundled runtime and assets
 
-- Node.js v24.20.0 is bundled from the official darwin-arm64 archive. Its upstream `LICENSE` and
+- Node.js v24.22.1 is bundled from the official darwin-arm64 archive. Its upstream `LICENSE` and
   source metadata are stored at `runtime/node/LICENSE` and `runtime/node/source.json` in the
   standalone artifact.
 - D2Coding font files are distributed under SIL Open Font License 1.1. The full text is retained at

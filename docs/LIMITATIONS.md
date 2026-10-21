@@ -26,7 +26,7 @@
 - v0 standalone package는 macOS arm64와 launchd만 지원한다. Linux/systemd, Raspberry Pi, Intel Mac과
   Windows host package는 지원하지 않는다.
 - source 개발과 package build의 기준 runtime은 Node.js 24 LTS다. target package는 고정 Node
-  v24.20.0을 포함한다.
+  v24.22.1을 포함한다.
 - 설치형 PWA와 Web Push 실제 지원 주장은 Android Chrome에 한정한다. Samsung Internet에서 설치가
   실패한 결과는 알려진 제한이며 지원 증거로 계산하지 않는다.
 - 계약 이전 service worker가 Gateway login을 가로막는 기존 client는 자동 self-heal하지 않는다.
