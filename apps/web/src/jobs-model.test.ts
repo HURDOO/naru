@@ -4,6 +4,7 @@ import type { AgentJob, AgentJobTask, AgentWorking } from "./api";
 import {
   activityLine,
   awaitingCompletion,
+  decidingNext,
   elapsedLabel,
   jobCompleted,
   jobFinishedAt,
@@ -150,6 +151,20 @@ describe("completing and reopening a job (AP-D036)", () => {
     expect(awaitingCompletion(done)).toBe(false);
     expect(jobCompleted(done)).toBe(true);
     expect(awaitingCompletion(job([entry(task(1, { status: "running" }))]))).toBe(false);
+  });
+
+  it("is not finished while an orchestrator may still add the next task (AP-D047)", () => {
+    // calendar-share: the orchestrator marked the investigation done and created the next task
+    // 20 seconds later in the same turn; the card showed 완료 in between.
+    expect(jobStage(finished(), true)).toBe("plan");
+    expect(awaitingCompletion(finished(), true)).toBe(false);
+    expect(decidingNext(finished(), true)).toBe(true);
+    expect(jobFinishedAt(finished(), true)).toBeNull();
+    expect(decidingNext(finished(), false)).toBe(false);
+    expect(jobStage(finished(), false)).toBe("done");
+    // Open work or a completed job is not "deciding the next".
+    expect(decidingNext(job([entry(task(1, { status: "running" }))]), true)).toBe(false);
+    expect(decidingNext(finished({ completedAt: "2026-10-16T01:40:00.000Z" }), true)).toBe(false);
   });
 
   it("treats a finished job as completed for a server without completion records", () => {

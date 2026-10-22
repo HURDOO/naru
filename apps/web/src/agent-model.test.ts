@@ -7,6 +7,7 @@ import {
   cleanupCandidates,
   namedAgents,
   inboxItems,
+  orchestratorDeciding,
   inboxKindLabel,
   isLive,
   layoutGraph,
@@ -388,5 +389,92 @@ describe("cleaning up agents (AP-D033)", () => {
     const named = namedAgents(board);
     expect(named.map((item) => item.id)).toContain(id(6));
     expect(agentIdentity(agent(4), named, () => "alpha").name).toBe("작업자 4");
+  });
+});
+
+describe("a job is not finished while its orchestrator may add the next task (AP-D047)", () => {
+  const goal = {
+    id: id(990),
+    scope: { kind: "project", projectId: PROJECT },
+    author: { kind: "human" },
+    channel: "naru-ui",
+    originUserInstructionId: null,
+    supersedesId: null,
+    verbatim: "공유 동기화를 조사해 줘",
+    forgottenAt: null,
+    createdAt: "2026-10-16T00:30:00.000Z",
+  } as const;
+  const finished = {
+    goal,
+    projectIds: [PROJECT],
+    delegatedAt: null,
+    tasks: [{ task: task(1, { status: "done" }), reviews: {}, latestRun: null }],
+    completedAt: null,
+  };
+  const boardWith = (
+    orchestrator: AgentSession,
+    patch: Partial<AgentBoard["projects"][number]> = {},
+  ): AgentBoard => ({
+    projects: [
+      {
+        projectId: PROJECT,
+        intentContract: null,
+        pendingIntentContract: null,
+        activePlan: null,
+        tasks: [],
+        openHandoffs: [],
+        agents: [orchestrator],
+        processes: [],
+        pendingApprovals: [],
+        ...patch,
+      },
+    ],
+    globalAgents: [],
+    openHandoffs: [],
+    globalPendingApprovals: [],
+  });
+
+  it("asks for completion only once the orchestrator's turn has ended", () => {
+    // The orchestrator marked the last task done and, in the same turn, may create the next one.
+    const active = boardWith(agent(3, { role: "project-orchestrator", status: "active" }));
+    expect(orchestratorDeciding(active, finished)).toBe(true);
+    expect(inboxItems(active, [finished])).toEqual([]);
+    const starting = boardWith(agent(3, { role: "project-orchestrator", status: "starting" }));
+    expect(inboxItems(starting, [finished])).toEqual([]);
+    const idle = boardWith(agent(3, { role: "project-orchestrator", status: "idle" }));
+    expect(orchestratorDeciding(idle, finished)).toBe(false);
+    expect(inboxItems(idle, [finished]).map((item) => item.key)).toEqual([`job:${id(990)}`]);
+  });
+
+  it("counts a live runtime turn, and ignores workers and cleaned-up orchestrators", () => {
+    const orchestrator = agent(3, { role: "project-orchestrator", status: "idle" });
+    const live = boardWith(orchestrator, {
+      working: [
+        {
+          agentSessionId: orchestrator.id,
+          turnStartedAt: "2026-10-16T01:00:00.000Z",
+          activity: null,
+        },
+      ],
+    });
+    expect(orchestratorDeciding(live, finished)).toBe(true);
+    expect(orchestratorDeciding(boardWith(agent(2, { status: "active" })), finished)).toBe(false);
+    const retired = agent(3, {
+      role: "project-orchestrator",
+      status: "active",
+      retiredAt: "2026-10-16T01:00:00.000Z",
+    });
+    expect(orchestratorDeciding(boardWith(retired), finished)).toBe(false);
+  });
+
+  it("follows the main orchestrator for a goal given everywhere", () => {
+    const main = agent(4, { role: "main-orchestrator", projectId: null, status: "active" });
+    const global = { ...finished, goal: { ...goal, scope: { kind: "global" } as const } };
+    const board: AgentBoard = {
+      ...boardWith(agent(3, { role: "project-orchestrator" })),
+      globalAgents: [main],
+    };
+    expect(orchestratorDeciding(board, global)).toBe(true);
+    expect(orchestratorDeciding(board, finished)).toBe(false);
   });
 });

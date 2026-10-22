@@ -433,6 +433,8 @@ AP-T17의 목록·상세 카드 화면을 Figma 시안 v1 구조로 바꿨다. �
 - web:
   - `jobs-model.ts`의 `awaitingCompletion`·`jobCompleted`, `stageStates(stage, completed)`. 다시 연 일은 라운드
     지시 뒤에 움직인 작업이 없으면 "계획"이다.
+  - 작업이 모두 끝나도 그 일의 오케스트레이터가 차례 중이면(AP-D047) `agent-model.ts`의 `orchestratorDeciding`이
+    참이고, 일은 "계획"이며 완료 확인이 오지 않는다. 카드는 "오케스트레이터가 다음 일이 있는지 보는 중"을 보인다.
   - 받은함 항목 `job`("완료 확인")은 의도 계약 다음, 맨 뒤다.
   - 완료 확인·결과·다시 열기 창은 `JobSheets.tsx`다. `AgentApp`이 열 때의 일을 붙잡아 두므로, 완료해 받은함에서
     빠져도 결과 창이 남는다.

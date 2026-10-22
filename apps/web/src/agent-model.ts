@@ -291,7 +291,7 @@ export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): I
     });
   }
   for (const job of jobs) {
-    if (!awaitingCompletion(job)) continue;
+    if (!awaitingCompletion(job, orchestratorDeciding(board, job))) continue;
     items.push({
       kind: "job",
       key: `job:${job.goal.id}`,
@@ -300,6 +300,37 @@ export function inboxItems(board: AgentBoard, jobs: readonly AgentJob[] = []): I
     });
   }
   return items;
+}
+
+/**
+ * An orchestrator that can add the job's next task is in a turn (AP-D047): its project orchestrators
+ * and, for a goal the person gave everywhere, the main orchestrator. The orchestrator marks the last
+ * task done in the same turn that may create the next one, so until that turn ends the job is not
+ * finished.
+ */
+export function orchestratorDeciding(board: AgentBoard, job: AgentJob): boolean {
+  // The server lists the goal's own project with its tasks' and delegations' projects.
+  const projectIds = new Set(job.projectIds);
+  const working = new Set(
+    [
+      ...board.projects.flatMap((project) => project.working ?? []),
+      ...(board.globalWorking ?? []),
+    ].map((entry) => entry.agentSessionId),
+  );
+  const orchestrators = [
+    ...board.projects
+      .filter((project) => projectIds.has(project.projectId))
+      .flatMap((project) => project.agents)
+      .filter((agent) => agent.role === "project-orchestrator"),
+    ...(job.goal.scope.kind === "global"
+      ? board.globalAgents.filter((agent) => agent.role === "main-orchestrator")
+      : []),
+  ];
+  return orchestrators.some(
+    (agent) =>
+      !agent.retiredAt &&
+      (agent.status === "starting" || agent.status === "active" || working.has(agent.id)),
+  );
 }
 
 /**

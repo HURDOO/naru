@@ -23,15 +23,17 @@ const ACTIVE = new Set(["pending", "ready", "running", "blocked"]);
 
 /**
  * Where the whole goal is: the earliest step any of its open tasks is still at. A reopened job is
- * back at planning until a task moves for the new round (AP-D036).
+ * back at planning until a task moves for the new round (AP-D036). While an orchestrator that can
+ * add the next task is in a turn (`deciding`), a job whose tasks are all done is still at planning,
+ * not done (AP-D047).
  */
-export function jobStage(job: AgentJob): JobStageId {
+export function jobStage(job: AgentJob, deciding = false): JobStageId {
   const live = job.tasks.filter((entry) => entry.task.status !== "cancelled");
   if (live.length === 0) return "plan";
   if (live.every((entry) => entry.task.status === "done")) {
     const round = job.followUps?.at(-1)?.createdAt;
     const moved = round === undefined || live.some((entry) => entry.task.updatedAt > round);
-    return moved ? "done" : "plan";
+    return moved && !deciding ? "done" : "plan";
   }
   if (live.some((entry) => ACTIVE.has(entry.task.status) || entry.task.status === "failed")) {
     return "work";
@@ -60,9 +62,17 @@ export function jobCompleted(job: AgentJob): boolean {
   return job.completedAt === undefined ? jobStage(job) === "done" : job.completedAt !== null;
 }
 
-/** Every task of the round is finished and the job waits for the person to complete it. */
-export function awaitingCompletion(job: AgentJob): boolean {
-  return job.completedAt === null && jobStage(job) === "done";
+/**
+ * Every task of the round is finished, no orchestrator is deciding a next one (AP-D047), and the
+ * job waits for the person to complete it.
+ */
+export function awaitingCompletion(job: AgentJob, deciding = false): boolean {
+  return job.completedAt === null && jobStage(job, deciding) === "done";
+}
+
+/** Every task of the round is finished while an orchestrator may still add the next (AP-D047). */
+export function decidingNext(job: AgentJob, deciding: boolean): boolean {
+  return deciding && job.completedAt === null && jobStage(job) === "done";
 }
 
 export function jobProgress(job: AgentJob): { readonly done: number; readonly total: number } {
@@ -282,8 +292,8 @@ export function spanLabel(milliseconds: number): string {
 }
 
 /** When the last of a finished job's tasks finished, or null while it is open. */
-export function jobFinishedAt(job: AgentJob): string | null {
-  if (jobStage(job) !== "done") return null;
+export function jobFinishedAt(job: AgentJob, deciding = false): string | null {
+  if (jobStage(job, deciding) !== "done") return null;
   return job.tasks.reduce(
     (latest, entry) => (entry.task.updatedAt > latest ? entry.task.updatedAt : latest),
     job.goal.createdAt,

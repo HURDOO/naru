@@ -1,11 +1,18 @@
 import type { AgentSession } from "@naru/contracts/naru-agent/v1";
 import { useState } from "react";
 import { useAgentApp } from "./agent-context";
-import { clock, presenceLabel, projectOrchestrator, type Tone } from "./agent-model";
+import {
+  clock,
+  orchestratorDeciding,
+  presenceLabel,
+  projectOrchestrator,
+  type Tone,
+} from "./agent-model";
 import { Avatar, Icon, Pill } from "./agent-ui";
 import type { AgentJob, AgentJobTask, AgentWorking } from "./api";
 import {
   awaitingCompletion,
+  decidingNext,
   elapsedLabel,
   JOB_STAGES,
   jobCompleted,
@@ -98,9 +105,12 @@ function JobCard({
 }): React.JSX.Element {
   const app = useAgentApp();
   const [all, setAll] = useState(false);
-  const stage = jobStage(job);
+  // An orchestrator in a turn may still add the next task; until it ends the job is not done (AP-D047).
+  const deciding = orchestratorDeciding(app.board, job);
+  const stage = jobStage(job, deciding);
   const completed = jobCompleted(job);
-  const awaiting = awaitingCompletion(job);
+  const awaiting = awaitingCompletion(job, deciding);
+  const settling = decidingNext(job, deciding);
   const states = stageStates(stage, completed);
   const progress = jobProgress(job);
   const ordered = orderedTasks(job);
@@ -141,7 +151,7 @@ function JobCard({
     entry.task.status === "running" ||
     entry.task.status === "review" ||
     entry.task.status === "blocked";
-  const finishedAt = jobFinishedAt(job);
+  const finishedAt = jobFinishedAt(job, deciding);
   const shown = compact && !all ? ordered.filter(current) : ordered;
   const multiProject = job.projectIds.length > 1;
   return (
@@ -197,7 +207,9 @@ function JobCard({
             ? "오케스트레이터가 일을 나누는 중입니다"
             : awaiting
               ? `작업 ${progress.total}개 모두 끝남 · 완료 확인을 기다립니다`
-              : `작업 ${progress.total}개 중 ${progress.done}개 완료`}
+              : settling
+                ? `작업 ${progress.total}개 끝남 · 오케스트레이터가 다음 일이 있는지 보는 중입니다`
+                : `작업 ${progress.total}개 중 ${progress.done}개 완료`}
         </p>
       </div>
       {awaiting && (
